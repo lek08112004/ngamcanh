@@ -17,6 +17,18 @@ python -m http.server 8000     # hoặc: npx serve .
 
 Mở <http://localhost:8000>.
 
+## Bản đang chạy
+
+<https://ngamcanh.pages.dev> — lưu trữ trên Cloudflare Pages (miễn phí). Trang nằm trên hạ tầng của Cloudflare, không liên quan tới máy hay địa chỉ IP của người phát hành.
+
+Đưa bản mới lên sau khi sửa (cần `wrangler login` một lần):
+
+```bash
+npx wrangler pages deploy . --project-name ngamcanh --branch main
+```
+
+File `_headers` đặt vài header bảo mật cho Cloudflare Pages.
+
 ## Đưa lên GitHub Pages
 
 ```bash
