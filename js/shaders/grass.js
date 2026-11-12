@@ -21,6 +21,7 @@ attribute vec3 aOffset;
 attribute vec4 aParams;   // x: height, y: yaw, z: seed, w: width
 varying float vH;
 varying float vSeed;
+varying float vAcross;
 varying vec3 vWorld;
 ${windGLSL}
 ${curvesGLSL}
@@ -71,6 +72,7 @@ void main(){
   vec3 world = base + p;
   vH = h;
   vSeed = aParams.z;
+  vAcross = position.x * 2.0;
   vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
@@ -87,13 +89,18 @@ uniform vec3 uFogColor;
 uniform float uFogDensity;
 varying float vH;
 varying float vSeed;
+varying float vAcross;
 varying vec3 vWorld;
 void main(){
   vec3 root = vec3(0.006, 0.020, 0.008);
   vec3 tip = mix(vec3(0.050, 0.100, 0.036), vec3(0.120, 0.125, 0.055), vSeed * vSeed);
   vec3 albedo = mix(root, tip, vH * vH) * (0.45 + 0.9 * fract(vSeed * 7.31));
   vec3 light = uAmb * 0.88 * (0.3 + 0.7 * vH) + uAuroraTint * (0.12 + 0.85 * vH * vH) + uSunCol * (0.22 + 0.78 * vH);
-  vec3 col = albedo * light;
+  // a blade is a shallow V: darker along the midrib, brighter at one edge, glowing where the sun shines through
+  float rib = 1.0 - 0.28 * exp(-vAcross * vAcross * 9.0);
+  float side = 0.86 + 0.20 * vAcross * (vSeed - 0.5) * 2.0;
+  vec3 col = albedo * light * rib * side;
+  col += albedo * uSunCol * vec3(0.9, 1.0, 0.45) * 0.30 * vH * vH;
   vec3 lc = uCabinLight - vWorld;
   float below = smoothstep(-0.2, 0.6, uCabinLight.y - vWorld.y);
   col += albedo * vec3(1.0, 0.52, 0.16) * below * (1.0 - 0.9 * uDay) * 30.0 / (1.0 + dot(lc, lc) * 0.55);

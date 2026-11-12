@@ -6,12 +6,13 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { skyVertex, skyFragment, starPointsVertex, starPointsFragment } from './shaders/sky.js';
-import { FinalShader } from './shaders/post.js';
+import { FinalShader, LensShader } from './shaders/post.js';
+import { Pass } from 'three/addons/postprocessing/Pass.js';
 import {
   makeRng, terrainH, createTerrain, createMountains, createCabin, createFence,
-  createRocks, createGrass, createFireflies, createCamp, createTulips, streamX, streamW,
+  createRocks, createGrass, createFireflies, createCamp, streamX, streamW,
 } from './world.js';
-import { createGarden, createSignposts, GARDEN_TREES, GARDEN_ARCH } from './flora.js';
+import { createGarden, createTulips, createSignposts, GARDEN_TREES, GARDEN_ARCH } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
 import { Party, cleanName, cleanCode } from './net.js';
 import { Soundscape } from './audio.js';
@@ -32,7 +33,7 @@ const lowPower = coarse || Math.min(innerWidth, innerHeight) < 560;
 const dpr = window.devicePixelRatio || 1;
 const Q = lowPower
   ? { steps: 20, grass: 42000, flowers: 260, stars: 1600, flies: 36, tulips: 9000, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1.25), msaa: 2 }
-  : { steps: 32, grass: 140000, flowers: 760, stars: 3200, flies: 80, tulips: 26000, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1.5), msaa: 4 };
+  : { steps: 32, grass: 140000, flowers: 760, stars: 3200, flies: 80, tulips: 20000, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1.5), msaa: 4 };
 // keep very large canvases (4K at 200%) within a sane pixel budget
 const budgetPR = Math.sqrt(4.6e6 / Math.max(1, innerWidth * innerHeight));
 Q.maxPR = Math.max(Math.min(Q.maxPR, budgetPR), Math.min(dpr, 1));
@@ -242,9 +243,23 @@ sunLight.position.copy(shared.uSunDir.value).multiplyScalar(200);
 scene.add(sunLight);
 
 /* --------------------------------------------------------- post-processing */
-const target = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: Q.msaa });
+const target = new THREE.WebGLRenderTarget(4, 4, {
+  type: THREE.HalfFloatType, samples: Q.msaa, depthTexture: new THREE.DepthTexture(4, 4),
+});
 const composer = new EffectComposer(renderer, target);
 composer.addPass(new RenderPass(scene, camera));
+// lens blur reads the depth of whichever buffer the scene was just drawn into
+const lensPass = new ShaderPass(LensShader);
+lensPass.uniforms.uTexel.value = new THREE.Vector2(1 / innerWidth, 1 / innerHeight);
+lensPass.uniforms.uNear.value = camera.near;
+lensPass.uniforms.uFar.value = camera.far;
+class GrabDepth extends Pass {
+  constructor() { super(); this.needsSwap = false; }
+  render(r, writeBuffer, readBuffer) { lensPass.uniforms.tDepth.value = readBuffer.depthTexture; }
+}
+composer.addPass(new GrabDepth());
+composer.addPass(lensPass);
+lensPass.enabled = !lowPower && query.get('lens') !== '0';
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.72, 0.82);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -386,6 +401,8 @@ function resize() {
   composer.setPixelRatio(pixelRatio);
   composer.setSize(w, h);
   shared.uPixelRatio.value = pixelRatio;
+  lensPass.uniforms.uTexel.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
+  lensPass.uniforms.uMaxBlur.value = 9 * pixelRatio * (h / 1080);
   game.baseFov = baseFov;
   game.layout();
 }
@@ -1289,6 +1306,13 @@ function frame() {
   camp.flame.rotation.y = Math.atan2(camera.position.x - camp.firePos.x, camera.position.z - camp.firePos.z);
   if (Math.abs(fire.level - fire.lastAudio) > 0.03) { fire.lastAudio = fire.level; audio.setFire(fire.level); }
 
+  // focus sits out in the landscape; sitting low among flowers pulls it closer for a stronger blur
+  {
+    const low = clamp((1.5 - (camBase.y - terrainH(camBase.x, camBase.z))) / 0.8, 0, 1);
+    const want = mode === 'play' ? 0 : 11 - 5 * low;
+    const u = lensPass.uniforms.uFocus;
+    u.value += (want - u.value) * (1 - Math.exp(-dt * 2));
+  }
   updateLabels();
   updateCompass();
   updateParty(dt);

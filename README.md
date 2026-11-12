@@ -90,6 +90,8 @@ Bật bằng nút "Trò dệt sao" hoặc phím `M`. Di chuột (hoặc kéo ng�
 ## Chất lượng hình ảnh
 
 - Cực quang được lọc trơn bằng giải tích (rèm tự nới rộng theo khoảng cách giữa các lát dựng) nên không cần nhiễu hạt để che dải màu; hạt phim gần như bằng không.
+- Hoa được dựng từ các dải cánh cong mượt có toạ độ UV: viền cánh bo tròn được cắt theo từng điểm ảnh, có gân, màu chuyển từ họng ra mép và ánh nắng xuyên qua cánh. Tán anh đào và lá trên cổng là hàng nghìn chùm hoa, chùm lá nhỏ.
+- Xoá phông tiền cảnh kiểu ống kính (depth of field): cảnh xa và bầu trời luôn nét, vật ở gần hơn điểm lấy nét thì mờ dần. Tắt bằng `&lens=0`; máy cảm ứng mặc định tắt.
 - Dựng ở **độ phân giải gốc của màn hình** (Full HD trên màn Full HD, kể cả khi Windows đặt tỉ lệ 125–150%), tối đa pixel ratio 2, có khử răng cưa MSAA 4×.
 - Khi máy không giữ được ~50 FPS, trang giảm theo thứ tự: số lát dựng cực quang → mật độ cỏ → cuối cùng mới tới độ phân giải, và trên máy tính không bao giờ xuống dưới độ phân giải gốc (tới pixel ratio 1,5).
 - Muốn chỉnh tay, sửa bảng `Q` ở đầu `js/main.js` (`steps`, `grass`, `tulips`, `flowers`, `stars`, `flies`, `maxPR`, `minPR`, `msaa`).

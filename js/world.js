@@ -317,7 +317,7 @@ export function createFence(rng) {
 /* ---------- mossy rocks ---------- */
 export function createRocks(rng) {
   const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
   const spots = [
     [9.5, -2.5, 1.25], [11.8, -4.2, 0.7], [14.5, -1.8, 0.9], [-5.5, 0.4, 0.55],
     [3.4, -12, 0.8], [18, -9, 1.5], [-22, -9, 1.1], [7.5, 2.2, 0.5],
@@ -327,7 +327,7 @@ export function createRocks(rng) {
   const moss = new THREE.Color(0x27491f);
   const tmp = new THREE.Color();
   for (const [x, z, s] of spots) {
-    const geo = new THREE.IcosahedronGeometry(1, 2);
+    const geo = new THREE.IcosahedronGeometry(1, 4);
     const p = geo.attributes.position;
     const seed = rng() * 100;
     const v = new THREE.Vector3();
@@ -404,7 +404,7 @@ export function createGrass(shared, rng, count, cabin) {
     params[i * 4] = 0.42 + rng() * 0.62;
     params[i * 4 + 1] = rng() * Math.PI;
     params[i * 4 + 2] = rng();
-    params[i * 4 + 3] = 0.045 + rng() * 0.04;
+    params[i * 4 + 3] = 0.028 + rng() * 0.026;
   }
   const meadow = build(offsets, params, count, {});
 
@@ -514,7 +514,7 @@ export function insideCamp(x, z) {
 
 export function createCamp(shared, rng) {
   const g = new THREE.Group();
-  const stone = new THREE.MeshStandardMaterial({ color: 0x4a4e50, roughness: 1, flatShading: true });
+  const stone = new THREE.MeshStandardMaterial({ color: 0x4a4e50, roughness: 1 });
   const bark = new THREE.MeshStandardMaterial({ color: 0x2a1c12, roughness: 1 });
   const charred = new THREE.MeshStandardMaterial({ color: 0x120b07, roughness: 1, emissive: 0xff4a10, emissiveIntensity: 0.5 });
 
@@ -527,7 +527,7 @@ export function createCamp(shared, rng) {
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2 + rng() * 0.2;
     const s = 0.16 + rng() * 0.1;
-    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 0), stone);
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 2), stone);
     m.position.set(Math.cos(a) * 0.82, s * 0.45, Math.sin(a) * 0.82);
     m.rotation.set(rng() * 3, rng() * 3, rng() * 3);
     m.scale.y = 0.75;
