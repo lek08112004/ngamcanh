@@ -1,8 +1,8 @@
 // "Một ngày ở trại" — a quiet thread to follow through the valley, from waking on the hill
 // to a wish under the aurora. Nothing here can be failed or missed: each page is a small
 // thing worth doing, they can be done in any order, and the card only ever suggests the
-// first one still open. Progress lives in localStorage, like everything else.
-const SAVE_KEY = 'aurora-vale-story-v1';
+// first one still open. Progress lives in the save file (store.js), like everything else.
+import { store } from './store.js';
 
 // id, title, what the card asks, what the journal remembers once it is done
 export const CHAPTERS = [
@@ -24,13 +24,15 @@ export const CHAPTERS = [
 ];
 
 // The flower book: stand quietly among a kind of flower by day and it is pressed into the journal.
+// `season` is when each one is at its best; the season's signature flower is marked in seasons.js.
 export const FLOWERS = [
-  { id: 'tulip', name: 'Tulip', latin: 'Tulipa', where: 'Các luống màu phía bắc trại', note: 'Sáu cánh khép thành chén; mở ra khi nắng ấm và khép lại lúc chiều tối hay trời lạnh. Mọc từ củ, mỗi củ một hoa.' },
-  { id: 'rose', name: 'Hoa hồng', latin: 'Rosa', where: 'Vòng hoa quanh cây anh đào giữa vườn', note: 'Mọc thành bụi, mỗi bụi nhiều cành. Hồng vườn có hàng chục cánh xếp xoắn quanh nụ; hồng dại chỉ có năm cánh.' },
-  { id: 'sunflower', name: 'Hướng dương', latin: 'Helianthus annuus', where: 'Ruộng hoa phía đông vườn', note: 'Mỗi “bông” là cả nghìn hoa nhỏ xếp thành hai họ đường xoắn ốc ngược chiều. Cây non quay theo mặt trời; hoa đã nở thì đứng yên, thường hướng về phía đông.' },
-  { id: 'lavender', name: 'Oải hương', latin: 'Lavandula', where: 'Những hàng tím phía nam vườn', note: 'Hoa nhỏ mọc thành bông trên cuống dài. Mùi thơm nằm trong tinh dầu ở đài hoa, nên hoa khô vẫn giữ hương.' },
-  { id: 'daisy', name: 'Cúc dại', latin: 'Bellis / Cosmos', where: 'Rải rác trên cỏ quanh vườn', note: 'Giống hướng dương, mỗi bông là một cụm hoa: vành cánh bên ngoài và đĩa hoa li ti ở giữa.' },
-  { id: 'cherry', name: 'Anh đào', latin: 'Prunus', where: 'Ba cây trong vườn', note: 'Nở trước khi ra lá và chỉ giữ hoa chừng một hai tuần. Đứng dưới tán sẽ thấy cánh rơi.' },
+  { id: 'tulip', season: 'Xuân', name: 'Tulip', latin: 'Tulipa', where: 'Các luống trước trại, mùa xuân', note: 'Sáu cánh khép thành chén; mở ra khi nắng ấm và khép lại lúc chiều tối hay trời lạnh. Mọc từ củ, mỗi củ một hoa.' },
+  { id: 'cherry', season: 'Xuân', name: 'Anh đào', latin: 'Prunus', where: 'Ba cây trong vườn, mùa xuân (đứng dưới tán và ngước lên)', note: 'Nở trước khi ra lá và chỉ giữ hoa chừng một hai tuần. Hè lá xanh, thu lá đỏ, đông trơ cành.' },
+  { id: 'sunflower', season: 'Hạ', name: 'Hướng dương', latin: 'Helianthus annuus', where: 'Ruộng hoa phía bắc vườn, mùa hạ', note: 'Mỗi “bông” là cả nghìn hoa nhỏ xếp thành hai họ đường xoắn ốc ngược chiều. Cây non quay theo mặt trời; hoa đã nở thì đứng yên, thường hướng về phía đông.' },
+  { id: 'lavender', season: 'Hạ', name: 'Oải hương', latin: 'Lavandula', where: 'Các luống trước trại và khối tím phía nam vườn, mùa hạ', note: 'Hoa nhỏ mọc thành bông trên cuống dài. Mùi thơm nằm trong tinh dầu ở đài hoa, nên hoa khô vẫn giữ hương.' },
+  { id: 'rose', season: 'Xuân – Thu', name: 'Hoa hồng', latin: 'Rosa', where: 'Vòng hoa quanh cây anh đào giữa vườn', note: 'Mọc thành bụi, mỗi bụi nhiều cành. Hồng vườn có hàng chục cánh xếp xoắn quanh nụ; hồng dại chỉ có năm cánh.' },
+  { id: 'daisy', season: 'Thu', name: 'Cúc hoạ mi', latin: 'Leucanthemum', where: 'Các luống trước trại, mùa thu', note: 'Cánh trắng, nhuỵ vàng. Giống hướng dương, mỗi bông là một cụm hoa: vành cánh bên ngoài và đĩa hoa li ti ở giữa.' },
+  { id: 'camellia', season: 'Đông', name: 'Hoa trà', latin: 'Camellia japonica', where: 'Vòng hoa giữa vườn, mùa đông', note: 'Nở giữa mùa lạnh, lá dày bóng xanh quanh năm. Hoa không rụng từng cánh mà rụng nguyên bông.' },
 ];
 
 export class Story {
@@ -40,17 +42,14 @@ export class Story {
     this.flowers = new Set();       // kinds of flower pressed into the book
     this.folded = false;
     this.onPage = () => {};         // (chapter, allDone) when a page is completed
-    try {
-      const s = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}');
-      for (const id of s.done || []) if (CHAPTERS.some((c) => c.id === id)) this.done.add(id);
-      for (const id of s.seen || []) this.seen.add(String(id).slice(0, 8));
-      for (const id of s.flowers || []) if (FLOWERS.some((f) => f.id === id)) this.flowers.add(id);
-      this.folded = !!s.folded;
-    } catch (e) { /* private mode */ }
+    for (const id of store.get('story.done', [])) if (CHAPTERS.some((c) => c.id === id)) this.done.add(id);
+    for (const id of store.get('story.seen', [])) this.seen.add(id);
+    for (const id of store.get('story.flowers', [])) if (FLOWERS.some((f) => f.id === id)) this.flowers.add(id);
+    this.folded = store.get('story.folded', false);
   }
 
   save() {
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify({ done: [...this.done], seen: [...this.seen], flowers: [...this.flowers], folded: this.folded })); } catch (e) { /* ignore */ }
+    store.patch('story', { done: this.done, seen: this.seen, flowers: this.flowers, folded: this.folded });
   }
 
   get total() { return CHAPTERS.length; }

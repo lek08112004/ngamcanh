@@ -78,22 +78,34 @@ vec3 nightSky(vec3 d){
   return col;
 }
 
-// Clear spring morning: deep blue overhead, milky warm horizon, low sun, fair-weather clouds.
+// Daylight sky. By morning: deep blue overhead, milky warm horizon, fair-weather clouds.
+// At sunset (uDusk) the horizon burns orange under a violet zenith and the clouds catch
+// fire on the side that faces the sun.
 vec3 daySky(vec3 d){
   float el = max(d.y, 0.0);
-  vec3 col = mix(vec3(0.40, 0.66, 0.95), vec3(0.020, 0.13, 0.58), pow(el, 0.55));
   float sd = max(dot(d, uSunDir), 0.0);
+  float az = max(dot(normalize(d.xz + vec2(1e-5)), normalize(uSunDir.xz)), 0.0);   // toward the sun, along the horizon
+  vec3 hor = mix(vec3(0.40, 0.66, 0.95), mix(vec3(0.46, 0.36, 0.52), vec3(1.00, 0.50, 0.24), az * az), uDusk);
+  vec3 zen = mix(vec3(0.020, 0.13, 0.58), vec3(0.060, 0.085, 0.30), uDusk);
+  vec3 col = mix(hor, zen, pow(el, mix(0.55, 0.40, uDusk)));
   col += vec3(1.00, 0.72, 0.42) * pow(sd, 12.0) * 0.26;
   col += vec3(1.00, 0.86, 0.66) * pow(sd, 90.0) * 0.8;
   col += vec3(1.00, 0.78, 0.60) * exp(-el * 9.0) * 0.14;
+  col += vec3(1.00, 0.46, 0.16) * pow(sd, 5.0) * 0.55 * uDusk;                      // the glow round a low sun
+  col += vec3(1.00, 0.36, 0.10) * exp(-el * 7.0) * az * 0.35 * uDusk;
   if (d.y > 0.0) {
     vec2 p = d.xz / (d.y + 0.22) * 0.9 + vec2(uTime * 0.006, 0.0);
     float c = fbm2(p * 0.8 + vec2(2.0, 5.0));
     float c2 = fbm2(p * 2.6 + vec2(9.0, 1.0));
-    float m = smoothstep(0.57, 0.80, c * 0.72 + c2 * 0.28) * smoothstep(0.0, 0.10, d.y);
-    vec3 cc = mix(vec3(0.62, 0.66, 0.80), vec3(1.0, 0.99, 0.96), smoothstep(0.58, 0.84, c * 0.72 + c2 * 0.28)) * (0.95 + 0.30 * pow(sd, 4.0));
+    float dens = c * 0.72 + c2 * 0.28;
+    float m = smoothstep(0.57 - 0.06 * uDusk, 0.80, dens) * smoothstep(0.0, 0.10, d.y);
+    vec3 cc = mix(vec3(0.62, 0.66, 0.80), vec3(1.0, 0.99, 0.96), smoothstep(0.58, 0.84, dens)) * (0.95 + 0.30 * pow(sd, 4.0));
+    // sunset: slate bellies, edges lit rose and gold from below
+    vec3 cd = mix(vec3(0.30, 0.24, 0.36), mix(vec3(0.95, 0.42, 0.34), vec3(1.25, 0.72, 0.36), sd), (1.0 - smoothstep(0.60, 0.86, dens)) * (0.35 + 0.65 * az));
+    cc = mix(cc, cd, uDusk);
     col = mix(col, cc, m * 0.92);
-    col += vec3(1.0, 0.95, 0.85) * smoothstep(0.99930, 0.99972, sd) * 9.0 * (1.0 - m);
+    float disc = smoothstep(mix(0.99930, 0.99860, uDusk), mix(0.99972, 0.99930, uDusk), sd);
+    col += mix(vec3(1.0, 0.95, 0.85), vec3(1.0, 0.55, 0.20), uDusk) * disc * 9.0 * (1.0 - m);
   }
   return col;
 }

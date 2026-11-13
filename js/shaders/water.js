@@ -10,6 +10,10 @@ vec3 skyReflect(vec3 r){
   c += uGlow * exp(-el * 9.0) * 0.30 * uAurora;
   vec3 dayc = mix(vec3(0.46, 0.68, 0.94), vec3(0.04, 0.17, 0.60), pow(el, 0.55));
   dayc += vec3(1.00, 0.78, 0.60) * exp(-el * 9.0) * 0.14;
+  // sunset: the water carries the orange of the horizon toward the sun
+  float az = max(dot(normalize(r.xz + vec2(1e-5)), normalize(uSunDir.xz)), 0.0);
+  vec3 duskc = mix(mix(vec3(0.46, 0.36, 0.52), vec3(1.00, 0.50, 0.24), az * az), vec3(0.060, 0.085, 0.30), pow(el, 0.40));
+  dayc = mix(dayc, duskc, uDusk);
   return mix(c, dayc, uDay);
 }
 float waterH(vec2 p, float t){

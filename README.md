@@ -76,10 +76,26 @@ Góc trên bên trái có một tấm thẻ nhỏ gợi ý việc tiếp theo. M
 - Mọi trang đã lật nằm trong Sổ tay (`J`), kèm một dòng ghi nhớ. Ở đó cũng có nút bắt đầu lại một ngày mới.
 - Thẻ thu gọn được bằng mũi tên ở góc thẻ. Tiến trình lưu trong `localStorage`.
 
+### Bốn mùa và ba thời điểm trong ngày
+
+Trong bảng Tuỳ chỉnh có hàng **Mùa** và hàng **Thời điểm** (Buổi sáng · Hoàng hôn · Ban đêm; phím `N` chuyển lần lượt).
+
+| Mùa | Hoa chủ đạo | Thung lũng |
+| --- | --- | --- |
+| Xuân | **Tulip** thành luống trước trại | Anh đào nở, cỏ non |
+| Hạ | **Hướng dương** cả ruộng trong vườn, oải hương tím trước trại | Lá anh đào xanh, cỏ sẫm |
+| Thu | **Cúc hoạ mi** trắng trước trại | Lá anh đào đỏ cam, cỏ và rừng ngả vàng |
+| Đông | **Hoa trà** đỏ giữa vườn | Tuyết phủ, tuyết rơi, cành trơ trụi |
+
+- Hoa không rải lung tung: các luống trước trại được trồng lại theo mùa trên cùng những hàng thẳng; trong vườn là vòng hồng quanh cây anh đào, hai dải hồng bên cổng, khối oải hương, ruộng hướng dương, và cúc viền theo lối đi.
+- **Hoàng hôn:** mặt trời xuống sau dãy núi tây bắc, trời cam tím, bóng đổ dài, cửa sổ nhà gỗ bắt đầu sáng.
+- **Ngày tự trôi:** bật lên thì sáng, hoàng hôn, đêm nối nhau (một ngày khoảng mười phút) và mỗi sớm mai là một mùa mới.
+- Mùa đang chọn được ghi nhớ. Thử nhanh bằng địa chỉ: `?season=autumn&time=dusk`.
+
 ### Dạo vườn và Sổ hoa
 
 - **Dạo vườn** (nút trên thanh nhanh, hoặc phím `V`): máy quay tự thong thả đi một vòng qua luống tulip, cổng hoa hồng, vòng hồng, hàng oải hương và ruộng hướng dương, thỉnh thoảng dừng lại nhìn hoa. Bấm phím bất kỳ, kéo chuột hoặc cuộn là bạn tự đi tiếp từ đúng chỗ đang đứng.
-- **Sổ hoa**: buổi sáng, đứng yên giữa một loài hoa vài giây là loài đó được ép vào Sổ tay kèm vài dòng về nó. Có sáu loài: tulip, hồng, hướng dương, oải hương, cúc dại, anh đào (với anh đào, đứng dưới tán và ngước lên).
+- **Sổ hoa**: buổi sáng, đứng yên giữa một loài hoa vài giây là loài đó được ép vào Sổ tay kèm vài dòng về nó. Có bảy loài, mỗi loài nở vào mùa của nó: tulip và anh đào (xuân), hướng dương và oải hương (hạ), cúc hoạ mi (thu), hoa trà (đông), hoa hồng (xuân tới thu). Với anh đào, đứng dưới tán và ngước lên.
 - Ban ngày có bướm bay trên các luống hoa và thỉnh thoảng đậu lại.
 
 ### Trò dệt chòm sao (tuỳ chọn)
@@ -127,7 +143,9 @@ js/main.js              Renderer, mức chất lượng, camera và đi bộ, s�
 js/world.js             Địa hình, núi và bản đồ ánh sáng nướng sẵn, nhà gỗ, hàng rào, đá, ba lớp cỏ, khu trại
 js/layout.js            Toạ độ các công trình (nhà, trại, vườn), dùng chung cho JS và shader
 js/flora.js             Luống tulip và vườn bách hoa: hồng, oải hương, hướng dương, cúc, cổng hoa, anh đào
-js/story.js             Mười lăm trang của “Một ngày ở trại” và tiến trình đã lưu
+js/story.js             Mười lăm trang của “Một ngày ở trại”, Sổ hoa
+js/seasons.js           Lịch và đồng hồ: bốn mùa, ba thời điểm, hoa nào mọc mùa nào
+js/store.js             Lưu trữ: một tài liệu có phiên bản trong trình duyệt, sao lưu và khôi phục
 js/net.js               Đi cùng bạn: phòng ngang hàng qua WebRTC (PeerJS), chỉ chạy khi người dùng bật
 js/lore.js              Nội dung sổ tay thiên văn (nguồn gốc, sao đáng chú ý, cách tìm)
 js/game.js              Trò dệt chòm sao: bụi sao, bão, điều ước, mạch dệt, lưu tiến trình
@@ -158,6 +176,7 @@ node tools/check.mjs story    # các trang của “Một ngày ở trại”
 node tools/check.mjs party    # hai trình duyệt gặp nhau trong một phòng (cần mạng)
 node tools/check.mjs audio    # đo mức và phổ của từng lớp âm thanh
 node tools/check.mjs fps      # đo khung hình trên card đồ hoạ
+node tools/syntax.mjs         # kiểm tra cú pháp mọi module (hoặc: npm run check)
 ```
 
 Cần Node 22 trở lên và Chrome; không phải cài thêm gói nào.
@@ -165,7 +184,7 @@ Cần Node 22 trở lên và Chrome; không phải cài thêm gói nào.
 ## Tham số URL để thử nghiệm
 
 - `?auto=play` · `?auto=view` · `?auto=zen` — bỏ qua màn hình chào (âm thanh chỉ bật sau lần chạm đầu tiên, do chính sách trình duyệt).
-- `&time=day|night` — buổi sáng hoặc ban đêm · `&spot=hill|fire|lie|tulip|garden|bench` — chỗ ngồi · `&cons=1` — bật lớp chòm sao.
+- `&time=day|dusk|night` — buổi sáng, hoàng hôn hoặc ban đêm · `&season=spring|summer|autumn|winter` — mùa · `&spot=hill|fire|lie|tulip|garden|bench` — chỗ ngồi · `&cons=1` — bật lớp chòm sao.
 - `&x=…&z=…&eye=…` — đứng ở bất kỳ đâu (mét; `eye` là độ cao mắt) · `&yaw=10&pitch=34&fov=40` — góc nhìn ban đầu.
 - `&mood=emerald|rose|ice|storm|still` — sắc trời · `&t=120` — thời điểm của cực quang · `&sky=40` — góc xoay bầu trời (độ).
 - `&q=low|medium|high` — mức chất lượng · `&lens=0` — tắt xoá phông.
@@ -175,6 +194,10 @@ Cần Node 22 trở lên và Chrome; không phải cài thêm gói nào.
 
 - Cần trình duyệt có WebGL 2 và Import Map (Chrome/Edge 89+, Firefox 108+, Safari 16.4+).
 - Three.js tải từ CDN nên lần mở đầu tiên cần có mạng. Muốn chạy ngoại tuyến, tải `three.module.js` và thư mục `examples/jsm` về rồi sửa import map trong `index.html`.
+
+## Dữ liệu của bạn
+
+Trang không có máy chủ nên “cơ sở dữ liệu” nằm ngay trong trình duyệt: một tài liệu JSON có phiên bản, lưu qua `js/store.js` (cài đặt, hành trình, các trang đã lật, sổ hoa, kỷ lục trò dệt sao). Cuối Sổ tay có ba nút: **Lưu ra file** (sao lưu), **Khôi phục từ file** (mang sang máy hoặc trình duyệt khác) và **Xoá tiến trình**. Dữ liệu đọc vào luôn được kiểm tra theo lược đồ; file lạ bị từ chối.
 
 ## Quyền riêng tư
 

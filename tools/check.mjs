@@ -161,10 +161,23 @@ async function story() {
     check(s1.on && Math.hypot(s1.x - s0.x, s1.z - s0.z) > 3, `"Dạo vườn" walks on its own: ${Math.hypot(s1.x - s0.x, s1.z - s0.z).toFixed(1)} m in 6 s`);
     await b.hold('w', 300);
     check(!(await b.eval('__av.stroll.on')), 'touching a key hands the walk back');
-    await open('time=day&x=43&z=2');
+    await open('time=day&season=summer&x=43&z=2');
     await sleep(3500);
     check((await b.eval('[...__av.story.flowers]')).includes('sunflower'), 'standing among the sunflowers presses one into the flower book');
-    await b.eval('__av.story.restart(); __av.story.seen.clear(); __av.story.flowers.clear(); __av.story.save()');
+    // seasons and time of day: chosen in the dock, eased in, remembered in the save
+    await open('x=0&z=6');
+    await b.eval('document.querySelector("#seasonChips [data-season=winter]").click(); document.getElementById("timeDusk").click()');
+    await sleep(7500);
+    const w = await b.eval('({ season: __av.clock.season.id, winter: __av.clock.weights[3], dusk: __av.clock.dusk, phase: __av.clock.phase.id })');
+    check(w.season === 'winter' && w.winter > 0.99, `choosing winter brings winter in (weight ${w.winter.toFixed(2)})`);
+    check(w.phase === 'dusk' && w.dusk > 0.99, 'choosing sunset brings the sunset in');
+    await b.eval('__av.store.flush()');
+    await open('x=0&z=6');
+    check((await b.eval('__av.clock.season.id')) === 'winter', 'the season is remembered after a reload');
+    const backup = await b.eval('__av.store.export()');
+    check(JSON.parse(backup).settings.season === 'winter' && (await b.eval(`__av.store.import(${JSON.stringify(backup)})`)), 'the save exports and imports as a backup');
+    check(!(await b.eval('__av.store.import("{\\"not\\": 1}")')), 'a file that is not a backup is refused');
+    await b.eval('__av.clock.setSeason("spring"); __av.story.restart(); __av.story.seen.clear(); __av.story.flowers.clear(); __av.story.save(); __av.store.flush()');
     check(errorsOf(b).length === 0, `no console errors${errorsOf(b).length ? ': ' + errorsOf(b).join(' | ') : ''}`);
   } finally { await b.close(); }
 }

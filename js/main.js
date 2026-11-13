@@ -10,15 +10,17 @@ import { FinalShader, LensShader } from './shaders/post.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import {
   makeRng, terrainH, createTerrain, createMountains, createCabin, createFence,
-  createRocks, createGrass, createFireflies, createCamp, streamX, streamW, ROCK_SPOTS,
+  createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS,
 } from './world.js';
-import { createGarden, createTulips, createSignposts, GARDEN_TREES, GARDEN_ARCH } from './flora.js';
+import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
 import { Party, cleanName, cleanCode } from './net.js';
 import { Soundscape } from './audio.js';
 import { StardustGame, CONSTELLATIONS } from './game.js';
 import { LORE } from './lore.js';
 import { Story, CHAPTERS, FLOWERS } from './story.js';
+import { store } from './store.js';
+import { WorldClock, SEASONS, PHASES, SEASON_LIGHT } from './seasons.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -32,8 +34,8 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const coarse = matchMedia('(pointer: coarse)').matches;
 const lowPower = coarse || Math.min(innerWidth, innerHeight) < 560;
 const dpr = window.devicePixelRatio || 1;
-let qualityChoice = 'auto';
-try { qualityChoice = localStorage.getItem('aurora-vale-quality') || 'auto'; } catch (e) { /* private mode */ }
+let qualityChoice = store.get('settings.quality', 'auto');
+if (!['auto', 'low', 'medium', 'high'].includes(qualityChoice)) qualityChoice = 'auto';
 if (['low', 'medium', 'high'].includes(query.get('q'))) qualityChoice = query.get('q');
 function detectTier() {
   if (lowPower) return 'low';
@@ -51,9 +53,9 @@ function detectTier() {
 }
 const tier = qualityChoice === 'auto' ? detectTier() : qualityChoice;
 const TIERS = {
-  low: { steps: 14, grassNear: 9000, grass: 24000, grassFar: 0, roof: 2500, terrainQ: 0, flowerLod: 0, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.4, mtnMap: 256, mtnQ: 0 },
-  medium: { steps: 20, grassNear: 30000, grass: 60000, grassFar: 26000, roof: 6000, terrainQ: 1, flowerLod: 1, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 2048, mountains: 0.66, mtnMap: 512, mtnQ: 1 },
-  high: { steps: 32, grassNear: 50000, grass: 110000, grassFar: 50000, roof: 12000, terrainQ: 1, flowerLod: 1, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 4096, mountains: 1, mtnMap: 1024, mtnQ: 2 },
+  low: { steps: 14, grassNear: 9000, grass: 24000, grassFar: 0, roof: 2500, terrainQ: 0, flowerLod: 0, snow: 1200, sharp: 0, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.4, mtnMap: 256, mtnQ: 0 },
+  medium: { steps: 20, grassNear: 30000, grass: 60000, grassFar: 26000, roof: 6000, terrainQ: 1, flowerLod: 1, snow: 3000, sharp: 0.22, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 2048, mountains: 0.66, mtnMap: 512, mtnQ: 1 },
+  high: { steps: 32, grassNear: 50000, grass: 110000, grassFar: 50000, roof: 12000, terrainQ: 1, flowerLod: 1, snow: 6000, sharp: 0.32, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 4096, mountains: 1, mtnMap: 1024, mtnQ: 2 },
 };
 const Q = { ...TIERS[tier] };
 // keep very large canvases (4K at 200%) within a sane pixel budget
@@ -86,6 +88,17 @@ camera.rotation.order = 'YXZ';
 const camBase = new THREE.Vector3(0, terrainH(0, 8) + 1.8, 8);
 camera.position.copy(camBase);
 
+/* ------------------------------------------------------ calendar and clock */
+// Which season it is and what time of day: chosen in the dock, remembered in the save,
+// or set from the address (?season=autumn&time=dusk). See seasons.js.
+const clock = new WorldClock({
+  season: SEASONS.some((x) => x.id === query.get('season')) ? query.get('season') : store.get('settings.season', 'spring'),
+  phase: PHASES.some((x) => x.id === query.get('time')) ? query.get('time')
+    : (() => { const h = new Date().getHours(); return h >= 6 && h < 16 ? 'day' : h >= 16 && h < 19 ? 'dusk' : 'night'; })(),
+  auto: store.get('settings.autoDay', false) && !query.has('time') && !query.has('season'),
+});
+const SUN_DIR = Object.fromEntries(PHASES.map((ph) => [ph.id, new THREE.Vector3(...ph.sun).normalize()]));
+
 /* -------------------------------------------------------- shared uniforms */
 const uDay = { value: 0 };                       // 0 night .. 1 morning
 const shared = {
@@ -93,7 +106,8 @@ const shared = {
   uDay,
   uAmb: { value: new THREE.Vector3(0.08, 0.13, 0.18) },
   uSunCol: { value: new THREE.Vector3(0, 0, 0) },
-  uSunDir: { value: new THREE.Vector3(0.52, 0.46, 0.72).normalize() },
+  uSunDir: { value: SUN_DIR[clock.phase.id === 'dusk' ? 'dusk' : 'day'].clone() },
+  uSeason: { value: new THREE.Vector4(...clock.weights) },
   uAuroraTint: { value: new THREE.Vector3(0.2, 0.5, 0.34) },
   uCabinLight: { value: new THREE.Vector3() },
   uFireLight: { value: new THREE.Vector4(0, 0, 0, 0.5) },
@@ -113,6 +127,7 @@ const shared = {
   },
   aurora: {
     uDay,
+    uDusk: { value: clock.dusk },
     uAurora: { value: 1.0 },
     uAurTime: { value: Number(query.get('t')) || 0 },
     uAurTall: { value: 2.5 },
@@ -233,7 +248,7 @@ function createStarPoints(count, rng) {
 const rng = makeRng(20261112);
 const starPoints = createStarPoints(Q.stars * 2, rng);
 scene.add(starPoints);
-scene.add(createMountains(shared, Q.mountains, Q.mtnMap, Q.mtnQ));
+scene.add(createMountains(shared, Q.mountains, Q.mtnMap, Q.mtnQ, SUN_DIR));
 scene.add(createTerrain(shared, Q.terrainQ));
 const cabin = createCabin(rng, shared);
 scene.add(cabin.group, cabin.smoke);
@@ -246,8 +261,8 @@ scene.add(camp.group);
 shared.uFireLight.value.set(camp.firePos.x, camp.firePos.y, camp.firePos.z, 0.5);
 // three nested tiles of blades: fine and dense underfoot, the meadow proper, coarse tufts far out
 const grass = createGrass(shared, rng, [
-  { r: 13, count: Q.grassNear, h: [0.30, 0.80], w: [0.012, 0.024], grow: 0.0, widen: 0.8 },
-  { r: 56, count: Q.grass, h: [0.42, 1.04], w: [0.028, 0.054], grow: 0.5, widen: 2.0 },
+  { r: 13, count: Q.grassNear, h: [0.26, 0.74], w: [0.013, 0.026], grow: 0.0, widen: 0.8, tuft: 5, spread: 0.07 },
+  { r: 56, count: Q.grass, h: [0.38, 1.00], w: [0.030, 0.058], grow: 0.5, widen: 2.0, tuft: 4, spread: 0.16 },
   { r: 110, count: Q.grassFar, h: [0.55, 1.15], w: [0.07, 0.14], grow: 0.6, widen: 1.0, fadeIn: 46 },
 ], cabin, Q.roof);
 scene.add(grass);
@@ -265,10 +280,11 @@ const PLACES = [
 ];
 const garden = createGarden(shared, rng, Q.garden, Q.flowerLod);
 const signposts = createSignposts(PLACES);
-const tulips = createTulips(shared, rng, Q.tulips, Q.flowerLod);
-scene.add(garden, signposts, tulips);
+const beds = createBeds(shared, rng, Q.tulips, Q.flowerLod);
+const snow = createSnow(shared, rng, Q.snow);
+scene.add(garden, signposts, beds, snow);
 // every instanced flower bed, so the quality ladder can thin them out together
-const flowerBeds = [...tulips.children, ...garden.children].filter((c) => c.geometry && c.geometry.isInstancedBufferGeometry)
+const flowerBeds = [...beds.children, ...garden.children].filter((c) => c.geometry && c.geometry.isInstancedBufferGeometry)
   .map((m) => ({ geo: m.geometry, total: m.geometry.instanceCount }));
 scene.add(createFireflies(shared, rng, Q.flies));
 
@@ -277,7 +293,7 @@ scene.add(hemi);
 const auroraLight = new THREE.DirectionalLight(0x5ce6a4, 0.55);
 auroraLight.position.set(-20, 55, -80);
 scene.add(auroraLight);
-const sunLight = new THREE.DirectionalLight(0xfff0d2, 0);
+const sunLight = new THREE.DirectionalLight(0xffffff, 0);
 sunLight.target.position.set(14, 9, 2);
 sunLight.position.copy(sunLight.target.position).addScaledVector(shared.uSunDir.value, 220);
 scene.add(sunLight, sunLight.target);
@@ -332,6 +348,8 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const finalPass = new ShaderPass(FinalShader);
+finalPass.uniforms.uTexel.value = new THREE.Vector2(1 / innerWidth, 1 / innerHeight);
+finalPass.uniforms.uSharp.value = Q.sharp;
 composer.addPass(finalPass);
 
 /* ------------------------------------------------------------ audio + game */
@@ -383,14 +401,9 @@ const BLOCKS = [
   ...ROCK_SPOTS.map(([x, z, size]) => [x, z, size * 0.82 + 0.25]),
 ];
 const trek = { dist: 0, found: new Set(['camp']), saveAt: 0 };
-try {
-  const t = JSON.parse(localStorage.getItem('aurora-vale-trek-v1') || '{}');
-  trek.dist = Number(t.dist) || 0;
-  for (const id of t.found || []) trek.found.add(id);
-} catch (e) { /* private mode */ }
-function saveTrek() {
-  try { localStorage.setItem('aurora-vale-trek-v1', JSON.stringify({ dist: Math.round(trek.dist), found: [...trek.found] })); } catch (e) { /* ignore */ }
-}
+trek.dist = store.get('trek.dist', 0);
+for (const id of store.get('trek.found', [])) trek.found.add(id);
+function saveTrek() { store.patch('trek', { dist: Math.round(trek.dist), found: trek.found }); }
 function inStream(x, z) { return z < -30 && Math.abs(x - streamX(z)) < streamW(z); }
 function updateWalk(dt) {
   let fx = 0, fz = 0;
@@ -467,7 +480,7 @@ function setStroll(on) {
   let best = 1e9;
   STROLL.forEach(([x, z], k) => { const d = Math.hypot(x - walker.x, z - walker.z); if (d < best) { best = d; stroll.i = k; } });
   stroll.pause = 0;
-  if (day.target !== 1) toast('Dạo vườn ban đêm cũng được, nhưng hoa đẹp nhất vào buổi sáng (phím N)');
+  if (clock.phase.id === 'night') toast('Dạo vườn ban đêm cũng được, nhưng hoa đẹp nhất khi còn nắng (phím N)');
   else toast('Cứ thả lỏng. Bấm phím bất kỳ hoặc kéo chuột để tự đi tiếp');
 }
 function updateStroll(dt) {
@@ -537,6 +550,7 @@ function resize() {
   shared.uPixelRatio.value = pixelRatio;
   lensPass.uniforms.uTexel.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
   lensPass.uniforms.uMaxBlur.value = 9 * pixelRatio * (h / 1080);
+  finalPass.uniforms.uTexel.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
   game.baseFov = baseFov;
   game.layout();
 }
@@ -654,39 +668,110 @@ function updateMeteor(dt) {
   game.meteorDir = meteor.caught ? null : meteor.head;
 }
 
-/* ------------------------------------------------------------ day and night */
-const day = { target: 0, value: 0 };
-{
-  const want = query.get('time');
-  const h = new Date().getHours();
-  day.target = day.value = want === 'day' ? 1 : want === 'night' ? 0 : (h >= 6 && h < 18 ? 1 : 0);
+/* ------------------------------------------------------------- the seasons */
+// What grows, what colour the trees are, whether it snows. `w` is the season blend.
+const CROWN = [                                  // two tones for the cherry crowns, per season
+  [[0.70, 0.30, 0.44], [0.86, 0.60, 0.69]],      // blossom
+  [[0.022, 0.085, 0.024], [0.070, 0.180, 0.045]],
+  [[0.40, 0.065, 0.018], [0.78, 0.34, 0.035]],
+];
+const LEAF = [CROWN[1], CROWN[1], CROWN[2]];     // the arch is in leaf from spring on
+const DRIFT = [[[0.70, 0.42, 0.50], [0.84, 0.70, 0.74]], [[0, 0, 0], [0, 0, 0]], [[0.46, 0.10, 0.02], [0.80, 0.40, 0.04]]];
+const _hemiDay = new THREE.Color(), _hemiGround = new THREE.Color(), _snowBounce = new THREE.Color().setRGB(0.30, 0.31, 0.33);
+const SOD_GREEN = new THREE.Color(0x1a2a10), SOD_SNOW = new THREE.Color().setRGB(0.62, 0.66, 0.72);
+function applySeason(w) {
+  for (const group of [beds, garden]) {
+    for (const [name, u] of Object.entries(group.userData.grow)) u.uGrow.value = ease(clock.grow(name));
+  }
+  garden.userData.grow.ring.uTint.value.set(0.72, 0.035, 0.075, w[3]);          // roses give way to red camellias
+  const leafy = w[0] + w[1] + w[2] || 1;
+  const blend = (u, table) => {
+    for (const [key, i] of [['uColA', 0], ['uColB', 1]]) {
+      u[key].value.set(0, 0, 0);
+      for (let sIdx = 0; sIdx < 3; sIdx++) {
+        const c = table[sIdx][i], f = w[sIdx] / leafy;
+        u[key].value.x += c[0] * f; u[key].value.y += c[1] * f; u[key].value.z += c[2] * f;
+      }
+    }
+  };
+  const { crown, foliage, drift, shades, butterflies } = garden.userData;
+  crown.uScale.value = foliage.uScale.value = ease(clock.grow('crown'));
+  crown.uLeaf.value = 1 - w[0] / leafy;
+  blend(crown, CROWN);
+  blend(foliage, LEAF);
+  blend(drift, DRIFT);
+  drift.uAmount.value = w[0] * 0.9 + w[2] * 0.75;
+  for (const sh of shades) sh.visible = w[3] < 0.5;
+  butterflies.visible = w[3] < 0.5;
+  snow.visible = w[3] > 0.02;
+  snow.material.uniforms.uAmount.value = w[3];
+  cabin.sod.color.copy(SOD_GREEN).lerp(SOD_SNOW, w[3]);
 }
-const NIGHT_AMB = [0.08, 0.13, 0.18], DAY_AMB = [0.40, 0.50, 0.68];
-const NIGHT_FOG = [0.010, 0.026, 0.034], DAY_FOG = [0.46, 0.63, 0.86];
+
+/* ------------------------------------------------------------ day and night */
+const NIGHT_AMB = [0.08, 0.13, 0.18], DAY_AMB = [0.40, 0.50, 0.68], DUSK_AMB = [0.34, 0.30, 0.42];
+const NIGHT_FOG = [0.010, 0.026, 0.034], DAY_FOG = [0.46, 0.63, 0.86], DUSK_FOG = [0.50, 0.33, 0.36];
 // Lamps for the built things (cabin, tent, rocks). By day they are matched to the light the
 // ground and the grass get from the shader uniforms: three.js divides by pi, so the numbers differ.
-const HEMI_SKY_N = new THREE.Color(0x3a6a86), HEMI_SKY_D = new THREE.Color().setRGB(DAY_AMB[0], DAY_AMB[1], DAY_AMB[2]);
-const HEMI_GROUND_N = new THREE.Color(0x0a160d), HEMI_GROUND_D = new THREE.Color().setRGB(0.20, 0.22, 0.13);
-const SUN = [2.9, 2.55, 1.95];
+const HEMI_SKY_N = new THREE.Color(0x3a6a86), HEMI_GROUND_N = new THREE.Color(0x0a160d), HEMI_GROUND_D = new THREE.Color().setRGB(0.20, 0.22, 0.13);
+const SUN = [2.9, 2.55, 1.95], DUSK_SUN = [3.4, 1.42, 0.50];
 let lanternOn = true;
+const _sunWas = new THREE.Vector3(), _seasonWas = new THREE.Vector4(-1, 0, 0, 0);
+let shadowSettle = 0;
+const ease = (t) => t * t * (3 - 2 * t);
 function applyDay(dt) {
-  day.value += clamp(day.target - day.value, -dt / 6, dt / 6);
-  const t = day.value;
-  const d = t * t * (3 - 2 * t);
+  clock.update(dt);
+  const d = ease(clock.day), k = ease(clock.dusk), w = clock.weights;
   uDay.value = d;
-  const mix = (a, b) => a + (b - a) * d;
-  shared.uAmb.value.set(mix(NIGHT_AMB[0], DAY_AMB[0]), mix(NIGHT_AMB[1], DAY_AMB[1]), mix(NIGHT_AMB[2], DAY_AMB[2]));
-  // the low sun is orange while rising, then whitens
+  shared.aurora.uDusk.value = k;
+  shared.uSeason.value.set(w[0], w[1], w[2], w[3]);
+  // what the season does to the colour of the light
+  const tint = (row, ch) => SEASON_LIGHT[0][row][ch] * w[0] + SEASON_LIGHT[1][row][ch] * w[1] + SEASON_LIGHT[2][row][ch] * w[2] + SEASON_LIGHT[3][row][ch] * w[3];
+  const mix3 = (out, night, dayC, dusk, row) => {
+    for (let ch = 0; ch < 3; ch++) {
+      const v = night[ch] + (dayC[ch] - night[ch]) * d;
+      out[ch] = (v + (dusk[ch] - v) * k) * (row < 0 ? 1 : 1 + (tint(row, ch) - 1) * d);
+    }
+    return out;
+  };
+  const amb = mix3([0, 0, 0], NIGHT_AMB, DAY_AMB, DUSK_AMB, 1);
+  shared.uAmb.value.set(amb[0], amb[1], amb[2]);
+  // the low sun is orange while rising, then whitens; at sunset it goes all the way to ember
   const warm = 1 - d;
-  shared.uSunCol.value.set(SUN[0] * d, SUN[1] * d * (1 - 0.35 * warm), SUN[2] * d * (1 - 0.6 * warm));
-  fogColor.setRGB(mix(NIGHT_FOG[0], DAY_FOG[0]), mix(NIGHT_FOG[1], DAY_FOG[1]), mix(NIGHT_FOG[2], DAY_FOG[2]));
-  hemi.intensity = mix(0.9, Math.PI);
-  hemi.color.copy(HEMI_SKY_N).lerp(HEMI_SKY_D, d);
-  hemi.groundColor.copy(HEMI_GROUND_N).lerp(HEMI_GROUND_D, d);
-  shared.uFogDensity.value = scene.fog.density = mix(0.0042, 0.0012);
-  sunLight.intensity = 9.1 * d;
-  bloom.threshold = mix(0.82, 1.08);
-  renderer.toneMappingExposure = mix(1.12, 1.04);
+  const sun = [SUN[0] * d, SUN[1] * d * (1 - 0.35 * warm), SUN[2] * d * (1 - 0.6 * warm)];
+  for (let ch = 0; ch < 3; ch++) sun[ch] = (sun[ch] + (DUSK_SUN[ch] - sun[ch]) * k) * tint(0, ch);
+  shared.uSunCol.value.set(sun[0], sun[1], sun[2]);
+  shared.uSunDir.value.copy(SUN_DIR.day).lerp(SUN_DIR.dusk, k).normalize();
+  const fog = mix3([0, 0, 0], NIGHT_FOG, DAY_FOG, DUSK_FOG, -1);
+  // winter air is paler, autumn air a little golden
+  fogColor.setRGB(fog[0] * (1 + 0.10 * w[3] * d + 0.05 * w[2] * d), fog[1] * (1 + 0.08 * w[3] * d), fog[2] * (1 + 0.04 * w[3] * d - 0.08 * w[2] * d));
+  const lerp = (a, b) => a + (b - a) * d;
+  hemi.intensity = lerp(0.9, Math.PI);
+  hemi.color.copy(HEMI_SKY_N).lerp(_hemiDay.setRGB(amb[0], amb[1], amb[2]), d);
+  hemi.groundColor.copy(HEMI_GROUND_N).lerp(_hemiGround.copy(HEMI_GROUND_D).lerp(_snowBounce, w[3]), d);
+  shared.uFogDensity.value = scene.fog.density = lerp(0.0042, 0.0012) * (1 - 0.25 * k + 0.6 * w[3] * d);
+  const sunMax = Math.max(sun[0], sun[1], sun[2], 1e-4);
+  sunLight.color.setRGB(sun[0] / sunMax, sun[1] / sunMax, sun[2] / sunMax);
+  sunLight.intensity = sunMax * Math.PI;
+  bloom.threshold = lerp(0.82, 1.08);
+  renderer.toneMappingExposure = lerp(1.12, 1.04) * (1 - 0.10 * w[3] * d);       // snow is bright: hold the highlights
+  applySeason(w);
+
+  // The shadow map is drawn once and reused. It only goes stale when the sun moves (toward
+  // sunset) or the plantings change height (a new season); then it is redrawn every third
+  // frame until things settle.
+  if (Q.shadow) {
+    const moved = _sunWas.distanceToSquared(shared.uSunDir.value) > 1e-8 || !_seasonWas.equals(shared.uSeason.value);
+    if (moved) shadowSettle = 2;
+    if (shadowSettle > 0 && frames % 3 === 0) {
+      _sunWas.copy(shared.uSunDir.value);
+      _seasonWas.copy(shared.uSeason.value);
+      sunLight.position.copy(sunLight.target.position).addScaledVector(shared.uSunDir.value, 220);
+      renderer.shadowMap.needsUpdate = true;
+      shadowStale = true;
+      if (!moved) shadowSettle--;
+    }
+  }
   const dim = 1 - 0.88 * d;
   for (const [m, r, g, b] of cabin.glows) m.color.setRGB(r * dim, g * dim, b * dim);
   const lamp = lanternOn ? dim : 0.05;
@@ -748,6 +833,7 @@ let toastTimer = 0;
 let lastScore = -1;
 let lastStatus = '';
 let wantPhoto = false;
+let shadowStale = false;      // the shadow map was just redrawn: its matrix must be handed to the shaders
 let focusHit = 40;            // how far along the view ray the ground (or a flower) is
 
 function toast(text) {
@@ -780,16 +866,18 @@ renderStory(false);
 
 // Pages are turned by what you actually do. Checked a few times a second, never per frame.
 const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map(), flower: '', flowerT: 0 };
-const FLOWER_TINT = { tulip: '#e8433a', rose: '#e0527a', sunflower: '#f2b21c', lavender: '#8e6fd8', daisy: '#f4f1e4', cherry: '#f6bfd0' };
+const FLOWER_TINT = { tulip: '#e8433a', rose: '#e0527a', sunflower: '#f2b21c', lavender: '#8e6fd8', daisy: '#f4f1e4', cherry: '#f6bfd0', camellia: '#c81e34' };
 function flowerHere(x, z) {
+  // what is in bloom where you stand depends on the season (only a settled season counts)
+  const si = clock.seasonIndex;
+  if (clock.weights[si] < 0.9) return '';
   const gx = x - GARDEN.x, gz = z - GARDEN.z;
-  for (const [tx, tz] of GARDEN_TREES) if (Math.hypot(x - tx, z - tz) < 3.4 && view.pitch > 12) return 'cherry';
-  if (gx > 4 && gx < 19 && gz > -16 && gz < -4) return 'sunflower';
-  if (gx > 2.5 && gx < 17.5 && gz > 4.6 && gz < 15.6) return 'lavender';
+  if (si === 0) for (const [tx, tz] of GARDEN_TREES) if (Math.hypot(x - tx, z - tz) < 3.4 && view.pitch > 12) return 'cherry';
+  if (si === 1 && gx > 4 && gx < 19 && gz > -16 && gz < -4) return 'sunflower';
+  if (si === 1 && gx > 2.5 && gx < 17.5 && gz > 4.6 && gz < 15.6) return 'lavender';
   const r = Math.hypot(gx, gz);
-  if (r > 3.2 && r < 7.2) return 'rose';
-  if (Math.abs(gx) < GARDEN.hx + 4 && Math.abs(gz) < GARDEN.hz + 4 && r > 8) return 'daisy';
-  if (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55 && !(x > 10.5 && z > -7)) return 'tulip';
+  if (r > 3.2 && r < 7.2) return si === 3 ? 'camellia' : 'rose';
+  if (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55 && !(x > 10.5 && z > -7)) return ['tulip', 'lavender', 'daisy', ''][si];
   return '';
 }
 const _cen = new THREE.Vector3();
@@ -818,7 +906,7 @@ function updateStory(step) {
   }
   storyAcc.bench = Math.hypot(x - (GARDEN.x - 1.9), z - (GARDEN.z + 2.0)) < 2.6 && walker.speed < 0.2 ? storyAcc.bench + step : 0;
   if (storyAcc.bench > 2.5) story.mark('bench');
-  if (nightNow && day.target === 0) story.mark('night');
+  if (nightNow && clock.phase.id === 'night') story.mark('night');
   if (nightNow && !lanternOn) story.mark('lamp');
   storyAcc.lie = nightNow && view.pitch > 42 ? storyAcc.lie + step : 0;
   if (storyAcc.lie > 5) story.mark('lie');
@@ -985,7 +1073,7 @@ $('conBtn').addEventListener('click', () => {
   showCons = !showCons;
   $('conBtn').setAttribute('aria-pressed', String(showCons));
   syncGameMode();
-  toast(showCons ? (day.target === 1 ? 'Chòm sao sẽ hiện khi đêm xuống' : 'Đang hiện 7 chòm sao — bấm vào tên để đọc về từng chòm') : 'Đã ẩn các chòm sao');
+  toast(showCons ? (clock.phase.id !== 'night' ? 'Chòm sao sẽ hiện khi đêm xuống' : 'Đang hiện 7 chòm sao — bấm vào tên để đọc về từng chòm') : 'Đã ẩn các chòm sao');
 });
 $('photoBtn').addEventListener('click', () => { wantPhoto = true; });
 
@@ -1000,7 +1088,7 @@ $('qMore').addEventListener('click', () => $('dockToggle').click());
 $('qPhoto').addEventListener('click', () => { wantPhoto = true; });
 $('qStroll').addEventListener('click', () => setStroll(!stroll.on));
 $('qJournal').addEventListener('click', () => openJournal(true));
-$('qTime').addEventListener('click', () => setDay(day.target !== 1));
+$('qTime').addEventListener('click', cyclePhase);
 
 /* picture quality: automatic by default, or pinned by the visitor */
 [['auto', 'Tự động'], ['low', 'Thấp'], ['medium', 'Vừa'], ['high', 'Cao']].forEach(([id, label]) => {
@@ -1010,7 +1098,8 @@ $('qTime').addEventListener('click', () => setDay(day.target !== 1));
   b.textContent = id === 'auto' ? `${label} (${{ low: 'thấp', medium: 'vừa', high: 'cao' }[tier]})` : label;
   b.setAttribute('aria-pressed', String(qualityChoice === id));
   b.addEventListener('click', () => {
-    try { localStorage.setItem('aurora-vale-quality', id); } catch (e) { /* ignore */ }
+    store.set('settings.quality', id);
+    store.flush();
     const url = new URL(location.href);
     url.searchParams.delete('q');
     location.replace(url);
@@ -1018,18 +1107,46 @@ $('qTime').addEventListener('click', () => setDay(day.target !== 1));
   $('qualityChips').appendChild(b);
 });
 
-/* time of day */
-function setDay(on, quiet) {
-  day.target = on ? 1 : 0;
-  $('timeDay').setAttribute('aria-pressed', String(on));
-  $('timeNight').setAttribute('aria-pressed', String(!on));
-  document.body.classList.toggle('day', on);
-  $('qTime').textContent = on ? 'Sang ban đêm' : 'Sang buổi sáng';
-  if (!quiet) toast(on ? 'Trời sáng dần — hoa tulip mở cánh đón nắng' : 'Màn đêm buông xuống — chờ cực quang lên');
+/* time of day and season */
+function syncClockUi() {
+  const ph = clock.phase.id;
+  for (const [id, btn] of [['day', 'timeDay'], ['dusk', 'timeDusk'], ['night', 'timeNight']]) $(btn).setAttribute('aria-pressed', String(ph === id));
+  document.body.classList.toggle('day', ph !== 'night');
+  $('qTime').textContent = `Sang ${PHASES[(clock.phaseIndex + 1) % PHASES.length].name.toLowerCase()}`;
+  [...$('seasonChips').children].forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.season === clock.season.id)));
+  $('autoDay').setAttribute('aria-pressed', String(clock.auto));
 }
-$('timeDay').addEventListener('click', () => setDay(true));
-$('timeNight').addEventListener('click', () => setDay(false));
-setDay(day.target === 1, true);
+clock.onPhase = (ph, byItself) => { syncClockUi(); if (started && !clock.quiet) toast(byItself ? `${ph.name} — ${ph.line}` : ph.line); };
+clock.onSeason = (se) => {
+  syncClockUi();
+  store.set('settings.season', se.id);
+  if (started && !clock.quiet) toast(`${se.name} — ${se.line}`);
+};
+function setPhase(id, quiet) { clock.quiet = !!quiet; clock.setPhase(id); clock.quiet = false; }
+/** kept for the places that only know day from night */
+function setDay(on, quiet) { setPhase(on ? 'day' : 'night', quiet); }
+function cyclePhase() { clock.nextPhase(false); }
+for (const se of SEASONS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'chip';
+  b.dataset.season = se.id;
+  b.textContent = se.name;
+  b.title = se.line;
+  b.addEventListener('click', () => clock.setSeason(se.id));
+  $('seasonChips').appendChild(b);
+}
+$('timeDay').addEventListener('click', () => setPhase('day'));
+$('timeDusk').addEventListener('click', () => setPhase('dusk'));
+$('timeNight').addEventListener('click', () => setPhase('night'));
+$('autoDay').addEventListener('click', () => {
+  clock.auto = !clock.auto;
+  clock.elapsed = 0;
+  store.set('settings.autoDay', clock.auto);
+  syncClockUi();
+  toast(clock.auto ? 'Ngày tự trôi: sáng, hoàng hôn, đêm nối nhau; mỗi sớm mai là một mùa mới' : 'Thời gian đứng yên ở lúc bạn chọn');
+});
+syncClockUi();
 
 /* seats */
 SPOTS.forEach((sp, i) => {
@@ -1168,7 +1285,7 @@ party.onEvent = (kind, who) => {
     for (const [id, f] of friends) if (party.others.get(id) === who) f.wave = 2.4;
   }
   else if (kind === 'world') {
-    if ((day.target === 1) !== who.day) setDay(who.day, true);
+    if ((clock.phase.id !== 'night') !== who.day) setDay(who.day, true);
     if (mood.index !== who.mood) { mood.index = who.mood; mood.auto = false; syncMoodChips(); }
   }
 };
@@ -1198,7 +1315,7 @@ function updateParty(dt) {
   if (!party.active && !ghosts) return;
   netAcc += dt; worldAcc += dt;
   if (netAcc > 0.1) { netAcc = 0; party.sendState(camBase.x, camBase.z, view.yaw); }
-  if (worldAcc > 2) { worldAcc = 0; party.sendWorld(day.target === 1, mood.index); party.prune(); }
+  if (worldAcc > 2) { worldAcc = 0; party.sendWorld(clock.phase.id !== 'night', mood.index); party.prune(); }
   const k = 1 - Math.exp(-dt * 8);
   for (const [id, f] of friends) {
     const o = party.others.get(id);
@@ -1244,7 +1361,7 @@ function partyUi() {
 }
 async function partyDo(fn) {
   try {
-    try { localStorage.setItem('aurora-vale-name', cleanName($('partyName').value)); } catch (e) { /* ignore */ }
+    store.set('settings.name', cleanName($('partyName').value));
     await fn();
   } catch (err) {
     party.leave();
@@ -1256,7 +1373,7 @@ async function partyDo(fn) {
   }
   partyUi();
 }
-try { $('partyName').value = localStorage.getItem('aurora-vale-name') || ''; } catch (e) { /* ignore */ }
+$('partyName').value = store.get('settings.name', '');
 $('qFriends').addEventListener('click', () => openParty(true));
 $('partyClose').addEventListener('click', () => openParty(false));
 partyBox.addEventListener('click', (e) => { if (e.target === partyBox) openParty(false); });
@@ -1406,7 +1523,7 @@ function openJournal(open, focusId) {
       li.appendChild(again);
       sl.appendChild(li);
     }
-    $('flowerSum').textContent = `Đứng yên giữa một loài hoa vào buổi sáng (hoặc để “Dạo vườn” đưa bạn tới) là loài đó được ép vào sổ. Đã có ${story.flowers.size}/${FLOWERS.length} loài.`;
+    $('flowerSum').textContent = `Mỗi mùa có hoa của nó. Khi còn nắng, đứng yên giữa một loài đang nở (hoặc để “Dạo vườn” đưa bạn tới) là loài đó được ép vào sổ. Đổi mùa trong bảng Tuỳ chỉnh. Đã có ${story.flowers.size}/${FLOWERS.length} loài.`;
     const fl = $('flowerList');
     fl.innerHTML = '';
     for (const f of FLOWERS) {
@@ -1416,7 +1533,7 @@ function openJournal(open, focusId) {
       const nm = document.createElement('b');
       nm.textContent = f.name;
       const lt = document.createElement('small');
-      lt.textContent = f.latin;
+      lt.textContent = `${f.latin} · ${f.season}`;
       nm.appendChild(lt);
       const nt = document.createElement('span');
       nt.textContent = found ? f.note : `Chưa gặp. ${f.where}.`;
@@ -1478,11 +1595,41 @@ function openJournal(open, focusId) {
       li.appendChild(det);
       list.appendChild(li);
     }
+    $('dataStatus').textContent = store.persistent ? '' : 'Trình duyệt đang chặn lưu trữ (chế độ riêng tư?), nên tiến trình sẽ mất khi đóng trang.';
     if (focusId) requestAnimationFrame(() => { const el = $(`lore-${focusId}`); if (el) el.scrollIntoView({ block: 'start' }); });
   }
   journal.classList.toggle('hidden', !open);
 }
 $('journalBtn').addEventListener('click', () => openJournal(true));
+
+/* the save file: back it up, bring it back, or start over */
+$('dataExport').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([store.export()], { type: 'application/json' }));
+  a.download = `aurora-vale-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  $('dataStatus').textContent = 'Đã lưu một file sao lưu. Giữ nó để mang tiến trình sang máy hoặc trình duyệt khác.';
+});
+$('dataImport').addEventListener('click', () => $('dataFile').click());
+$('dataFile').addEventListener('change', async () => {
+  const file = $('dataFile').files[0];
+  if (!file) return;
+  const ok = file.size < 200000 && store.import(await file.text());
+  $('dataFile').value = '';
+  if (ok) location.reload();
+  else $('dataStatus').textContent = 'File này không phải bản sao lưu của Aurora Vale.';
+});
+{
+  let armed = 0;
+  $('dataReset').addEventListener('click', () => {
+    if (performance.now() - armed < 4000) { store.reset(); location.reload(); return; }
+    armed = performance.now();
+    $('dataStatus').textContent = 'Bấm “Xoá tiến trình” lần nữa trong 4 giây để xoá hành trình, sổ hoa, các trang đã lật và kỷ lục.';
+  });
+}
 $('journalClose').addEventListener('click', () => openJournal(false));
 journal.addEventListener('click', (e) => { if (e.target === journal) openJournal(false); });
 
@@ -1514,7 +1661,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'p') wantPhoto = true;
   else if (k === 'g' && party.active) $('partyWave').click();
   else if (k === 'b') $('dockToggle').click();
-  else if (k === 'n') setDay(day.target !== 1);
+  else if (k === 'n') cyclePhase();
   else if (k === 'j') openJournal(journal.classList.contains('hidden'));
   else if (k === 't' && mode === 'view') setTour(!tour.on);
   else if (k === 'v' && mode === 'view') setStroll(!stroll.on);
@@ -1552,7 +1699,7 @@ function savePhoto() {
 // ?debug=1 hands the page's state to the developer tools (tools/check.mjs reads it).
 if (query.has('debug')) {
   window.__av = {
-    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, rocks: ROCK_SPOTS,
+    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rocks: ROCK_SPOTS,
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -1563,7 +1710,7 @@ if (query.has('debug')) {
 }
 
 /* -------------------------------------------------------------- render loop */
-const clock = new THREE.Clock();
+const frameClock = new THREE.Clock();
 let time = Number(query.get('t')) || 0;
 let frames = 0;
 let skyAngle = (Number(query.get('sky')) || 0) * DEG;
@@ -1605,7 +1752,7 @@ function adaptQuality(dt) {
 
 function frame() {
   requestAnimationFrame(frame);
-  const raw = clock.getDelta();
+  const raw = frameClock.getDelta();
   if (document.hidden) return;
   const dt = Math.min(raw, 0.05);
   time += dt;
@@ -1695,7 +1842,7 @@ function frame() {
   auroraLight.color.setRGB(tint.x / tmax, tint.y / tmax, tint.z / tmax);
   auroraLight.intensity = 0.5 * a.value * breathe;
   bloom.strength = (0.38 + 0.08 * Math.min(a.value, 2)) * (1 - 0.5 * dayAmt);
-  audio.setDay(dayAmt);
+  audio.setDay(dayAmt * (1 - 0.85 * clock.weights[3]));          // few birds sing in the snow
   audio.setIntensity((a.value - 0.3) / 1.6);
 
   /* ---- campfire ---- */
@@ -1729,7 +1876,7 @@ function frame() {
     // and it stops down as the subject comes near: studying a flower, nothing is smeared;
     // the soft foreground is kept for the long views, where it gives depth
     const t = clamp((u.value - 1.5) / 6.5, 0, 1);
-    lensPass.uniforms.uAperture.value = 0.22 * t * t * (3 - 2 * t);
+    lensPass.uniforms.uAperture.value = 0.13 * t * t * (3 - 2 * t);
   }
   updateLabels();
   updateCompass();
@@ -1741,7 +1888,8 @@ function frame() {
     audio.setStream(clamp(1 - sd / 38, 0, 1));
   }
   composer.render(dt);
-  if (Q.shadow && !shared.light.uShadowOn.value && sunLight.shadow.map) {
+  if (Q.shadow && (shadowStale || !shared.light.uShadowOn.value) && sunLight.shadow.map) {
+    shadowStale = false;
     shared.light.uShadowMap.value = sunLight.shadow.map.texture;
     shared.light.uShadowMatrix.value.copy(sunLight.shadow.matrix);
     shared.light.uShadowOn.value = 1;

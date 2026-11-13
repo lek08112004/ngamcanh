@@ -56,7 +56,9 @@ js/main.js            renderer, quality tiers, camera/walking, day-night, moods,
 js/world.js           terrainH(), terrain, mountain ring + baked light map, cabin, fence, boulders,
                       grass layers, camp and tent, canvas-drawn textures
 js/flora.js           flower geometry builder (Geo), species (far + close-up models), garden, trees
-js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (six kinds), saved progress
+js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (seven kinds), saved progress
+js/seasons.js         the calendar and clock: SEASONS, PHASES, GROW tables, WorldClock (no renderer code)
+js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
 js/layout.js          world coordinates (CABIN, CAMP, GARDEN, BOUNDS) — imports nothing
 js/game.js            constellation game (firefly, stardust, storms, wishes, save)
 js/lore.js            astronomy journal text per constellation
@@ -67,12 +69,42 @@ tools/shot.sh         screenshot through headless Chrome (virtual time)
 tools/drive.mjs       drive headless Chrome over the DevTools protocol (real time, real keys)
 tools/check.mjs       audio | walk | story | party | fps — see Testing
 tools/audio-probe.html renders every sound layer offline and prints level and spectrum
+tools/syntax.mjs      parses every module; fails if anything but store.js touches localStorage
+package.json          dev scripts only (npm run serve | syntax | check | fps); the site has no dependencies
 ```
 
 Shaders: `common` (noise), `sky`, `milkyway`, `aurora`, `terrain` (+ `curvesGLSL`: `terrainH`
 mirrored from JS, and the shared meadow helpers), `water`, `grass`, `tulip` (all flowers +
 blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows), `fire`,
 `post` (final grade, lens blur, glow sprites).
+
+## Seasons, time of day, and the save
+
+- `WorldClock` (`seasons.js`) holds the chosen season and phase (`day` | `dusk` | `night`) and
+  eases what is shown toward them: `weights` (season blend, sums to 1), `day`, `dusk`.
+  `applyDay()` in `main.js` turns those into every light, fog and sky value each frame, then
+  calls `applySeason()`. With "Ngày tự trôi" on, phases follow `PHASE_SECONDS` and each new
+  morning is the next season.
+- Shaders see the season as `uniform vec4 uSeason` (declared in `curvesGLSL`, so terrain and
+  grass get it together; mountains and the grass fragment declare it themselves) and sunset
+  as `uDusk` (declared in `auroraGLSL`, part of the `shared.aurora` group). A material that
+  includes `curvesGLSL` **must** be given `uSeason` or its meadow goes black.
+- **One signature flower per season**, and nothing scattered: `GROW` in `seasons.js` says how
+  far up each planting is in each season. The stripes in front of the camp are replanted
+  (tulips, then lavender, then cúc hoạ mi, then bare under snow); the garden has sunflowers
+  in summer only, and the rose ring is tinted into red camellias in winter (`uTint`).
+  Each planting is made by `plant()` in `flora.js` and exposes `{uGrow, uTint}` through
+  `group.userData.grow[name]`; names must match the keys of `GROW`.
+- The sun now moves (morning position, sunset position). The shadow map is redrawn every
+  third frame only while the sun or the season is changing (`shadowSettle` in `applyDay`).
+  The mountains carry two baked visibility maps, one per sun (`uMtnMap.a`, `uMtnDusk.r`).
+- Cherry trees: `growCherry()` builds real forking limbs; blossom cards hang along the twigs
+  and slide from blossom to leaf with `uLeaf`; colours per season come from `CROWN` in `main.js`.
+- **The save** (`store.js`): `store.get('table.field')` / `store.set(...)`; the schema at the top
+  of the file is the single list of what persists. Adding a field means adding it there.
+  Old separate keys are migrated once. There is no server database: "no backend" still holds,
+  and the owner has been told so. `tools/syntax.mjs` fails if any other module uses
+  `localStorage` directly.
 
 ## How the picture is put together
 
@@ -95,9 +127,8 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   2 seed disc, 3 rose petal, 4 ray petal (sunflower, daisy), 5 yellow disc. Seed discs carry
   radial UVs and the shader draws the florets as 21 + 34 crossing spirals. Roses are planted
   as bushes (several canes per root). Butterflies are points drawn in `butterflyFragment`.
-- **Flower shadows**: every flower mesh has `castShadow` and a `customDepthMaterial`
-  (`flowerDepthFragment`, same cut-outs), so blooms are in the once-drawn sun shadow map at no
-  per-frame cost. Flowers sample it at their own vertices, offset toward the sun. `low` has
+- **Flower shadows**: each planting's far mesh has `castShadow` and its own depth material
+  (`flowerDepthFragment`, same cut-outs, same `uGrow`), so blooms are in the sun shadow map. Flowers sample it at their own vertices, offset toward the sun. `low` has
   no shadow map and keeps the painted row shade instead.
 - **Lens blur** focuses where the view ray meets the ground or the flowers (`focusHit`) and
   stops down for near subjects. It only ever blurs what is nearer than the focus.
@@ -143,9 +174,9 @@ Measured once, on one integrated laptop GPU at about 1900×980, with `tools/chec
 
 | tier | day | night |
 | --- | --- | --- |
-| high | 52–58 → 50 fps | 39–41 → 36 fps |
-| medium | 87–94 → 76 fps | 60–62 → 53 fps |
-| low | 144 → 144 fps | 116 → 110 fps |
+| high | 52–58 → 46 fps | 39–41 → not re-measured |
+| medium | 87–94 → 71 fps (winter 74, summer sunset 50) | 60–62 → 51 fps |
+| low | 144 → 144 fps (winter 144) | 116 → not re-measured |
 
 That is the only hardware ever measured. No phone, no discrete card, no weak desktop.
 Night on `high` is the heaviest case and it is the aurora sky, not the land.
@@ -175,7 +206,7 @@ node tools/check.mjs fps "auto=view&time=night&q=high"   # frame rate on the gra
 - `audio` measures; nobody has listened to the result. Trust it for clipping and balance,
   not for whether the birds sound like birds.
 
-Useful URL params: `auto=play|view|zen`, `time=day|night`, `q=low|medium|high`,
+Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|summer|autumn|winter`, `q=low|medium|high`,
 `mood=emerald|rose|ice|storm|still`, `spot=hill|fire|lie|tulip|garden|bench`,
 `x`, `z`, `eye` (stand anywhere, eye height in metres), `yaw`, `pitch`, `fov`,
 `t` (aurora time), `sky` (star rotation, degrees), `cons=1`, `open=journal`,
@@ -184,9 +215,23 @@ Useful URL params: `auto=play|view|zen`, `time=day|night`, `q=low|medium|high`,
 
 ## Known weak spots (honest list)
 
+- Grass: tufted, arcing blades with seed heads now, but still coarse ribbons; the ground
+  shows between tufts, most on `low`. The owner asked twice for better grass.
+- Winter is the least finished season: snow is a ground colour, not depth (nothing is
+  buried; rocks, tent and bench carry no snow), the stream does not freeze, the fire and
+  smoke are unchanged. Summer and autumn mostly recolour; spring got the most attention.
+- At sunset the sun sets behind the mountains but the valley floor is still lit by it
+  (terrain is not in the mountains' shadow bake). Stars and aurora show through the sunset.
+- Cherry blossom reads as near-white with pink hearts; from a few metres the flowers on a
+  card are soft. Bare winter twigs are few.
+- Camellias are the rose model tinted red, not a camellia model. "Cúc hoạ mi" is the daisy model.
+- `main.js` is still one ~1900-line orchestrator. Seasons, story and storage were moved into
+  modules; camera, walking, UI wiring and the frame loop were not.
+
 - Flowers: tulips, roses and sunflowers hold up at arm's length, but they are still built
-  models with painted shading, not photographs; the owner has twice said they are not yet
-  real enough. Daisies and lavender have no close-up model. Cherry trees are
+  models with painted shading, not photographs. The owner called them "tạm ổn" but stiff; a
+  per-stem lean and sway was added. Using photographed textures was offered and set aside
+  by the owner for now (the no-image-files rule stands). Daisies and lavender have no close-up model. Cherry trees are
   clouds of cards and read as such from nearby.
 - Far grass tufts look saw-toothed when zoomed in; some blades stand on bare rock.
 - Mountain strata are a bit regular; the forest is grain, not trees, when zoomed right in.
@@ -197,6 +242,8 @@ Useful URL params: `auto=play|view|zen`, `time=day|night`, `q=low|medium|high`,
   (4096 on high over 104 m, about 2.5 cm a texel): fine for rows, soft for single petals.
 - Sunflower discs are a painted spiral pattern on a low dome, not modelled florets.
 - "Dạo vườn" (`STROLL` in `main.js`) follows fixed waypoints; it does not avoid companions.
+- `node tools/check.mjs fps` sometimes fails to start when run back to back (port still held);
+  run it again.
 - Companions are capsule figures. Their movement is interpolated from ten updates a second.
 - Astronomy text in `lore.js` was re-read against general knowledge (two corrections made:
   Rigel's luminosity, Deneb's distance ratio). It was **not** checked against sources.

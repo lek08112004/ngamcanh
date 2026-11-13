@@ -744,6 +744,9 @@ body.play .story { opacity: 0; pointer-events: none; transform: translateY(-8px)
 #flowerList li.found { border-color: rgba(255, 127, 182, 0.30); }
 #flowerList li.found b { color: var(--ink); }
 #flowerList li.found span { color: var(--ink-dim); }
+.data-row { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 8px; }
+#dataReset { border-color: rgba(255, 127, 182, 0.35); }
+#autoDay[aria-pressed="true"] { border-color: rgba(255, 208, 138, 0.7); background: rgba(255, 208, 138, 0.16); }
 #qStroll[aria-pressed="true"] { border-color: rgba(255, 208, 138, 0.7); background: rgba(255, 208, 138, 0.16); }
 
 /* ---------- modes ---------- */

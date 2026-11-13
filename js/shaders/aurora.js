@@ -9,7 +9,8 @@ uniform vec3 uAurLow;      // colour at the lower hem
 uniform vec3 uAurMid;      // colour of the body
 uniform vec3 uAurHigh;     // colour of the crown
 uniform vec3 uGlow;        // horizon glow
-uniform float uDay;        // 0 night .. 1 morning
+uniform float uDay;        // 0 night .. 1 full daylight
+uniform float uDusk;       // 0 .. 1 sunset
 vec3 auroraPalette(float h, float m){
   vec3 c = mix(uAurLow, uAurLow * vec3(1.0, 1.0, 0.55) + vec3(0.42, 0.0, 0.0) * uAurLow.g, m * 0.55);
   c = mix(c, uAurMid, smoothstep(0.34, 0.74, h + (m - 0.5) * 0.40));

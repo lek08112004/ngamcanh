@@ -1,0 +1,14 @@
+{
+  "name": "aurora-vale",
+  "private": true,
+  "type": "module",
+  "description": "A calm camping world in the browser. The site itself needs no build and no dependencies; these scripts are only for working on it.",
+  "scripts": {
+    "serve": "python -m http.server 8765 --bind 127.0.0.1",
+    "syntax": "node tools/syntax.mjs",
+    "check": "node tools/syntax.mjs && node tools/check.mjs walk && node tools/check.mjs story && node tools/check.mjs audio",
+    "check:party": "node tools/check.mjs party",
+    "fps": "node tools/check.mjs fps"
+  },
+  "engines": { "node": ">=22" }
+}

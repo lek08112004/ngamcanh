@@ -108,7 +108,7 @@
 
     <!-- quick bar: the few things you reach for most -->
     <div class="glass panel quick" id="quick">
-      <button id="qTime" class="chip" type="button" title="Đổi buổi sáng / ban đêm (N)">Ban đêm</button>
+      <button id="qTime" class="chip" type="button" title="Buổi sáng → hoàng hôn → ban đêm (N)">Ban đêm</button>
       <button id="qStroll" class="chip" type="button" aria-pressed="false" title="Thong thả dạo một vòng qua các vườn hoa (V)">Dạo vườn</button>
       <button id="qPhoto" class="chip" type="button" title="Lưu ảnh PNG (P)">Chụp ảnh</button>
       <button id="qJournal" class="chip" type="button" title="Hành trình và sổ tay thiên văn (J)">Sổ tay</button>
@@ -123,10 +123,16 @@
         <span class="label">Thời điểm</span>
         <div class="chips tight">
           <button id="timeDay" class="chip" type="button" title="Buổi sáng trong vườn tulip (N)">Buổi sáng</button>
+          <button id="timeDusk" class="chip" type="button" title="Hoàng hôn sau dãy núi (N)">Hoàng hôn</button>
           <button id="timeNight" class="chip" type="button" title="Ban đêm ngắm cực quang (N)">Ban đêm</button>
+          <button id="autoDay" class="chip" type="button" aria-pressed="false" title="Để ngày và mùa tự trôi: một ngày khoảng mười phút, mỗi sớm mai sang mùa mới">Ngày tự trôi</button>
         </div>
         <span class="label">Chỗ ngồi</span>
         <div class="chips" id="spots"></div>
+      </div>
+      <div class="dock-row">
+        <span class="label">Mùa</span>
+        <div class="chips" id="seasonChips"></div>
       </div>
       <div class="dock-row">
         <span class="label">Chất lượng</span>
@@ -188,6 +194,15 @@
       <h3 class="jsec">Chuyện kể của bảy chòm sao</h3>
       <p class="journal-sum" id="journalSum"></p>
       <ul id="journalList"></ul>
+      <h3 class="jsec">Dữ liệu của bạn</h3>
+      <p class="journal-sum">Mọi tiến trình nằm trong trình duyệt này, không gửi đi đâu. Bạn có thể lưu ra một file để giữ hoặc chuyển sang máy khác.</p>
+      <div class="data-row">
+        <button id="dataExport" class="chip" type="button">Lưu ra file</button>
+        <button id="dataImport" class="chip" type="button">Khôi phục từ file</button>
+        <button id="dataReset" class="chip" type="button">Xoá tiến trình</button>
+        <input id="dataFile" type="file" accept="application/json,.json" hidden>
+      </div>
+      <p id="dataStatus" class="party-status" role="status" aria-live="polite"></p>
     </div>
   </div>
 

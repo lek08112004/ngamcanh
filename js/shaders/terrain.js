@@ -34,6 +34,7 @@ float terrainH(vec2 p){
   return r + hill + side + far + back - 0.6 * inValley * (1.0 - level);
 }
 // ---- the meadow, described once for the ground and for every grass blade ----
+uniform vec4 uSeason;      // how much of spring, summer, autumn, winter is showing (sums to 1)
 float chash(vec2 p){
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -54,7 +55,12 @@ vec3 meadowColor(vec2 p, float y){
   float dry = clamp(smoothstep(0.50, 0.82, pat) * 0.85 + smoothstep(9.0, 30.0, y) * 0.40, 0.0, 1.0);
   c = mix(c, vec3(0.110, 0.112, 0.044), dry * 0.66);
   float clover = smoothstep(0.62, 0.84, cnoise(p * 0.13 + 53.0));
-  return mix(c, vec3(0.024, 0.058, 0.022), clover * 0.6);
+  c = mix(c, vec3(0.024, 0.058, 0.022), clover * 0.6);
+  // the same meadow through the year: lush, then deep and sun-dried, then tawny, then withered
+  vec3 summer = mix(c * vec3(0.78, 0.90, 0.70), vec3(0.120, 0.112, 0.044), dry * 0.30);
+  vec3 autumn = mix(c * vec3(1.15, 0.92, 0.60), vec3(0.165, 0.108, 0.034), 0.45 + 0.40 * pat);
+  vec3 winter = mix(c, vec3(0.095, 0.085, 0.050), 0.65);
+  return c * uSeason.x + summer * uSeason.y + autumn * uSeason.z + winter * uSeason.w;
 }
 // 0..1 where bare rock breaks through the turf (kept away from the camp and the flower beds)
 float rockMask(vec2 p){
@@ -63,7 +69,7 @@ float rockMask(vec2 p){
   float n = cnoise(p * 0.045 + 90.0) * 0.62 + cnoise(p * 0.17 + 40.0) * 0.38;
   return smoothstep(0.68, 0.74, n) * keep;
 }
-// 0..1 inside the tilled tulip beds (same stripes as createTulips in flora.js)
+// 0..1 inside the tilled tulip beds (same stripes as createBeds in flora.js)
 float tulipBed(vec2 p){
   float d = 8.0 - p.y;
   if (d < 4.5 || d > 50.0) return 0.0;
@@ -242,6 +248,31 @@ void main(){
   hRel += peb * 0.05 * bank * lB - bank * 0.05;
   grassAmt *= 1.0 - bank;
 
+  // blossom under the cherry trees in spring, their leaves in autumn
+  {
+    float fall = uSeason.x + uSeason.z;
+    if (fall > 0.01) {
+      float dT = min(distance(xz, GARDEN_XZ), min(distance(xz, GARDEN_XZ + vec2(-5.5, 9.5)), distance(xz, GARDEN_XZ + vec2(10.0, -1.5))));
+      float under = smoothstep(4.6, 1.2, dT);
+      if (under > 0.0) {
+        vec2 pq = mat2(0.8, -0.6, 0.6, 0.8) * xz;
+        float litter = smoothstep(0.64, 0.74, vnoise(pq * 21.0)) * smoothstep(0.30, 0.65, vnoise(xz * 5.0 + 3.0) + under * 0.45);
+        vec3 litterCol = mix(vec3(0.62, 0.40, 0.46), mix(vec3(0.46, 0.17, 0.035), vec3(0.50, 0.33, 0.05), vnoise(pq * 9.0)), uSeason.z / fall);
+        albedo = mix(albedo, litterCol * (0.8 + 0.4 * micro), litter * under * fall * 0.75);
+      }
+    }
+  }
+  // winter: snow lies over everything but the water, deeper in the hollows, pocked near your feet
+  float snowCov = 0.0;
+  if (uSeason.w > 0.001) {
+    float sn = vnoise(xz * 0.31 + 5.0) * 0.6 + clump * 0.25 + micro * 0.15;
+    snowCov = smoothstep(0.0, 0.35, uSeason.w * 1.5 - sn * 0.5) * (1.0 - 0.35 * bank);
+    vec3 snowCol = vec3(0.50, 0.54, 0.60) * (0.94 + 0.12 * micro);
+    albedo = mix(albedo, snowCol, snowCov);
+    hRel = mix(hRel, hRel * 0.5 + (vnoise(xz * 0.9 + 2.0) * 0.16 + vnoise(xz * 3.1) * 0.035) * lB, snowCov);
+    grassAmt *= 1.0 - snowCov;
+  }
+
   // ---- light
   vec3 nb = n;
 #if TERRAIN_Q > 0
@@ -263,6 +294,12 @@ void main(){
   // looking toward the sun the sward glows: light passes through the blades
   float back = pow(max(dot(viewDir, uSunDir), 0.0), 2.0);
   col += albedo * uSunCol * vec3(0.90, 1.00, 0.42) * (0.10 + 0.45 * back) * vis * grassAmt * (1.0 - near * 0.5);
+
+  // snow glitters: a few crystals at a time catch the sun, and change as you move
+  if (snowCov > 0.0) {
+    float gl = pow(vnoise(xz * 170.0 + viewDir.xz * 9.0), 26.0) * smoothstep(40.0, 3.0, dist);
+    col += uSunCol * vis * gl * snowCov * 5.0;
+  }
 
   // amber spill from the cabin
   vec3 lc = uCabinLight - vWorld;

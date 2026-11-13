@@ -7,6 +7,8 @@ export const FinalShader = {
     uGrain: { value: 0.012 },
     uVignette: { value: 0.55 },
     uDay: { value: 0 },
+    uTexel: { value: null },
+    uSharp: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -21,6 +23,8 @@ export const FinalShader = {
     uniform float uGrain;
     uniform float uVignette;
     uniform float uDay;
+    uniform vec2 uTexel;
+    uniform float uSharp;
     varying vec2 vUv;
     float hash(vec2 p){
       vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -29,6 +33,14 @@ export const FinalShader = {
     }
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
+      if (uSharp > 0.0) {
+        // unsharp mask: push each pixel away from the average of its neighbours, gently,
+        // and never past them (no halos round bright edges)
+        vec3 n1 = texture2D(tDiffuse, vUv + vec2(uTexel.x, 0.0)).rgb, n2 = texture2D(tDiffuse, vUv - vec2(uTexel.x, 0.0)).rgb;
+        vec3 n3 = texture2D(tDiffuse, vUv + vec2(0.0, uTexel.y)).rgb, n4 = texture2D(tDiffuse, vUv - vec2(0.0, uTexel.y)).rgb;
+        vec3 lo = min(c.rgb, min(min(n1, n2), min(n3, n4))), hi = max(c.rgb, max(max(n1, n2), max(n3, n4)));
+        c.rgb = clamp(c.rgb + (c.rgb - (n1 + n2 + n3 + n4) * 0.25) * uSharp, lo, hi);
+      }
       vec2 q = vUv - 0.5;
       float v = smoothstep(0.95, 0.30, length(q * vec2(1.05, 1.25)));
       // The grade. Night wants rich colour and deep contrast for the aurora; daylight wants

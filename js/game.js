@@ -3,6 +3,7 @@
 // Nothing can be lost; everything you weave stays in your sky.
 import * as THREE from 'three';
 import { glowVertex, glowFragment } from './shaders/post.js';
+import { store } from './store.js';
 
 const R = 400;                 // radius of the interaction shell around the camera
 const MAX_POINTS = 1600;
@@ -10,7 +11,6 @@ const MAX_LINE_VERTS = 512;
 const DEG = Math.PI / 180;
 const MAX_CHARGE = 9;
 const COMBO_WINDOW = 4.5;
-const SAVE_KEY = 'aurora-vale-save-v2';
 
 // Star positions: [right ascension (hours), declination (degrees)]
 export const CONSTELLATIONS = [
@@ -189,18 +189,13 @@ export class StardustGame {
 
   /* ---------- persistence ---------- */
   _load() {
-    try {
-      const s = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}');
-      this.best = s.best | 0;
-      this.wishes = s.wishes | 0;
-      for (const id of s.woven || []) this.woven.add(id);
-    } catch (e) { /* private mode or corrupt save */ }
+    this.best = store.get('game.best', 0) | 0;
+    this.wishes = store.get('game.wishes', 0) | 0;
+    for (const id of store.get('game.woven', [])) this.woven.add(id);
   }
 
   _save() {
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ best: this.best, wishes: this.wishes, woven: [...this.woven] }));
-    } catch (e) { /* ignore */ }
+    store.patch('game', { best: this.best, wishes: this.wishes, woven: this.woven });
   }
 
   /* ---------- public API ---------- */

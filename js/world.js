@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { terrainVertex, terrainFragment } from './shaders/terrain.js';
 import {
-  grassVertex, grassFragment, flowerVertex, flowerFragment, fireflyVertex, fireflyFragment,
+  grassVertex, grassFragment, fireflyVertex, fireflyFragment,
 } from './shaders/grass.js';
 import { CABIN, CAMP } from './layout.js';
 
 export { CABIN, CAMP };
 import { flameVertex, flameFragment, emberVertex, emberFragment, smokeVertex, smokeFragment } from './shaders/fire.js';
-import { tulipVertex, tulipFragment } from './shaders/tulip.js';
 import { mountainVertex, mountainFragment } from './shaders/mountains.js';
+import { snowVertex, snowFragment, SNOW_R } from './shaders/weather.js';
 
 /* ---------- deterministic random ---------- */
 export function makeRng(seed) {
@@ -72,6 +72,7 @@ export function createTerrain(shared, quality = 1) {
       ...shared.aurora,
       ...shared.light,
       uGrassFar: shared.uGrassFar,
+      uSeason: shared.uSeason,
       uRealFlowerShade: { value: shared.flowerShadows ? 1 : 0 },
       uTime: shared.uTime,
       uAuroraTint: shared.uAuroraTint,
@@ -126,7 +127,7 @@ export function mountainRise(x, z) {
 
 /* Bake what the low sun does to the range, once: a smooth normal (rg), how hollow the
    spot is (b) and whether the sun reaches it past the ridges in the way (a). */
-function bakeMountainMap(size, sunDir) {
+function bakeMountainMap(size, sunDir, duskDir) {
   const half = MOUNTAIN.r1 + 30;
   const x0 = MOUNTAIN.cx - half, z0 = MOUNTAIN.cz - half, cell = (2 * half) / size;
   const N = size * size;
@@ -162,8 +163,6 @@ function bakeMountainMap(size, sunDir) {
   };
   const B1 = blur(H, Math.max(1, Math.round(26 / cell)));
   const B2 = blur(H, Math.max(2, Math.round(95 / cell)));
-  const sh = Math.hypot(sunDir.x, sunDir.z);
-  const sx = sunDir.x / sh / cell, sz = sunDir.z / sh / cell, tanE = sunDir.y / sh;
   const data = new Uint8Array(N * 4);
   const rMin = (MOUNTAIN.r0 - 40) / cell, c = size / 2;
   const heightAt = (fi, fj) => {                    // bilinear, so the ray does not catch on texel steps
@@ -172,23 +171,39 @@ function bakeMountainMap(size, sunDir) {
     const tx = fi - i0, tz = fj - j0, k = j0 * size + i0;
     return (H[k] * (1 - tx) + H[k + 1] * tx) * (1 - tz) + (H[k + size] * (1 - tx) + H[k + size + 1] * tx) * tz;
   };
-  const L = new Float32Array(N).fill(1);
-  for (let j = 0, k = 0; j < size; j++) {
-    for (let i = 0; i < size; i++, k++) {
-      if (Math.hypot(i - c, j - c) <= rMin) continue;
-      // walk toward the sun; a ridge that rises above the ray puts this spot in shade
-      const h0 = H[k] + 0.5 + 0.35 * cell;
-      let lit = 1, d = 2 * cell, step = 1.5 * cell;
-      for (let s = 0; s < 40 && lit > 0; s++) {
-        const hs = heightAt(i + sx * d, j + sz * d);
-        if (hs < -1e8) break;
-        const clear = (h0 + d * tanE - hs) / (0.045 * d + cell);
-        if (clear < lit) lit = clear < 0 ? 0 : clear;
-        step *= 1.09; d += step;
+  /** for every texel: can the sun at `dir` see it past the ridges in the way? (1 lit .. 0 shaded, soft-edged) */
+  const visibility = (dir) => {
+    const sh = Math.hypot(dir.x, dir.z);
+    const sx = dir.x / sh / cell, sz = dir.z / sh / cell, tanE = dir.y / sh;
+    const raw = new Float32Array(N).fill(1);
+    for (let j = 0, k = 0; j < size; j++) {
+      for (let i = 0; i < size; i++, k++) {
+        if (Math.hypot(i - c, j - c) <= rMin) continue;
+        // walk toward the sun; a ridge that rises above the ray puts this spot in shade
+        const h0 = H[k] + 0.5 + 0.35 * cell;
+        let lit = 1, d = 2 * cell, step = 1.5 * cell;
+        for (let s = 0; s < 40 && lit > 0; s++) {
+          const hs = heightAt(i + sx * d, j + sz * d);
+          if (hs < -1e8) break;
+          const clear = (h0 + d * tanE - hs) / (0.045 * d + cell);
+          if (clear < lit) lit = clear < 0 ? 0 : clear;
+          step *= 1.09; d += step;
+        }
+        raw[k] = lit;
       }
-      L[k] = lit;
     }
-  }
+    // soften the shadow edge over the neighbouring texels
+    const out = new Uint8Array(N);
+    for (let j = 0, k = 0; j < size; j++) {
+      for (let i = 0; i < size; i++, k++) {
+        const il = Math.max(0, i - 1), ir = Math.min(size - 1, i + 1), jd = Math.max(0, j - 1) * size, ju = Math.min(size - 1, j + 1) * size, jc = j * size;
+        out[k] = Math.round((raw[k] * 4 + (raw[jc + il] + raw[jc + ir] + raw[jd + i] + raw[ju + i]) * 2
+          + raw[jd + il] + raw[jd + ir] + raw[ju + il] + raw[ju + ir]) / 16 * 255);
+      }
+    }
+    return out;
+  };
+  const L = visibility(sunDir);
   for (let j = 0, k = 0; j < size; j++) {
     for (let i = 0; i < size; i++, k++) {
       const il = Math.max(0, i - 1), ir = Math.min(size - 1, i + 1), jd = Math.max(0, j - 1), ju = Math.min(size - 1, j + 1);
@@ -196,13 +211,10 @@ function bakeMountainMap(size, sunDir) {
       const gz = (H[ju * size + i] - H[jd * size + i]) / ((ju - jd) * cell);
       const inv = 1 / Math.sqrt(gx * gx + gz * gz + 1);
       const ao = Math.min(1, Math.max(0, 0.62 + (H[k] - B1[k]) / 24 + (H[k] - B2[k]) / 130));
-      // soften the shadow edge over the neighbouring texels
-      const lit = (L[k] * 4 + L[j * size + il] * 2 + L[j * size + ir] * 2 + L[jd * size + i] * 2 + L[ju * size + i] * 2
-        + L[jd * size + il] + L[jd * size + ir] + L[ju * size + il] + L[ju * size + ir]) / 16;
       data[k * 4] = Math.round((-gx * inv * 0.5 + 0.5) * 255);
       data[k * 4 + 1] = Math.round((-gz * inv * 0.5 + 0.5) * 255);
       data[k * 4 + 2] = Math.round(ao * 255);
-      data[k * 4 + 3] = Math.round(lit * 255);
+      data[k * 4 + 3] = L[k];
     }
   }
   const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -210,11 +222,17 @@ function bakeMountainMap(size, sunDir) {
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
-  return { tex, rect: new THREE.Vector4(x0, z0, 1 / (2 * half), 1 / (2 * half)) };
+  // the sunset sun stands somewhere else entirely, so it gets a map of its own
+  const dusk = new THREE.DataTexture(visibility(duskDir), size, size, THREE.RedFormat, THREE.UnsignedByteType);
+  dusk.magFilter = THREE.LinearFilter;
+  dusk.minFilter = THREE.LinearMipmapLinearFilter;
+  dusk.generateMipmaps = true;
+  dusk.needsUpdate = true;
+  return { tex, dusk, rect: new THREE.Vector4(x0, z0, 1 / (2 * half), 1 / (2 * half)) };
 }
 
 /* ---------- the fjells: a ring of real terrain around the valley ---------- */
-export function createMountains(shared, detail = 1, mapSize = 512, quality = 2) {
+export function createMountains(shared, detail = 1, mapSize = 512, quality = 2, sunDirs) {
   const SEG = Math.round(640 * detail), RINGS = Math.round(96 * detail);
   const pos = new Float32Array((SEG + 1) * (RINGS + 1) * 3);
   const rise = new Float32Array((SEG + 1) * (RINGS + 1));
@@ -243,7 +261,7 @@ export function createMountains(shared, detail = 1, mapSize = 512, quality = 2) 
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('aRise', new THREE.BufferAttribute(rise, 1));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
-  const map = bakeMountainMap(mapSize, shared.uSunDir.value);
+  const map = bakeMountainMap(mapSize, sunDirs.day, sunDirs.dusk);
   const mesh = new THREE.Mesh(geo, new THREE.ShaderMaterial({
     vertexShader: mountainVertex,
     fragmentShader: mountainFragment,
@@ -258,6 +276,9 @@ export function createMountains(shared, detail = 1, mapSize = 512, quality = 2) 
       uAuroraTint: shared.uAuroraTint,
       uFogColor: shared.uFogColor,
       uMtnMap: { value: map.tex },
+      uMtnDusk: { value: map.dusk },
+      uDusk: shared.aurora.uDusk,
+      uSeason: shared.uSeason,
       uMtnRect: { value: map.rect },
     },
   }));
@@ -823,7 +844,7 @@ float wNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2
   }));
   smoke.frustumCulled = false;
   smoke.renderOrder = 7;
-  return { group: g, roofs: [roofL, roofR], lightWorld, light, smoke, paneMat, glows: [[lampMat, 5.0, 2.8, 0.9]] };
+  return { group: g, roofs: [roofL, roofR], lightWorld, light, smoke, paneMat, sod, glows: [[lampMat, 5.0, 2.8, 0.9]] };
 }
 
 export function insideCabin(x, z, margin = 0.6) {
@@ -976,13 +997,15 @@ export function createRocks(rng) {
 // layers: [{ r, count, h: [min, max], w: [min, max], grow, widen, fadeIn }] from near to far
 export function createGrass(shared, rng, layers, cabin, roofCount) {
   const blade = new THREE.BufferGeometry();
+  // a strip of four segments; the vertex shader gives it its outline (strap or seed head) and its arc
   blade.setAttribute('position', new THREE.Float32BufferAttribute([
-    -0.5, 0, 0, 0.5, 0, 0, -0.36, 0.45, 0, 0.36, 0.45, 0, -0.2, 0.78, 0, 0.2, 0.78, 0, 0, 1, 0,
+    -0.5, 0, 0, 0.5, 0, 0, -0.5, 0.30, 0, 0.5, 0.30, 0, -0.5, 0.58, 0, 0.5, 0.58, 0, -0.5, 0.82, 0, 0.5, 0.82, 0, 0, 1, 0,
   ], 3));
-  blade.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6]);
+  blade.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6, 5, 7, 6, 6, 7, 8]);
 
   const uniforms = {
     ...shared.light,
+    uSeason: shared.uSeason,
     uTime: shared.uTime,
     uPlayer: shared.uPlayer,
     uAuroraTint: shared.uAuroraTint,
@@ -1020,16 +1043,27 @@ export function createGrass(shared, rng, layers, cabin, roofCount) {
     if (!L.count) continue;
     const offsets = new Float32Array(L.count * 3);
     const params = new Float32Array(L.count * 4);
+    // Grass grows in tufts: a few blades from one crown, splaying outward, alike in height
+    // and colour. That is what gives a meadow its texture; evenly sprinkled blades read as fur.
+    let tx = 0, tz = 0, th = 0, ts = 0, left = 0;
     for (let i = 0; i < L.count; i++) {
-      offsets[i * 3] = (rng() * 2 - 1) * L.r;
-      offsets[i * 3 + 2] = (rng() * 2 - 1) * L.r;
-      params[i * 4] = L.h[0] + rng() * (L.h[1] - L.h[0]);
-      params[i * 4 + 1] = rng() * Math.PI;
-      params[i * 4 + 2] = rng();
+      if (left-- <= 0) {
+        tx = (rng() * 2 - 1) * L.r; tz = (rng() * 2 - 1) * L.r;
+        th = rng(); ts = rng();
+        left = L.tuft ? 2 + Math.floor(rng() * L.tuft) : 0;
+      }
+      const a = rng() * Math.PI * 2, rad = (L.spread || 0) * Math.sqrt(rng());
+      offsets[i * 3] = tx + Math.cos(a) * rad;
+      offsets[i * 3 + 2] = tz + Math.sin(a) * rad;
+      params[i * 4] = L.h[0] + (0.65 * th + 0.35 * rng()) * (L.h[1] - L.h[0]);
+      // blades face away from the middle of their tuft, so they arc outward like a fountain
+      params[i * 4 + 1] = L.tuft ? a + Math.PI / 2 + (rng() - 0.5) * 0.9 : rng() * Math.PI * 2;
+      params[i * 4 + 2] = Math.min(0.999, Math.max(0, ts + (rng() - 0.5) * 0.25));
       params[i * 4 + 3] = L.w[0] + rng() * (L.w[1] - L.w[0]);
     }
     const defines = { GRASS_R: L.r.toFixed(1), GRASS_GROW: L.grow.toFixed(2), GRASS_WIDEN: L.widen.toFixed(2) };
     if (L.fadeIn) defines.GRASS_IN = L.fadeIn.toFixed(1);
+    if (L.tuft) defines.GRASS_HEADS = '';
     const mesh = build(offsets, params, L.count, defines);
     group.add(mesh);
     group.userData.layers.push({ geo: mesh.geometry, total: L.count });
@@ -1047,7 +1081,7 @@ export function createGrass(shared, rng, layers, cabin, roofCount) {
       ro[i * 3] = v.x; ro[i * 3 + 1] = v.y; ro[i * 3 + 2] = v.z;
       const tall = rng();
       rp[i * 4] = 0.10 + 0.22 * rng() + 0.34 * tall * tall * tall;
-      rp[i * 4 + 1] = rng() * Math.PI;
+      rp[i * 4 + 1] = rng() * Math.PI * 2;
       rp[i * 4 + 2] = rng();
       rp[i * 4 + 3] = 0.022 + rng() * 0.030;
     }
@@ -1056,45 +1090,30 @@ export function createGrass(shared, rng, layers, cabin, roofCount) {
   return group;
 }
 
-export function createFlowers(shared, rng, count) {
-  const pos = new Float32Array(count * 3);
-  const col = new Float32Array(count * 3);
-  const info = new Float32Array(count * 2);
-  const palette = [[1.0, 1.0, 0.95], [1.0, 0.86, 0.35], [0.95, 0.55, 0.85], [0.70, 0.75, 1.0], [1.0, 1.0, 1.0]];
-  let n = 0, guard = 0;
-  while (n < count && guard++ < count * 8) {
-    const dist = 4 + 50 * Math.pow(rng(), 1.5);
-    const x = (rng() - 0.5) * 2 * (10 + dist * 1.6);
-    const z = 8 - dist;
-    // flowers gather in drifts
-    if (Math.sin(x * 0.35 + 1.0) * Math.sin(z * 0.41 + 2.0) < 0.05 - rng() * 0.5) continue;
-    if (insideCabin(x, z, 0.3) || insideCamp(x, z)) continue;
-    pos[n * 3] = x; pos[n * 3 + 1] = terrainH(x, z); pos[n * 3 + 2] = z;
-    const c = palette[Math.floor(rng() * palette.length)];
-    col[n * 3] = c[0]; col[n * 3 + 1] = c[1]; col[n * 3 + 2] = c[2];
-    info[n * 2] = 0.45 + rng() * 0.45;
-    info[n * 2 + 1] = rng();
-    n++;
+/* ---------- snowfall ---------- */
+/** a box of flakes that follows the walker; `uAmount` (0..1) in the returned mesh's uniforms turns it on */
+export function createSnow(shared, rng, count) {
+  const pos = new Float32Array(count * 3), seed = new Float32Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    pos[i * 3] = (rng() * 2 - 1) * SNOW_R; pos[i * 3 + 1] = (rng() * 2 - 1) * SNOW_R; pos[i * 3 + 2] = (rng() * 2 - 1) * SNOW_R;
+    for (let k = 0; k < 4; k++) seed[i * 4 + k] = rng();
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
-  geo.setAttribute('aInfo', new THREE.BufferAttribute(info, 2));
-  geo.setDrawRange(0, n);
-  const mat = new THREE.ShaderMaterial({
-    vertexShader: flowerVertex,
-    fragmentShader: flowerFragment,
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 4));
+  const pts = new THREE.Points(geo, new THREE.ShaderMaterial({
+    vertexShader: snowVertex,
+    fragmentShader: snowFragment,
     uniforms: {
-      uTime: shared.uTime,
-      uPixelRatio: shared.uPixelRatio,
-      uScale: shared.uPointScale,
-      uAuroraTint: shared.uAuroraTint,
-      uAmb: shared.uAmb,
-      uSunCol: shared.uSunCol,
+      uTime: shared.uTime, uPixelRatio: shared.uPixelRatio, uScale: shared.uPointScale, uPlayer: shared.uPlayer,
+      uAmount: { value: 0 }, uAmb: shared.uAmb, uSunCol: shared.uSunCol, uGlow: shared.uAuroraTint,
     },
-  });
-  const pts = new THREE.Points(geo, mat);
+    transparent: true,
+    depthWrite: false,
+  }));
   pts.frustumCulled = false;
+  pts.renderOrder = 6;
+  pts.visible = false;
   return pts;
 }
 
@@ -1374,113 +1393,4 @@ export function createCamp(shared, rng) {
     firePos: new THREE.Vector3(fx, fy + 0.9, fz),
     glows: [[lanternMat, 4.5, 2.6, 0.9]],
   };
-}
-
-/* ---------- tulip garden: colour stripes running toward the valley ---------- */
-const TULIP_COLORS = [
-  [0.86, 0.04, 0.05], [0.98, 0.70, 0.05], [0.95, 0.28, 0.46], [0.42, 0.10, 0.62],
-  [0.92, 0.88, 0.80], [0.98, 0.36, 0.04], [0.80, 0.06, 0.22], [1.00, 0.86, 0.30],
-];
-
-function tulipGeometry() {
-  const pos = [], info = [], idx = [];
-  const v = (x, y, z, kind, open, shade) => { pos.push(x, y, z); info.push(kind, open, shade); return pos.length / 3 - 1; };
-  const quad = (a, b, c, d) => idx.push(a, b, c, a, c, d);
-  // stem: two crossed ribbons
-  for (const [dx, dz] of [[0.02, 0], [0, 0.02]]) {
-    quad(v(-dx, 0, -dz, 0, 0, 0.25), v(dx, 0, dz, 0, 0, 0.25), v(dx, 0.70, dz, 0, 0, 0.8), v(-dx, 0.70, -dz, 0, 0, 0.8));
-  }
-  // two leaves
-  for (const sgn of [1, -1]) {
-    const a = v(0, 0.02, 0, 0, 0, 0.3);
-    const b = v(sgn * 0.11, 0.26, sgn * 0.03, 0, 0, 0.6);
-    const c = v(sgn * 0.20, 0.46, sgn * 0.06, 0, 0, 0.95);
-    const d = v(sgn * 0.03, 0.30, -sgn * 0.02, 0, 0, 0.55);
-    idx.push(a, b, d, d, b, c);
-  }
-  // cup: five rings of eight, the rim alternating high/low to suggest petals
-  const SEG = 8;
-  const rings = [[0.66, 0.018, 0.0], [0.715, 0.058, 0.2], [0.80, 0.078, 0.5], [0.90, 0.074, 0.85], [1.0, 0.040, 1.0]];
-  const start = pos.length / 3;
-  rings.forEach(([y, r, open], ri) => {
-    for (let s = 0; s < SEG; s++) {
-      const a = (s / SEG) * Math.PI * 2;
-      const top = ri === rings.length - 1;
-      const yy = top ? y - (s % 2) * 0.075 : y;
-      const shade = (0.22 + 0.78 * (ri / (rings.length - 1))) * (0.60 + 0.40 * Math.cos(a - 0.9));
-      v(Math.cos(a) * r, yy, Math.sin(a) * r, 1, open, shade);
-    }
-  });
-  for (let ri = 0; ri < rings.length - 1; ri++) {
-    for (let s = 0; s < SEG; s++) {
-      const a = start + ri * SEG + s, b = start + ri * SEG + (s + 1) % SEG;
-      quad(a, b, b + SEG, a + SEG);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('aInfo', new THREE.Float32BufferAttribute(info, 3));
-  g.setIndex(idx);
-  return g;
-}
-
-export function createTulips(shared, rng, count) {
-  const ROW = 0.44, STRIPE = 3.6;
-  const offsets = new Float32Array(count * 3);
-  const params = new Float32Array(count * 3);
-  const colors = new Float32Array(count * 3);
-  let n = 0, guard = 0;
-  while (n < count && guard++ < count * 8) {
-    const dist = 4.5 + 60 * Math.pow(rng(), 1.2);
-    const z = 8 - dist;
-    let x = (rng() - 0.5) * 2 * (9 + dist * 1.55);
-    x = Math.round(x / ROW) * ROW + (rng() - 0.5) * 0.10;
-    const sx = (x + 1000) / STRIPE;
-    const lane = sx - Math.floor(sx);
-    if (lane < 0.13) continue;                                   // grassy aisle between beds
-    if (insideCabin(x, z, 1.4) || insideCamp(x, z)) continue;
-    if (Math.hypot(x - CAMP.fire.x, z - CAMP.fire.z) < 3.6) continue;
-    if (Math.hypot(x, z - 8) < 3.2) continue;                    // where you stand
-    if (x > 10.5 && z > -7) continue;                            // the flower garden begins here
-    const bed = Math.floor(sx);
-    const ci = (bed * 5 + Math.floor(bed / 3) * 3 + 1000) % TULIP_COLORS.length;
-    const c = TULIP_COLORS[ci];
-    const far = Math.min(1, dist / 62);
-    offsets[n * 3] = x;
-    offsets[n * 3 + 1] = terrainH(x, z) - 0.02;
-    offsets[n * 3 + 2] = z + (rng() - 0.5) * 0.12;
-    params[n * 3] = (0.44 + rng() * 0.20) * (1 + far * 0.8);
-    params[n * 3 + 1] = rng() * Math.PI * 2;
-    params[n * 3 + 2] = rng();
-    const tone = 0.82 + rng() * 0.36;
-    colors[n * 3] = c[0] * tone; colors[n * 3 + 1] = c[1] * tone; colors[n * 3 + 2] = c[2] * tone;
-    n++;
-  }
-  const base = tulipGeometry();
-  const geo = new THREE.InstancedBufferGeometry();
-  geo.index = base.index;
-  geo.setAttribute('position', base.attributes.position);
-  geo.setAttribute('aInfo', base.attributes.aInfo);
-  geo.setAttribute('aOffset', new THREE.InstancedBufferAttribute(offsets, 3));
-  geo.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 3));
-  geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(colors, 3));
-  geo.instanceCount = n;
-  const mesh = new THREE.Mesh(geo, new THREE.ShaderMaterial({
-    vertexShader: tulipVertex,
-    fragmentShader: tulipFragment,
-    side: THREE.DoubleSide,
-    uniforms: {
-      uTime: shared.uTime,
-      uDay: shared.uDay,
-      uAmb: shared.uAmb,
-      uSunCol: shared.uSunCol,
-      uAuroraTint: shared.uAuroraTint,
-      uCabinLight: shared.uCabinLight,
-      uFireLight: shared.uFireLight,
-      uFogColor: shared.uFogColor,
-      uFogDensity: shared.uFogDensity,
-    },
-  }));
-  mesh.frustumCulled = false;
-  return mesh;
 }

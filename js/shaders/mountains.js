@@ -27,7 +27,10 @@ uniform vec3 uSunCol;
 uniform vec3 uSunDir;
 uniform vec3 uAuroraTint;
 uniform vec3 uFogColor;
-uniform sampler2D uMtnMap;  // rg: normal.xz, b: occlusion, a: baked sun visibility
+uniform sampler2D uMtnMap;  // rg: normal.xz, b: occlusion, a: baked sun visibility (morning)
+uniform sampler2D uMtnDusk; // r: baked sun visibility for the sunset sun
+uniform float uDusk;
+uniform vec4 uSeason;
 uniform vec4 uMtnRect;      // xy: min corner (world xz), zw: 1 / size
 varying vec3 vWorld;
 varying float vRise;
@@ -41,7 +44,8 @@ void main(){
   n.y = sqrt(max(1.0 - dot(n.xz, n.xz), 0.03));
   n = normalize(n);
   float ao = m.z;
-  float lit = m.w;
+  vec2 muv = (xz - uMtnRect.xy) * uMtnRect.zw;
+  float lit = mix(m.w, texture2D(uMtnDusk, muv).r, uDusk);
   vec3 toCam = cameraPosition - vWorld;
   float dist = length(toCam);
   float slope = 1.0 - n.y;
@@ -61,11 +65,14 @@ void main(){
   forest *= smoothstep(2.0, 20.0, vRise - 16.0 * treeN + 8.0);
   float fine = mix(0.5, vnoise(xz * 0.9 + 11.0) * 0.55 + vnoise(xz * 2.1 + 3.0) * 0.45, lT);   // single trees
   forest = smoothstep(0.20, 0.70, forest + (crowns - 0.5) * 0.34 + (fine - 0.5) * 0.30);
-  float snowLine = 218.0 + (big - 0.5) * 90.0;
+  float snowLine = 218.0 + (big - 0.5) * 90.0 + 34.0 * uSeason.y - 60.0 * uSeason.z - 150.0 * uSeason.w;
   float snow = smoothstep(snowLine - 22.0, snowLine + 34.0, vRise + (mid - 0.5) * 46.0) * (1.0 - smoothstep(0.40, 0.62, slope));
   // old snow lingers in the hollows a little below the line
   snow = max(snow, smoothstep(snowLine - 80.0, snowLine - 20.0, vRise) * smoothstep(0.46, 0.24, ao) * (1.0 - smoothstep(0.45, 0.7, slope)) * smoothstep(0.42, 0.62, mid));
   float meadow = (1.0 - smoothstep(0.30, 0.56, slope + (mid - 0.5) * 0.24)) * (1.0 - smoothstep(150.0, 240.0, vRise + big * 70.0));
+
+  // midwinter: everything that is not a cliff is white, the forest dusted
+  snow = max(snow, uSeason.w * (1.0 - smoothstep(0.50, 0.80, slope)) * (0.96 - 0.50 * forest));
 
   // ---- rock relief, finer as a pixel covers less of the mountainside
   float h = 0.0;
@@ -101,7 +108,10 @@ void main(){
   rock = mix(rock, vec3(0.085, 0.090, 0.046), smoothstep(0.50, 0.8, treeN) * (1.0 - slope) * 0.55);   // lichen
   vec3 turf = mix(vec3(0.052, 0.078, 0.024), vec3(0.105, 0.092, 0.042), clamp(vRise / 190.0 + (mid - 0.5) * 0.7, 0.0, 1.0));
   turf *= 0.8 + 0.4 * gully;
+  turf = mix(turf, vec3(0.150, 0.098, 0.030) * (0.8 + 0.4 * gully), uSeason.z * 0.7);
   vec3 spruce = mix(vec3(0.010, 0.024, 0.012), vec3(0.030, 0.058, 0.021), smoothstep(0.2, 0.8, crowns * 0.35 + fine * 0.65)) * (0.8 + 0.4 * treeN);
+  // autumn: birch and larch among the spruce turn gold
+  spruce = mix(spruce, vec3(0.150, 0.092, 0.016) * (0.6 + 0.8 * fine), uSeason.z * smoothstep(0.40, 0.62, treeN) * 0.85);
   vec3 albedo = mix(rock, turf, meadow);
   albedo = mix(albedo, spruce, forest);
   albedo = mix(albedo, vec3(0.74, 0.79, 0.86), snow);
@@ -132,7 +142,7 @@ void main(){
   col += uSunCol * snow * lit * pow(max(dot(nb, normalize(uSunDir + V)), 0.0), 24.0) * 0.10;
 
   // ---- aerial perspective: distance washes the range toward the colour of the air
-  float air = 1.0 - exp(-dist * mix(0.0017, 0.00048, uDay));
+  float air = 1.0 - exp(-dist * mix(0.0017, 0.00048, max(uDay, uDusk)));
   float toSun = pow(max(dot(-V, uSunDir), 0.0), 4.0);
   vec3 haze = mix(uFogColor, uFogColor * 1.08 + vec3(0.30, 0.19, 0.06) * toSun, uDay);
   col = mix(col, haze, air);

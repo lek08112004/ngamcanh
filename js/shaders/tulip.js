@@ -16,6 +16,8 @@ vec2 windBend(vec2 wp, float seed, float t){
 export const tulipVertex = /* glsl */ `
 uniform float uTime;
 uniform float uDay;
+uniform float uGrow;      // 0 = not up this season .. 1 = full size
+uniform vec4 uTint;       // rgb + amount: recolours the petals (roses become winter camellias)
 uniform vec3 uSunDir;
 attribute vec3 aOffset;
 attribute vec3 aParams;   // x: height, y: yaw, z: seed
@@ -33,6 +35,7 @@ varying float vVis;
 ${windGLSL}
 ${lightGLSL}
 void main(){
+  if (uGrow < 0.03) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 #ifdef LOD_NEAR
   if (distance(aOffset.xz, cameraPosition.xz) > LOD_NEAR) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 #endif
@@ -45,12 +48,21 @@ void main(){
   p.xz *= mix(1.0, open, aInfo.y);
   float c = cos(aParams.y);
   float s = sin(aParams.y);
-  p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z) * aParams.x;
+  float size = aParams.x * uGrow;
+  p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z) * size;
   vN = vec3(c * normal.x - s * normal.z, normal.y, s * normal.x + c * normal.z);
-  float k = position.y * position.y * aParams.x;
+  float k = position.y * position.y * size;
   p.xz += windBend(aOffset.xz, aParams.z, uTime) * k;
+  // No two stems stand alike: each leans its own way and curves as it rises, and each nods
+  // to its own slow rhythm on top of the wind. Petals tremble a little at their tips.
+  float la = aParams.z * 37.0;
+  vec2 lean = vec2(cos(la), sin(la));
+  p.xz += lean * (0.04 + 0.16 * fract(aParams.z * 13.7)) * k;
+  p.xz += lean.yx * vec2(1.0, -1.0) * sin(uTime * (0.6 + fract(aParams.z * 7.0)) + aParams.z * 30.0) * 0.022 * k;
+  p.y -= 0.035 * k * position.y;
+  if (aInfo.x > 0.5) p += vec3(normal.x, 0.0, normal.z) * sin(uTime * 2.3 + aParams.z * 50.0 + position.y * 26.0) * 0.0022 * aUv.y * size;
   vec3 world = aOffset + p;
-  vCol = aColor;
+  vCol = aInfo.x > 2.5 && aInfo.x < 3.5 ? mix(aColor, uTint.rgb, uTint.a) : aColor;
   vUv = aUv;
   vKind = aInfo.x;
   vY = position.y;
@@ -341,26 +353,35 @@ void main(){
 }
 `;
 
-// Blossom and foliage cards: small quads, each showing a few five-petalled flowers
-// (or leaves), with soft edges. Thousands of them make a tree crown.
+// Blossom and foliage cards. A cherry crown is thousands of small quads, each a spray of
+// three five-petalled flowers (or three leaves), hung along the twigs. `uLeaf` slides the
+// spray from blossom to leaf as spring turns to summer; the colours come from the season.
 export const cardVertex = /* glsl */ `
 uniform float uTime;
+uniform float uScale;      // 0 in winter: bare branches
+uniform float uLeaf;
 attribute vec3 aOffset;
 attribute vec4 aSeed;     // x: spin, y: size, z: tone, w: tilt
+attribute float aShade;   // 0 deep inside the crown .. 1 out in the light
 varying vec2 vUv;
 varying float vTone;
+varying float vShade;
 varying vec3 vWorld;
 varying vec3 vN;
 void main(){
+  if (uScale < 0.03) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float a = aSeed.x * 6.2831853;
   float tilt = (aSeed.w - 0.5) * 2.2;
   vec3 ax = vec3(cos(a), 0.0, sin(a));
   vec3 ay = vec3(-sin(a) * sin(tilt), cos(tilt), cos(a) * sin(tilt));
-  vec3 p = (ax * position.x + ay * position.y) * aSeed.y;
-  float sway = sin(uTime * 1.3 + aOffset.x * 0.8 + aSeed.z * 20.0) * 0.035;
-  vec3 world = aOffset + p + vec3(sway, sway * 0.4, sway * 0.6);
+  vec3 p = (ax * position.x + ay * position.y) * aSeed.y * uScale * (1.0 + 0.75 * uLeaf);   // leaves are bigger than flowers
+  // the whole bough breathes with the wind, the sprays shiver on top of it
+  float bough = sin(uTime * 0.7 + aOffset.x * 0.35 + aOffset.z * 0.27);
+  float shiver = sin(uTime * 2.4 + aOffset.x * 3.1 + aSeed.z * 20.0);
+  vec3 world = aOffset + p + vec3(bough * 0.050 + shiver * 0.012, shiver * 0.010, bough * 0.030);
   vUv = position.xy * 2.0;
   vTone = aSeed.z;
+  vShade = aShade;
   vWorld = world;
   vN = normalize(cross(ax, ay));
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
@@ -368,7 +389,9 @@ void main(){
 `;
 
 export const cardFragment = /* glsl */ `
-uniform float uLeaf;       // 0 blossom, 1 foliage
+uniform float uLeaf;       // 0 blossom .. 1 foliage
+uniform vec3 uColA;        // the season's two tones for this crown
+uniform vec3 uColB;
 uniform vec3 uAmb;
 uniform vec3 uSunCol;
 uniform vec3 uSunDir;
@@ -377,13 +400,17 @@ uniform vec3 uFogColor;
 uniform float uFogDensity;
 varying vec2 vUv;
 varying float vTone;
+varying float vShade;
 varying vec3 vWorld;
 varying vec3 vN;
-float flower(vec2 p, float r0, float rot){
-  float r = length(p);
+// one cherry flower: five petals, each notched at the tip. x: coverage, y: 0 at the heart .. 1 at the rim
+vec2 flower(vec2 p, float r0, float rot){
+  float r = length(p) / r0;
   float a = atan(p.y, p.x) + rot;
-  float edge = r0 * (0.62 + 0.38 * abs(cos(a * 2.5)));
-  return 1.0 - smoothstep(edge - 0.07, edge, r);
+  float seg = abs(fract(a * 0.795775 + 0.5) - 0.5) * 2.0;      // 0 along a petal's middle, 1 between petals
+  float rim = (0.40 + 0.60 * sqrt(max(1.0 - seg * seg, 0.0))) * (1.0 - 0.13 * exp(-seg * seg * 40.0));
+  // z-less packing: coverage, and radius; the gap between petals is kept as a darker crease
+  return vec2(1.0 - smoothstep(rim - 0.035, rim, r), r / max(rim, 0.01) + smoothstep(0.55, 1.0, seg) * 0.0);
 }
 float leaf(vec2 p, float ang, float len){
   float c = cos(ang), s = sin(ang);
@@ -391,30 +418,90 @@ float leaf(vec2 p, float ang, float len){
   float t = q.x / len;
   if (t < 0.0 || t > 1.0) return 0.0;
   float w = 0.20 * sin(t * 3.14159) * (1.0 - 0.4 * t);
-  return 1.0 - smoothstep(w - 0.05, w, abs(q.y));
+  return (1.0 - smoothstep(w - 0.05, w, abs(q.y))) * (0.82 + 0.18 * smoothstep(0.0, 0.03, abs(q.y)));   // a darker midrib
 }
 void main(){
   vec2 p = vUv;
-  float m;
-  vec3 albedo;
-  if (uLeaf > 0.5) {
-    m = max(max(leaf(p + vec2(0.55, 0.1), 0.3, 0.9), leaf(p + vec2(0.1, 0.5), 1.5, 0.85)), leaf(p + vec2(0.2, -0.1), -0.9, 0.8));
-    albedo = mix(vec3(0.020, 0.075, 0.022), vec3(0.060, 0.160, 0.040), vTone);
-  } else {
-    vec2 c1 = p - vec2(-0.38, 0.30), c2 = p - vec2(0.40, 0.20), c3 = p - vec2(0.02, -0.42);
-    m = max(flower(c1, 0.50, vTone * 6.0), max(flower(c2, 0.46, vTone * 9.0 + 1.0), flower(c3, 0.48, vTone * 4.0 + 2.0)));
-    float heart = exp(-min(min(dot(c1, c1), dot(c2, c2)), dot(c3, c3)) * 26.0);
-    albedo = mix(vec3(0.62, 0.30, 0.42), vec3(0.80, 0.62, 0.68), vTone);
-    albedo = mix(albedo, vec3(0.60, 0.10, 0.24), heart * 0.8);
+  float mLeaf = 0.0, mFlower = 0.0;
+  vec3 leafCol = mix(uColA, uColB, vTone);
+  vec3 flowerCol = leafCol;
+  if (uLeaf > 0.01) {
+    mLeaf = max(max(leaf(p + vec2(0.55, 0.1), 0.3, 0.9), leaf(p + vec2(0.1, 0.5), 1.5, 0.85)), leaf(p + vec2(0.2, -0.1), -0.9, 0.8));
   }
-  if (m < 0.02) discard;
+  if (uLeaf < 0.99) {
+    vec2 c1 = p - vec2(-0.38, 0.30), c2 = p - vec2(0.40, 0.20), c3 = p - vec2(0.02, -0.42);
+    vec2 f1 = flower(c1, 0.52, vTone * 6.0), f2 = flower(c2, 0.48, vTone * 9.0 + 1.0), f3 = flower(c3, 0.50, vTone * 4.0 + 2.0);
+    vec2 f = f1.x > f2.x ? f1 : f2;
+    f = f3.x > f.x ? f3 : f;
+    mFlower = f.x;
+    // near-white at the rim, a blush toward the heart, a ring of gold-tipped stamens
+    vec3 rimCol = mix(uColB, vec3(0.86, 0.80, 0.82), 0.12);
+    flowerCol = mix(mix(uColA, uColB, 0.3) * vec3(1.05, 0.70, 0.80), rimCol, smoothstep(0.05, 0.60, f.y));
+    flowerCol *= 0.86 + 0.14 * smoothstep(0.0, 0.5, f.x);                 // petal edges and the creases between them sit a shade darker
+    float d2 = min(min(dot(c1, c1), dot(c2, c2)), dot(c3, c3));
+    flowerCol = mix(flowerCol, vec3(0.56, 0.22, 0.32), exp(-d2 * 150.0) * 0.55);
+    flowerCol = mix(flowerCol, vec3(0.80, 0.62, 0.30), smoothstep(0.006, 0.002, abs(d2 - 0.012)) * 0.30);
+  }
+  float m = mix(mFlower, mLeaf, uLeaf);
+  if (m < 0.03) discard;
+  vec3 albedo = mix(flowerCol, leafCol * (0.80 + 0.20 * mLeaf), uLeaf);
   vec3 N = normalize(vN);
   if (!gl_FrontFacing) N = -N;
   float nl = dot(N, uSunDir);
-  float lightAmt = clamp(nl * 0.5 + 0.5, 0.0, 1.0) + pow(clamp(-nl, 0.0, 1.0), 1.5) * 0.6;
-  vec3 col = albedo * (uAmb * 0.9 + uSunCol * lightAmt * 0.55 + uAuroraTint * 0.7);
+  // petals are thin: lit from behind they glow almost as much as from the front
+  float lightAmt = clamp(nl * 0.5 + 0.5, 0.0, 1.0) + pow(clamp(-nl, 0.0, 1.0), 1.5) * 0.75;
+  // deep in the crown little sky and less sun get through
+  float occ = 0.34 + 0.66 * vShade;
+  vec3 col = albedo * (uAmb * 0.95 * occ + uSunCol * lightAmt * 0.58 * occ * occ + uAuroraTint * 0.7);
   float dist = length(cameraPosition - vWorld);
   col = mix(col, uFogColor, 1.0 - exp(-dist * dist * uFogDensity * uFogDensity));
   gl_FragColor = vec4(col, m);
+}
+`;
+
+// What drifts down from the cherry trees: petals in spring, leaves in autumn. Each is a
+// point that tumbles as it falls, seen edge-on half the time.
+export const petalVertex = /* glsl */ `
+uniform float uTime;
+uniform float uPixelRatio;
+uniform float uScale;
+uniform float uAmount;
+attribute vec4 aSeed;
+varying float vA;
+varying float vSpin;
+varying float vTone;
+void main(){
+  float life = fract(uTime * (0.040 + aSeed.y * 0.045) + aSeed.x);
+  vec3 p = position;
+  p.y -= life * (4.2 + aSeed.w);
+  p.x += sin(life * 7.0 + aSeed.z * 30.0) * 0.7 + life * 2.0;
+  p.z += cos(life * 5.0 + aSeed.w * 30.0) * 0.7 + life * 0.8;
+  vA = smoothstep(0.0, 0.06, life) * (1.0 - smoothstep(0.88, 1.0, life)) * step(aSeed.z, uAmount);
+  vSpin = uTime * (1.5 + aSeed.y * 3.0) + aSeed.x * 40.0;
+  vTone = aSeed.w;
+  vec4 mv = viewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = vA < 0.02 ? 0.0 : clamp(uScale * uPixelRatio * 0.060 / -mv.z, 1.0, 22.0);
+}
+`;
+export const petalFragment = /* glsl */ `
+uniform vec3 uColA;
+uniform vec3 uColB;
+uniform vec3 uAmb;
+uniform vec3 uSunCol;
+uniform vec3 uAuroraTint;
+varying float vA;
+varying float vSpin;
+varying float vTone;
+void main(){
+  vec2 q = gl_PointCoord * 2.0 - 1.0;
+  float c = cos(vSpin), s = sin(vSpin);
+  q = vec2(c * q.x + s * q.y, -s * q.x + c * q.y);
+  q.y /= 0.25 + 0.75 * abs(sin(vSpin * 0.63));          // turning over as it falls
+  // a petal: an ellipse with a notch
+  float r = length(q * vec2(1.0, 0.75));
+  if (r > 1.0 - 0.25 * exp(-q.x * q.x * 20.0) * step(0.0, q.y) || vA < 0.02) discard;
+  vec3 col = mix(uColA, uColB, vTone) * (uAmb + uSunCol * 0.6 + uAuroraTint);
+  gl_FragColor = vec4(col, 1.0);
 }
 `;
