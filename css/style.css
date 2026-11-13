@@ -734,6 +734,18 @@ body.play .story { opacity: 0; pointer-events: none; transform: translateY(-8px)
 #storyList li.next::before { color: var(--aurora); border-color: var(--aurora); }
 #journalList .seen-tag { margin-left: 8px; font: 500 10px/1 var(--sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--aurora); }
 
+#flowerList { list-style: none; margin: 0 0 6px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 7px; }
+#flowerList li { padding: 10px 12px 10px 46px; position: relative; border-radius: 12px; border: 1px solid rgba(200, 235, 255, 0.10); background: rgba(255, 255, 255, 0.03); display: grid; gap: 3px; }
+#flowerList li i { position: absolute; left: 12px; top: 12px; width: 24px; height: 24px; border-radius: 50%; border: 1px dashed rgba(200, 235, 255, 0.25); }
+#flowerList li.found i { border: 0; background: radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.35) 0 18%, var(--c) 22% 100%); box-shadow: 0 0 14px color-mix(in srgb, var(--c) 55%, transparent); }
+#flowerList li b { font: 400 15px/1.2 var(--serif); color: var(--ink-dim); }
+#flowerList li b small { margin-left: 7px; font: italic 400 11px/1 var(--serif); color: var(--ink-faint); }
+#flowerList li span { font-size: 12px; line-height: 1.5; color: var(--ink-faint); }
+#flowerList li.found { border-color: rgba(255, 127, 182, 0.30); }
+#flowerList li.found b { color: var(--ink); }
+#flowerList li.found span { color: var(--ink-dim); }
+#qStroll[aria-pressed="true"] { border-color: rgba(255, 208, 138, 0.7); background: rgba(255, 208, 138, 0.16); }
+
 /* ---------- modes ---------- */
 body.play .compass { opacity: 0; }
 body.play .dock, body.view .stats, body.view .quest { opacity: 0; pointer-events: none; }

@@ -56,7 +56,7 @@ js/main.js            renderer, quality tiers, camera/walking, day-night, moods,
 js/world.js           terrainH(), terrain, mountain ring + baked light map, cabin, fence, boulders,
                       grass layers, camp and tent, canvas-drawn textures
 js/flora.js           flower geometry builder (Geo), species (far + close-up models), garden, trees
-js/story.js           "Một ngày ở trại": the fifteen pages and their saved progress
+js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (six kinds), saved progress
 js/layout.js          world coordinates (CABIN, CAMP, GARDEN, BOUNDS) — imports nothing
 js/game.js            constellation game (firefly, stardust, storms, wishes, save)
 js/lore.js            astronomy journal text per constellation
@@ -89,9 +89,16 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   by three.js lights. `applyDay` matches those lights to the shader uniforms by day
   (three divides by π: `sunLight.intensity = 9.1`, `hemi.intensity = π`). If you change
   `SUN`, `DAY_AMB` or the lights, change both or the cabin and the grass will disagree.
-- **Flowers**: each species has a far model and, on `medium`/`high`, a close-up model swapped
-  in within `LOD_NEAR` (7 m). Both share instance buffers; `LOD_NEAR`/`LOD_FAR` defines make
-  each vertex shader drop the other's flowers. Petal kind 3 is a rose petal.
+- **Flowers**: tulips, roses and sunflowers have a far model and, on `medium`/`high`, a close-up
+  model swapped in within `LOD_NEAR` (7 m). Both share instance buffers; `LOD_NEAR`/`LOD_FAR` defines make
+  each vertex shader drop the other's flowers. `aInfo.x` kinds: 0 leaf/stem, 1 tulip petal,
+  2 seed disc, 3 rose petal, 4 ray petal (sunflower, daisy), 5 yellow disc. Seed discs carry
+  radial UVs and the shader draws the florets as 21 + 34 crossing spirals. Roses are planted
+  as bushes (several canes per root). Butterflies are points drawn in `butterflyFragment`.
+- **Flower shadows**: every flower mesh has `castShadow` and a `customDepthMaterial`
+  (`flowerDepthFragment`, same cut-outs), so blooms are in the once-drawn sun shadow map at no
+  per-frame cost. Flowers sample it at their own vertices, offset toward the sun. `low` has
+  no shadow map and keeps the painted row shade instead.
 - **Lens blur** focuses where the view ray meets the ground or the flowers (`focusHit`) and
   stops down for near subjects. It only ever blurs what is nearer than the focus.
 
@@ -112,8 +119,10 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   If you move the sun or add shadow casters later, set `renderer.shadowMap.needsUpdate = true`
   — and the mountain map is baked for that sun direction too. Meshes with a material array
   only cast if their first material is standard.
-- Flowers and grass do **not** cast into the shadow map. The shade under tulip rows is drawn
-  by the ground shader (`rowShade`).
+- Grass does **not** cast into the shadow map (flowers do). Outside the map's 104 m square,
+  and on `low`, the shade under tulip rows is painted by the ground shader (`rowShade`).
+- The lens focus ray assumes planting is 0.55 m tall, 1.95 m in the sunflower field
+  (hard-coded rectangle in `main.js`); move the field and you must move that too.
 - North is −Z. Yaw is in degrees, positive = turning right. 1 unit = 1 metre.
 - Keys: W A S D walk, so sound toggle is `O`, not `S`.
 - Browsers cache the modules hard. Tell the owner to press Ctrl+F5 after changes.
@@ -175,16 +184,19 @@ Useful URL params: `auto=play|view|zen`, `time=day|night`, `q=low|medium|high`,
 
 ## Known weak spots (honest list)
 
-- Flowers: tulips and roses now hold up at arm's length, but they are still built models
-  with painted shading, not photographs. Rose hearts are a little pointed; daisies,
-  lavender and sunflowers were not reworked and have no close-up model. Cherry trees are
+- Flowers: tulips, roses and sunflowers hold up at arm's length, but they are still built
+  models with painted shading, not photographs; the owner has twice said they are not yet
+  real enough. Daisies and lavender have no close-up model. Cherry trees are
   clouds of cards and read as such from nearby.
 - Far grass tufts look saw-toothed when zoomed in; some blades stand on bare rock.
 - Mountain strata are a bit regular; the forest is grain, not trees, when zoomed right in.
 - Rock outcrops in the meadow are flat patches with painted relief, not geometry.
 - Cabin and tent are much richer than before but still simple shapes; the signposts, the
   bench and the fence rails are plain boxes.
-- No shadows from flowers, grass or companions (see above).
+- No shadows from grass or companions. Flower shadows are as sharp as the map allows
+  (4096 on high over 104 m, about 2.5 cm a texel): fine for rows, soft for single petals.
+- Sunflower discs are a painted spiral pattern on a low dome, not modelled florets.
+- "Dạo vườn" (`STROLL` in `main.js`) follows fixed waypoints; it does not avoid companions.
 - Companions are capsule figures. Their movement is interpolated from ten updates a second.
 - Astronomy text in `lore.js` was re-read against general knowledge (two corrections made:
   Rigel's luminosity, Deneb's distance ratio). It was **not** checked against sources.

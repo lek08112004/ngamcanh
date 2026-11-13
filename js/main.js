@@ -18,7 +18,7 @@ import { Party, cleanName, cleanCode } from './net.js';
 import { Soundscape } from './audio.js';
 import { StardustGame, CONSTELLATIONS } from './game.js';
 import { LORE } from './lore.js';
-import { Story, CHAPTERS } from './story.js';
+import { Story, CHAPTERS, FLOWERS } from './story.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -52,8 +52,8 @@ function detectTier() {
 const tier = qualityChoice === 'auto' ? detectTier() : qualityChoice;
 const TIERS = {
   low: { steps: 14, grassNear: 9000, grass: 24000, grassFar: 0, roof: 2500, terrainQ: 0, flowerLod: 0, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.4, mtnMap: 256, mtnQ: 0 },
-  medium: { steps: 20, grassNear: 30000, grass: 60000, grassFar: 26000, roof: 6000, terrainQ: 1, flowerLod: 1, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 1024, mountains: 0.66, mtnMap: 512, mtnQ: 1 },
-  high: { steps: 32, grassNear: 50000, grass: 110000, grassFar: 50000, roof: 12000, terrainQ: 1, flowerLod: 1, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 2048, mountains: 1, mtnMap: 1024, mtnQ: 2 },
+  medium: { steps: 20, grassNear: 30000, grass: 60000, grassFar: 26000, roof: 6000, terrainQ: 1, flowerLod: 1, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 2048, mountains: 0.66, mtnMap: 512, mtnQ: 1 },
+  high: { steps: 32, grassNear: 50000, grass: 110000, grassFar: 50000, roof: 12000, terrainQ: 1, flowerLod: 1, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 4096, mountains: 1, mtnMap: 1024, mtnQ: 2 },
 };
 const Q = { ...TIERS[tier] };
 // keep very large canvases (4K at 200%) within a sane pixel budget
@@ -104,6 +104,7 @@ const shared = {
   uPointScale: { value: 600 },
   uPlayer: { value: camBase },
   uGrassFar: { value: Q.grassFar ? 108 : 54 },
+  flowerShadows: Q.shadow > 0,          // blooms cast into the (static) sun shadow map
   light: {
     uShadowMap: { value: null },
     uShadowMatrix: { value: new THREE.Matrix4() },
@@ -402,6 +403,7 @@ function updateWalk(dt) {
   }
   const mag = Math.hypot(fx, fz);
   walker.speed = 0;
+  if (stroll.on) { if (mag > 0.08 || mode !== 'view') setStroll(false); else updateStroll(dt); }
   if (mag > 0.08) {
     if (!walker.on) {
       // stand up from wherever you were sitting
@@ -439,7 +441,70 @@ function updateWalk(dt) {
     camTarget.set(walker.x, terrainH(walker.x, walker.z) + walker.eye + bob, walker.z);
   }
 }
+// "Dạo vườn": the camera takes an unhurried walk through the beds on its own. Any key, drag
+// or scroll hands the walk back to you, exactly where you are standing.
+const STROLL = [
+  [0, 6], [-1.5, -3], [-0.9, -11], [-0.9, -19], [6, -14], [13, -4], [19, 6], [GARDEN_ARCH.x - 2.5, GARDEN.z],
+  [GARDEN_ARCH.x + 2, GARDEN.z], [GARDEN.x - 4.9, GARDEN.z + 4.9], [GARDEN.x, GARDEN.z + 7], [GARDEN.x + 4.9, GARDEN.z + 4.9],
+  [GARDEN.x + 9, GARDEN.z + 9.6], [GARDEN.x + 15, GARDEN.z + 9.6], [GARDEN.x + 18.5, GARDEN.z + 2], [GARDEN.x + 18.6, GARDEN.z - 9],
+  [GARDEN.x + 11, GARDEN.z - 4.4], [GARDEN.x + 4.9, GARDEN.z - 4.9], [GARDEN.x, GARDEN.z - 7], [GARDEN.x - 4.9, GARDEN.z - 4.9],
+  [GARDEN.x - 7, GARDEN.z], [GARDEN.x - 2.9, GARDEN.z + 1.2],
+];
+const stroll = { on: false, i: 0, pause: 0, look: 0 };
+function setStroll(on) {
+  if (stroll.on === on) return;
+  stroll.on = on;
+  $('qStroll').setAttribute('aria-pressed', String(on));
+  if (!on) return;
+  setTour(false);
+  if (!walker.on) {
+    walker.on = true;
+    walker.x = camBase.x; walker.z = camBase.z;
+    walker.eye = camBase.y - terrainH(camBase.x, camBase.z);
+    [...$('spots').children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
+  }
+  // start from the nearest point of the path, not from the beginning
+  let best = 1e9;
+  STROLL.forEach(([x, z], k) => { const d = Math.hypot(x - walker.x, z - walker.z); if (d < best) { best = d; stroll.i = k; } });
+  stroll.pause = 0;
+  if (day.target !== 1) toast('Dạo vườn ban đêm cũng được, nhưng hoa đẹp nhất vào buổi sáng (phím N)');
+  else toast('Cứ thả lỏng. Bấm phím bất kỳ hoặc kéo chuột để tự đi tiếp');
+}
+function updateStroll(dt) {
+  const [tx, tz] = STROLL[stroll.i];
+  const dx = tx - walker.x, dz = tz - walker.z, d = Math.hypot(dx, dz);
+  if (stroll.pause > 0) {
+    // a moment to stand and look: the gaze drifts down to the flowers alongside
+    stroll.pause -= dt;
+    view.pitchT = -14;
+    view.yawT = view.yaw + wrapYaw(stroll.look - view.yaw) * 0.5;
+    return;
+  }
+  if (d < 0.5) {
+    stroll.i = (stroll.i + 1) % STROLL.length;
+    if (stroll.i % 3 === 0) {
+      stroll.pause = 5.5;
+      stroll.look = view.yaw + (stroll.i % 2 ? 55 : -55);
+    }
+    return;
+  }
+  const sp = 0.95;
+  const step = Math.min(d, sp * dt);
+  walker.x += (dx / d) * step; walker.z += (dz / d) * step;
+  walker.speed = sp;
+  walker.bob += step * 2.1;
+  trek.dist += step;
+  storyAcc.walked += step;
+  walker.stepAcc += step;
+  if (walker.stepAcc > 0.86) { walker.stepAcc = 0; audio.step(false); }
+  // look a little ahead of where the feet are going, and slightly down
+  const heading = Math.atan2(dx, -dz) / DEG;
+  view.yawT = view.yaw + wrapYaw(heading + Math.sin(time * 0.21) * 16 - view.yaw);
+  view.pitchT = -5 + Math.sin(time * 0.13) * 3;
+  view.fovT = baseFov;
+}
 function goSpot(i, pose = true) {
+  setStroll(false);
   spotIndex = i;
   walker.on = false;
   const sp = SPOTS[i];
@@ -517,7 +582,7 @@ canvas.addEventListener('pointermove', (e) => {
   p.x = e.clientX; p.y = e.clientY;
   dragMoved += Math.abs(dx) + Math.abs(dy);
   if (pointers.size === 1) {
-    if (dragMoved > 4) setTour(false);
+    if (dragMoved > 4) { setTour(false); setStroll(false); }
     const degPerPx = view.fov / innerHeight;
     view.yawT -= dx * degPerPx;
     view.pitchT = clamp(view.pitchT + dy * degPerPx, LIMIT.pitchMin, LIMIT.pitchMax);
@@ -542,6 +607,7 @@ canvas.addEventListener('wheel', (e) => {
   if (mode !== 'view') return;
   e.preventDefault();
   setTour(false);
+  setStroll(false);
   view.fovT = clamp(view.fovT * Math.exp(e.deltaY * 0.0012), LIMIT.fovMin, baseFov * 1.35);
 }, { passive: false });
 
@@ -713,7 +779,19 @@ $('storyFold').addEventListener('click', () => { story.folded = !story.folded; s
 renderStory(false);
 
 // Pages are turned by what you actually do. Checked a few times a second, never per frame.
-const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map() };
+const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map(), flower: '', flowerT: 0 };
+const FLOWER_TINT = { tulip: '#e8433a', rose: '#e0527a', sunflower: '#f2b21c', lavender: '#8e6fd8', daisy: '#f4f1e4', cherry: '#f6bfd0' };
+function flowerHere(x, z) {
+  const gx = x - GARDEN.x, gz = z - GARDEN.z;
+  for (const [tx, tz] of GARDEN_TREES) if (Math.hypot(x - tx, z - tz) < 3.4 && view.pitch > 12) return 'cherry';
+  if (gx > 4 && gx < 19 && gz > -16 && gz < -4) return 'sunflower';
+  if (gx > 2.5 && gx < 17.5 && gz > 4.6 && gz < 15.6) return 'lavender';
+  const r = Math.hypot(gx, gz);
+  if (r > 3.2 && r < 7.2) return 'rose';
+  if (Math.abs(gx) < GARDEN.hx + 4 && Math.abs(gz) < GARDEN.hz + 4 && r > 8) return 'daisy';
+  if (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55 && !(x > 10.5 && z > -7)) return 'tulip';
+  return '';
+}
 const _cen = new THREE.Vector3();
 function updateStory(step) {
   if (mode !== 'view' || !started) return;
@@ -728,6 +806,16 @@ function updateStory(step) {
   const inBeds = (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55) || (Math.abs(x - GARDEN.x) < GARDEN.hx && Math.abs(z - GARDEN.z) < GARDEN.hz);
   storyAcc.bloom = dayNow && inBeds && focusHit < 1.6 && view.pitch < -15 ? storyAcc.bloom + step : 0;
   if (storyAcc.bloom > 1.6) story.mark('bloom');
+  // the flower book: linger among a kind of flower (standing, or pausing on a stroll) by day
+  {
+    const kind = dayNow && (walker.speed < 0.2 || stroll.pause > 0) ? flowerHere(x, z) : '';
+    storyAcc.flowerT = kind && kind === storyAcc.flower ? storyAcc.flowerT + step : 0;
+    storyAcc.flower = kind;
+    if (kind && storyAcc.flowerT > 2.0) {
+      const f = story.press(kind);
+      if (f) { audio.node(story.flowers.size + 4); toast(`Sổ hoa: ${f.name} (${story.flowers.size}/${FLOWERS.length}) — đã ép một bông vào Sổ tay`); }
+    }
+  }
   storyAcc.bench = Math.hypot(x - (GARDEN.x - 1.9), z - (GARDEN.z + 2.0)) < 2.6 && walker.speed < 0.2 ? storyAcc.bench + step : 0;
   if (storyAcc.bench > 2.5) story.mark('bench');
   if (nightNow && day.target === 0) story.mark('night');
@@ -849,6 +937,7 @@ ui.timelapse.addEventListener('input', () => {
 /* modes */
 function setTour(on) {
   if (tour.on === on) return;
+  if (on) setStroll(false);
   tour.on = on;
   tour.t = 0;
   $('tourBtn').setAttribute('aria-pressed', String(on));
@@ -909,6 +998,7 @@ $('dockToggle').addEventListener('click', () => {
 $('dockToggle').click();                         // start with the quick bar only
 $('qMore').addEventListener('click', () => $('dockToggle').click());
 $('qPhoto').addEventListener('click', () => { wantPhoto = true; });
+$('qStroll').addEventListener('click', () => setStroll(!stroll.on));
 $('qJournal').addEventListener('click', () => openJournal(true));
 $('qTime').addEventListener('click', () => setDay(day.target !== 1));
 
@@ -1316,6 +1406,23 @@ function openJournal(open, focusId) {
       li.appendChild(again);
       sl.appendChild(li);
     }
+    $('flowerSum').textContent = `Đứng yên giữa một loài hoa vào buổi sáng (hoặc để “Dạo vườn” đưa bạn tới) là loài đó được ép vào sổ. Đã có ${story.flowers.size}/${FLOWERS.length} loài.`;
+    const fl = $('flowerList');
+    fl.innerHTML = '';
+    for (const f of FLOWERS) {
+      const li = document.createElement('li');
+      const found = story.flowers.has(f.id);
+      if (found) { li.className = 'found'; li.style.setProperty('--c', FLOWER_TINT[f.id]); }
+      const nm = document.createElement('b');
+      nm.textContent = f.name;
+      const lt = document.createElement('small');
+      lt.textContent = f.latin;
+      nm.appendChild(lt);
+      const nt = document.createElement('span');
+      nt.textContent = found ? f.note : `Chưa gặp. ${f.where}.`;
+      li.append(document.createElement('i'), nm, nt);
+      fl.appendChild(li);
+    }
     const n = game.woven.size;
     $('journalSum').textContent =
       'Bảy chòm sao của bầu trời đêm nay: chúng từ đâu mà có tên, ngôi sao nào đáng nhìn, và tìm chúng bằng cách nào. Bấm vào từng chòm để mở. '
@@ -1410,6 +1517,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'n') setDay(day.target !== 1);
   else if (k === 'j') openJournal(journal.classList.contains('hidden'));
   else if (k === 't' && mode === 'view') setTour(!tour.on);
+  else if (k === 'v' && mode === 'view') setStroll(!stroll.on);
   else if (k === 'c' && mode === 'view') $('conBtn').click();
   else if (k === ' ') { e.preventDefault(); stoke(); }
   else if (k >= '1' && k <= '5') setMood(Number(k) - 1);
@@ -1444,7 +1552,7 @@ function savePhoto() {
 // ?debug=1 hands the page's state to the developer tools (tools/check.mjs reads it).
 if (query.has('debug')) {
   window.__av = {
-    camBase, view, walker, trek, party, friends, fire, tier, story, game, rocks: ROCK_SPOTS,
+    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, rocks: ROCK_SPOTS,
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -1609,7 +1717,10 @@ function frame() {
     let hit = 40;
     for (let i = 0, d = 0.5; i < 30; i++, d *= 1.17) {
       const hx = camera.position.x + _fwd.x * d, hy = camera.position.y + _fwd.y * d, hz = camera.position.z + _fwd.z * d;
-      if (hy < terrainH(hx, hz) + 0.55) { hit = d; break; }
+      // how tall the planting is here: head-high in the sunflower field, knee-high elsewhere
+      const gx = hx - GARDEN.x, gz = hz - GARDEN.z;
+      const cover = gx > 4.5 && gx < 18.5 && gz > -15.5 && gz < -4.5 ? 1.95 : 0.55;
+      if (hy < terrainH(hx, hz) + cover) { hit = d; break; }
     }
     focusHit = hit;
     const want = mode === 'play' ? 0 : clamp(hit * 0.6, 0.3, 11);

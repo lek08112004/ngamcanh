@@ -3,7 +3,9 @@
 // Each flower is an instanced model built from smooth curved strips (petals, leaves)
 // that carry UVs; the flower shader cuts their outlines per pixel and lights them.
 import * as THREE from 'three';
-import { tulipVertex, tulipFragment, cardVertex, cardFragment } from './shaders/tulip.js';
+import {
+  tulipVertex, tulipFragment, cardVertex, cardFragment, flowerDepthFragment, butterflyVertex, butterflyFragment,
+} from './shaders/tulip.js';
 import { terrainH, insideCabin, insideCamp } from './world.js';
 import { GARDEN, CAMP } from './layout.js';
 
@@ -64,20 +66,25 @@ class Geo {
       this.x.push(a, b, b + sides, a, b + sides, a + sides);
     }
   }
-  /** the seed disc of a daisy or sunflower: a low dome around +Y */
-  dome(cy, r, h, sides = 9) {
-    const top = this.v(0, cy + h, 0, 2, 0, 0, 1);
-    const rings = [[0.55, 0.75], [1.0, 0.0]];
+  /** the seed disc of a daisy or sunflower: a low dome around +Y. Its UVs are the position on
+      the disc (-1..1), which is what the shader needs to lay the florets out in spirals. */
+  dome(cy, r, h, sides = 9, kind = 2, rings = 2) {
+    const top = this.v(0, cy + h, 0, kind, 0, 0, 0);
     const start = this.count;
-    rings.forEach(([rr, hh], ri) => {
+    for (let ri = 1; ri <= rings; ri++) {
+      const rr = ri / rings, hh = Math.cos(rr * Math.PI / 2);
       for (let s = 0; s < sides; s++) {
         const a = (s / sides) * Math.PI * 2;
-        this.v(Math.cos(a) * r * rr, cy + h * hh, Math.sin(a) * r * rr, 2, 0, 0, 0.7 - ri * 0.6);
+        this.v(Math.cos(a) * r * rr, cy + h * hh, Math.sin(a) * r * rr, kind, 0, Math.cos(a) * rr, Math.sin(a) * rr);
       }
-    });
+    }
     for (let s = 0; s < sides; s++) {
       const a = start + s, b = start + (s + 1) % sides;
-      this.x.push(top, b, a, a, b, b + sides, a, b + sides, a + sides);
+      this.x.push(top, b, a);
+      for (let ri = 0; ri < rings - 1; ri++) {
+        const a0 = a + ri * sides, b0 = b + ri * sides;
+        this.x.push(a0, b0, b0 + sides, a0, b0 + sides, a0 + sides);
+      }
     }
   }
   /** rigidly move every vertex added since `from` (used to tilt a sunflower's head) */
@@ -144,8 +151,9 @@ function roseGeo(fine) {
     const t = k / (N - 1);                         // 0 at the heart .. 1 outermost
     g.petal({
       kind: 3, broad: true, a: k * 2.39996, y0: 0.728 - 0.022 * t, r0: 0.002 + 0.012 * t,
-      R: 0.012 + 0.030 * t + 0.050 * t * t, rise: 0.165 - 0.060 * t, W: 0.022 + 0.050 * t,
-      curl: -0.95 + 0.85 * t, roll: 0.9 * t * t * t, droop: 0.02 * t * t, prof: t < 0.5 ? 'egg' : 'open',
+      // the furled heart sits a little below the cup of petals round it, as in a real bloom
+      R: 0.014 + 0.030 * t + 0.050 * t * t, rise: 0.105 + 0.110 * t - 0.125 * t * t, W: 0.030 + 0.044 * t,
+      curl: -0.95 + 0.85 * t, roll: 0.9 * t * t * t, droop: 0.02 * t * t, prof: t < 0.5 ? 'cup' : 'open',
       open: 0.05 + 0.25 * t, nu: t < 0.3 ? 4 : 6, nv: t < 0.3 ? 5 : 6,
     });
   }
@@ -162,16 +170,24 @@ function lavenderGeo() {
   }
   return g.build();
 }
-function sunflowerGeo() {
+function sunflowerGeo(fine) {
   const g = new Geo();
-  g.tube(0.88, 0.016, 6);
-  g.petal({ kind: 0, a: 0.4, y0: 0.28, R: 0.27, rise: 0.04, W: 0.100, droop: 0.05 });
-  g.petal({ kind: 0, a: 2.7, y0: 0.48, R: 0.25, rise: 0.04, W: 0.092, droop: 0.05 });
-  g.petal({ kind: 0, a: 5.0, y0: 0.66, R: 0.21, rise: 0.03, W: 0.078, droop: 0.04 });
+  g.tube(0.88, 0.021, fine ? 8 : 6);
+  // big heart-shaped leaves, drooping under their own weight
+  const ln = fine ? 5 : 3, lv = fine ? 6 : 4;
+  g.petal({ kind: 0, a: 0.4, y0: 0.22, R: 0.30, rise: 0.07, W: 0.130, droop: 0.10, curl: 0.25, nu: ln, nv: lv });
+  g.petal({ kind: 0, a: 2.7, y0: 0.40, R: 0.28, rise: 0.06, W: 0.120, droop: 0.09, curl: 0.25, nu: ln, nv: lv });
+  g.petal({ kind: 0, a: 5.0, y0: 0.56, R: 0.24, rise: 0.05, W: 0.100, droop: 0.07, curl: 0.25, nu: ln, nv: lv });
+  g.petal({ kind: 0, a: 1.6, y0: 0.70, R: 0.19, rise: 0.04, W: 0.080, droop: 0.05, curl: 0.25, nu: ln, nv: lv });
   const head = g.count;
-  for (let k = 0; k < 21; k++) g.petal({ a: (k / 21) * TAU, y0: 0, r0: 0.078, R: 0.125, rise: 0.0, W: 0.030, droop: 0.02, nv: 3 });
-  for (let k = 0; k < 21; k++) g.petal({ a: ((k + 0.5) / 21) * TAU, y0: 0.004, r0: 0.075, R: 0.100, rise: 0.012, W: 0.028, nv: 3 });
-  g.dome(0, 0.085, 0.024, 12);
+  // green bracts behind the head, then two rows of rays, then the broad seed disc
+  const nb = fine ? 21 : 9;
+  for (let k = 0; k < nb; k++) g.petal({ kind: 0, a: (k / nb) * TAU + 0.1, y0: -0.018, r0: 0.07, R: 0.085, rise: -0.004, W: 0.030, nu: 2, nv: 3 });
+  const nr = fine ? 17 : 13;
+  for (let k = 0; k < nr; k++) g.petal({ kind: 4, a: (k / nr) * TAU, y0: 0, r0: 0.092, R: 0.150, rise: 0.004, W: 0.036, droop: 0.026, curl: 0.5, nu: fine ? 5 : 3, nv: fine ? 5 : 3 });
+  for (let k = 0; k < nr; k++) g.petal({ kind: 4, a: ((k + 0.5) / nr) * TAU, y0: 0.006, r0: 0.088, R: 0.118, rise: 0.022, W: 0.032, curl: 0.5, nu: fine ? 5 : 3, nv: fine ? 5 : 3 });
+  g.dome(0.004, 0.104, 0.026, fine ? 28 : 12, 2, fine ? 5 : 2);
+  // the head nods forward to face the sun
   g.transform(head, new THREE.Matrix4().makeTranslation(0, 0.905, 0.03).multiply(new THREE.Matrix4().makeRotationX(1.13)));
   return g.build();
 }
@@ -180,8 +196,8 @@ function daisyGeo() {
   g.tube(0.90, 0.009, 4);
   g.petal({ kind: 0, a: 1.0, y0: 0.10, R: 0.22, rise: 0.10, W: 0.028, nv: 3 });
   g.petal({ kind: 0, a: 4.0, y0: 0.16, R: 0.19, rise: 0.10, W: 0.026, nv: 3 });
-  for (let k = 0; k < 14; k++) g.petal({ a: (k / 14) * TAU, y0: 0.915, r0: 0.034, R: 0.150, rise: 0.012, W: 0.024, droop: 0.03, open: 1, nv: 3 });
-  g.dome(0.915, 0.042, 0.030);
+  for (let k = 0; k < 16; k++) g.petal({ kind: 4, a: (k / 16) * TAU, y0: 0.915, r0: 0.034, R: 0.150, rise: 0.012, W: 0.022, droop: 0.03, open: 1, nv: 3 });
+  g.dome(0.915, 0.044, 0.030, 9, 5, 2);
   return g.build();
 }
 
@@ -230,7 +246,22 @@ function instanceAttributes(list) {
     aColor: new THREE.InstancedBufferAttribute(col, 3),
   };
 }
-function instanced(geometry, material, inst) {
+// What a flower leaves in the sun's shadow map. The map is drawn once, so this costs nothing
+// per frame; every bloom still throws its own shadow on the soil and on its neighbours.
+let depthMat = null;
+function flowerDepthMaterial(shared) {
+  if (!depthMat) {
+    depthMat = new THREE.ShaderMaterial({
+      vertexShader: tulipVertex,
+      fragmentShader: flowerDepthFragment,
+      side: THREE.DoubleSide,
+      defines: { DEPTH_ONLY: '' },
+      uniforms: { ...shared.light, uTime: shared.uTime, uDay: { value: 1 }, uSunDir: shared.uSunDir },
+    });
+  }
+  return depthMat;
+}
+function instanced(geometry, material, inst, caster) {
   if (Array.isArray(inst)) inst = instanceAttributes(inst);
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = geometry.index;
@@ -241,14 +272,16 @@ function instanced(geometry, material, inst) {
   geo.instanceCount = inst.n;
   const mesh = new THREE.Mesh(geo, material);
   mesh.frustumCulled = false;
+  if (caster) { mesh.castShadow = true; mesh.customDepthMaterial = caster; }
   return mesh;
 }
 /** one species, as one mesh, or as a far model plus a close-up model when `lod` is on */
 function species(shared, makeGeo, list, lod) {
-  if (!lod) return [instanced(makeGeo(false), flowerMaterial(shared), list)];
+  const caster = shared.flowerShadows ? flowerDepthMaterial(shared) : null;
+  if (!lod) return [instanced(makeGeo(false), flowerMaterial(shared), list, caster)];
   const inst = instanceAttributes(list);
   return [
-    instanced(makeGeo(false), flowerMaterial(shared, 'LOD_FAR'), inst),
+    instanced(makeGeo(false), flowerMaterial(shared, 'LOD_FAR'), inst, caster),     // the far model casts for both
     instanced(makeGeo(true), flowerMaterial(shared, 'LOD_NEAR'), inst),
   ];
 }
@@ -323,7 +356,8 @@ const TULIPS = [
   [0.86, 0.04, 0.05], [0.98, 0.70, 0.05], [0.95, 0.28, 0.46], [0.42, 0.10, 0.62],
   [0.92, 0.88, 0.80], [0.98, 0.36, 0.04], [0.80, 0.06, 0.22], [1.00, 0.86, 0.30],
 ];
-const ROSES = [[0.80, 0.03, 0.06], [0.95, 0.30, 0.45], [0.95, 0.90, 0.85], [0.98, 0.78, 0.20], [0.98, 0.52, 0.38], [0.55, 0.02, 0.10]];
+// crimson, old-rose pink, cream, yellow, salmon, deep red
+const ROSES = [[0.78, 0.03, 0.07], [0.92, 0.22, 0.38], [0.96, 0.88, 0.74], [0.98, 0.74, 0.16], [0.98, 0.46, 0.32], [0.50, 0.015, 0.08]];
 const DAISIES = [[0.95, 0.95, 0.90], [0.95, 0.52, 0.72], [0.82, 0.22, 0.52], [0.98, 0.92, 0.55], [0.95, 0.95, 0.90]];
 
 export const GARDEN_TREES = [[GARDEN.x, GARDEN.z], [GARDEN.x - 5.5, GARDEN.z + 9.5], [GARDEN.x + 10, GARDEN.z - 1.5]];
@@ -369,17 +403,27 @@ export function createGarden(shared, rng, scale, lod) {
   const place = (x, z, h, c, yaw) => ({ x, y: terrainH(x, z) - 0.02, z, h, yaw: yaw === undefined ? rng() * TAU : yaw, seed: rng(), c: tone(c) });
 
   /* --- roses: a ring bed around the central cherry tree, cut by four paths --- */
+  // Roses grow as bushes: a handful of canes from one root, one variety to a bush, blooms at
+  // different heights and a bud or two still to open.
   const roses = [];
-  for (let i = 0, n = Math.floor(1250 * scale); i < n; i++) {
+  const bush = (bx, bz, c, canes) => {
+    for (let k = 0; k < canes; k++) {
+      const a = rng() * TAU, r = 0.06 + rng() * 0.30;
+      const f = place(bx + Math.cos(a) * r, bz + Math.sin(a) * r, (0.50 + rng() * 0.36) * (rng() < 0.2 ? 0.72 : 1), c);
+      if (rng() < 0.2) f.seed *= 0.3;                // a bud: these stay furled (see `open` in the shader)
+      roses.push(f);
+    }
+  };
+  for (let i = 0, n = Math.floor(230 * scale); i < n; i++) {
     const a = rng() * TAU;
-    if (Math.abs(Math.sin(2 * a)) < 0.16) continue;
-    const r = 3.75 + rng() * 2.35;
-    roses.push(place(cx + Math.cos(a) * r, cz + Math.sin(a) * r, 0.55 + rng() * 0.28, ROSES[Math.floor((a / TAU) * 6) % 6]));
+    if (Math.abs(Math.sin(2 * a)) < 0.17) continue;
+    const r = 4.0 + rng() * 1.9;
+    bush(cx + Math.cos(a) * r, cz + Math.sin(a) * r, ROSES[Math.floor((a / TAU) * 6) % 6], 4 + Math.floor(rng() * 4));
   }
   const ax = GARDEN_ARCH.x;
-  for (let i = 0, n = Math.floor(620 * scale); i < n; i++) {             // border beds beside the arch
+  for (let i = 0, n = Math.floor(110 * scale); i < n; i++) {             // border beds beside the arch
     const side = rng() < 0.5 ? -1 : 1;
-    roses.push(place(ax - 0.9 + rng() * 2.0, cz + side * (2.4 + rng() * 7.5), 0.5 + rng() * 0.3, ROSES[1 + Math.floor(rng() * 2)]));
+    bush(ax - 0.7 + rng() * 1.6, cz + side * (2.5 + rng() * 7.3), ROSES[[1, 2, 4, 0][Math.floor(rng() * 4)]], 4 + Math.floor(rng() * 3));
   }
   const baseY = terrainH(ax, cz);
   const archPoint = () => {
@@ -407,16 +451,20 @@ export function createGarden(shared, rng, scale, lod) {
       }
     }
   }
-  group.add(instanced(lavenderGeo(), mat, lav));
+  group.add(instanced(lavenderGeo(), mat, lav, shared.flowerShadows ? flowerDepthMaterial(shared) : null));
 
   /* --- sunflowers, all turned to the morning sun --- */
   const sun = shared.uSunDir.value;
   const sunYaw = Math.atan2(-sun.x, sun.z);
   const sf = [];
-  for (let i = 0, n = Math.floor(340 * scale); i < n; i++) {
-    sf.push(place(cx + 5 + rng() * 13, cz - 15 + rng() * 10, 1.4 + rng() * 0.55, [1.0, 0.70, 0.05], sunYaw + (rng() - 0.5) * 0.5));
+  const sfStep = 0.5 / Math.sqrt(Math.max(scale, 0.3));
+  for (let z = cz - 15; z < cz - 5; z += 0.78) {             // sown in rows, like a field
+    for (let x = cx + 5; x < cx + 18; x += sfStep) {
+      if (rng() < 0.06) continue;
+      sf.push(place(x + (rng() - 0.5) * 0.22, z + (rng() - 0.5) * 0.20, 1.35 + rng() * 0.60, [1.0, 0.56 + rng() * 0.10, 0.02], sunYaw + (rng() - 0.5) * 0.45));
+    }
   }
-  group.add(instanced(sunflowerGeo(), mat, sf));
+  group.add(...species(shared, sunflowerGeo, sf, lod));
 
   /* --- daisies and cosmos out in the meadow around the beds --- */
   const dz = [];
@@ -426,7 +474,7 @@ export function createGarden(shared, rng, scale, lod) {
     if (Math.sin(x * 0.55) * Math.sin(z * 0.6 + 1.0) < -0.25) continue;    // drifts, not a carpet
     dz.push(place(x, z, 0.30 + rng() * 0.24, DAISIES[Math.floor(rng() * DAISIES.length)]));
   }
-  group.add(instanced(daisyGeo(), mat, dz));
+  group.add(instanced(daisyGeo(), mat, dz, shared.flowerShadows ? flowerDepthMaterial(shared) : null));
 
   /* --- rose arch, leafed over --- */
   const wood = new THREE.MeshStandardMaterial({ color: 0x6a5138, roughness: 1 });
@@ -503,6 +551,38 @@ export function createGarden(shared, rng, scale, lod) {
   }));
   petals.frustumCulled = false;
   group.add(petals);
+
+  /* --- butterflies working the beds by day --- */
+  {
+    const n = Math.max(12, Math.floor(90 * scale));
+    const bp = new Float32Array(n * 3), bs = new Float32Array(n * 4), bc = new Float32Array(n * 3);
+    const wings = [[0.95, 0.90, 0.78], [0.98, 0.62, 0.10], [0.95, 0.82, 0.20], [0.55, 0.70, 0.98], [0.98, 0.98, 0.95]];
+    for (let i = 0; i < n; i++) {
+      // most over the garden, some over the tulips by the camp
+      const home = rng() < 0.7
+        ? [cx + (rng() * 2 - 1) * (GARDEN.hx - 1), cz + (rng() * 2 - 1) * (GARDEN.hz - 1)]
+        : [(rng() * 2 - 1) * 26, -4 - rng() * 30];
+      const tall = home[0] > cx + 4 && home[1] < cz - 4 ? 1.5 : 0;          // above the sunflowers
+      bp[i * 3] = home[0]; bp[i * 3 + 1] = terrainH(home[0], home[1]) + 0.75 + tall; bp[i * 3 + 2] = home[1];
+      bs[i * 4] = rng(); bs[i * 4 + 1] = rng(); bs[i * 4 + 2] = 1.0 + rng() * 2.2; bs[i * 4 + 3] = rng() * 0.5;
+      const w = wings[Math.floor(rng() * wings.length)];
+      bc[i * 3] = w[0]; bc[i * 3 + 1] = w[1]; bc[i * 3 + 2] = w[2];
+    }
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
+    bg.setAttribute('aSeed', new THREE.Float32BufferAttribute(bs, 4));
+    bg.setAttribute('aColor', new THREE.Float32BufferAttribute(bc, 3));
+    const flies = new THREE.Points(bg, new THREE.ShaderMaterial({
+      vertexShader: butterflyVertex,
+      fragmentShader: butterflyFragment,
+      uniforms: {
+        uTime: shared.uTime, uDay: shared.uDay, uPixelRatio: shared.uPixelRatio, uScale: shared.uPointScale,
+        uAmb: shared.uAmb, uSunCol: shared.uSunCol,
+      },
+    }));
+    flies.frustumCulled = false;
+    group.add(flies);
+  }
 
   /* --- a bench under the blossom --- */
   const bench = new THREE.Group();

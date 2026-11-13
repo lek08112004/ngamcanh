@@ -102,6 +102,7 @@ uniform vec4 uFireLight;    // xyz: campfire position, w: flickering level
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uGrassFar;   // how far out real blades are drawn
+uniform float uRealFlowerShade;   // 1 when flowers cast real shadows (then the painted row shade steps aside)
 varying vec3 vWorld;
 varying vec3 vNormal;
 ${commonGLSL}
@@ -255,7 +256,7 @@ void main(){
 #endif
   vec3 L = normalize(vec3(-0.2, 0.55, -0.8));       // the aurora, a broad light ahead of the viewer
   float diff = max(dot(nb, L), 0.0);
-  float vis = sunShadowSoft(vWorld) * cloudShade(xz, uTime) * (1.0 - 0.60 * rowShade);
+  float vis = sunShadowSoft(vWorld) * cloudShade(xz, uTime) * (1.0 - 0.60 * rowShade * (1.0 - uRealFlowerShade * shadowCover(vWorld)));
   float ndl = max(dot(nb, uSunDir), 0.0);
   vec3 light = uAmb * (0.5 + 0.5 * nb.y) + uAuroraTint * (0.30 + 1.2 * diff) + uSunCol * (0.05 + 0.95 * ndl) * vis;
   vec3 col = albedo * light;

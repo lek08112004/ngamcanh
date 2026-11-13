@@ -16,10 +16,11 @@ vec2 windBend(vec2 wp, float seed, float t){
 export const tulipVertex = /* glsl */ `
 uniform float uTime;
 uniform float uDay;
+uniform vec3 uSunDir;
 attribute vec3 aOffset;
 attribute vec3 aParams;   // x: height, y: yaw, z: seed
 attribute vec3 aColor;
-attribute vec2 aInfo;     // x: 0 leaf/stem, 1 petal, 2 seed disc, 3 rose petal; y: how much it opens
+attribute vec2 aInfo;     // x: 0 leaf/stem, 1 tulip petal, 2 seed disc, 3 rose petal, 4 ray petal, 5 yellow disc; y: how much it opens
 attribute vec2 aUv;       // x: across the petal (-1..1, 0 = no cut-out), y: base to tip
 varying vec3 vCol;
 varying vec3 vN;
@@ -54,7 +55,13 @@ void main(){
   vKind = aInfo.x;
   vY = position.y;
   vSeed = aParams.z;
-  vVis = sunShadow(aOffset + vec3(0.0, 0.35 * aParams.x, 0.0)) * cloudShade(aOffset.xz, uTime);
+#ifdef DEPTH_ONLY
+  vVis = 1.0;
+#else
+  // flowers stand in the shadow map themselves: look from just sunward of this point, so a
+  // petal is shaded by its neighbours and by the cabin, not by itself
+  vVis = sunShadow(world + uSunDir * 0.16) * cloudShade(aOffset.xz, uTime);
+#endif
   vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
@@ -94,16 +101,20 @@ void main(){
   float u = vUv.x;
   float v = vUv.y;
   float au = abs(u);
-  bool rose = vKind > 2.5;
-  bool petal = (vKind > 0.5 && vKind < 1.5) || rose;
-  bool disc = vKind > 1.5 && vKind < 2.5;
+  bool rose = vKind > 2.5 && vKind < 3.5;
+  bool ray = vKind > 3.5 && vKind < 4.5;
+  bool petal = (vKind > 0.5 && vKind < 1.5) || rose || ray;
+  bool disc = (vKind > 1.5 && vKind < 2.5) || vKind > 4.5;
 
   // per-pixel outline: tulip petals swell from a narrow claw to a rounded tip, rose petals are
   // broad with a blunt, slightly notched lip, leaves taper to a point
   float alpha = 1.0;
-  if (au > 0.001) {
+  if (au > 0.001 && !disc) {
     float w;
-    if (rose) {
+    if (ray) {
+      // the strap of a sunflower or daisy ray: parallel-sided, then drawn to a point
+      w = mix(0.50, 1.0, smoothstep(0.0, 0.25, v)) * sqrt(max(1.0 - pow(max(v - 0.42, 0.0) / 0.58, 1.7), 0.0));
+    } else if (rose) {
       w = mix(0.50, 1.0, smoothstep(0.0, 0.22, v)) * sqrt(max(1.0 - pow(max(v - 0.74, 0.0) / 0.26, 2.2), 0.0));
       w *= 1.0 - 0.10 * exp(-u * u * 18.0) * smoothstep(0.80, 1.0, v);                        // the notch at the lip
       w *= 1.0 + 0.030 * sin(v * 23.0 + vSeed * 40.0) * smoothstep(0.4, 1.0, v);
@@ -130,7 +141,15 @@ void main(){
 
   vec3 albedo;
   float thin = 0.0;                       // how much light passes through
-  if (rose) {
+  if (ray) {
+    // warm and deep at the base, clear toward the tip, with the two long folds every ray has
+    albedo = vCol * vec3(0.25, 0.23, 0.25) * mix(vec3(0.86, 0.60, 0.40), vec3(1.0), smoothstep(0.0, 0.6, v));
+    float fold = exp(-pow((au - 0.36) * 9.0, 2.0));
+    albedo *= 1.0 - 0.13 * fold * (1.0 - 0.5 * v);
+    albedo *= 0.94 + 0.10 * fnoise(vec2(u * 3.0 + vSeed * 30.0, v * 4.0));
+    vBump = sign(u) * (fold * 0.30 - exp(-u * u * 30.0) * 0.12);
+    thin = 0.40;
+  } else if (rose) {
     // velvet: deep colour in the heart, paling toward the lip, hardly any veining
     float grad = mix(0.42, 1.10, smoothstep(0.0, 0.95, v));
     albedo = vCol * 0.30 * grad;
@@ -165,7 +184,25 @@ void main(){
     vBump += exp(-u * u * 60.0) * sign(u) * 0.22 * (1.0 - v * 0.6);
     thin = 0.70 + 0.25 * smoothstep(0.6, 1.0, au);
   } else if (disc) {
-    albedo = mix(vec3(0.050, 0.028, 0.008), vec3(0.20, 0.12, 0.025), v);
+    // the seed head: hundreds of florets on two families of spirals crossing each other
+    // (21 one way, 34 the other), dark and tight at the centre, open and dusted with
+    // pollen in a ring toward the rim
+    float r = length(vUv);
+    float a = atan(vUv.y, vUv.x);
+    float lr = log(max(r, 0.03));
+    float seeds = sin(a * 21.0 + lr * 34.0) * sin(a * 34.0 - lr * 21.0);
+    // each floret is a soft bump, not a square: no checkerboard
+    float floret = smoothstep(-0.9, 0.9, seeds) * (0.55 + 0.45 * closeUp) + 0.5 * (0.45 - 0.45 * closeUp);
+    if (vKind > 4.5) {
+      albedo = mix(vec3(0.20, 0.13, 0.012), vec3(0.42, 0.33, 0.035), floret) * (0.7 + 0.5 * r);
+    } else {
+      vec3 heart = mix(vec3(0.050, 0.060, 0.016), vec3(0.090, 0.085, 0.022), floret);          // unopened, greenish
+      vec3 body = mix(vec3(0.018, 0.011, 0.005), vec3(0.085, 0.048, 0.016), floret);
+      vec3 ring = mix(vec3(0.075, 0.042, 0.010), vec3(0.200, 0.118, 0.022), floret);            // florets in bloom
+      albedo = mix(heart, body, smoothstep(0.10, 0.30, r));
+      albedo = mix(albedo, ring, smoothstep(0.55, 0.78, r) * (1.0 - smoothstep(0.92, 1.0, r)));
+    }
+    vBump = (floret - 0.5) * 0.5 * closeUp;
   } else {
     // glaucous green, with the faint grey bloom such leaves carry
     albedo = mix(vec3(0.018, 0.050, 0.024), vec3(0.058, 0.128, 0.058), clamp(v * 0.8 + vSeed * 0.25, 0.0, 1.0));
@@ -227,6 +264,80 @@ void main(){
   float fog = 1.0 - exp(-dist * dist * uFogDensity * uFogDensity);
   col = mix(col, uFogColor, fog);
   gl_FragColor = vec4(col, alpha);
+}
+`;
+
+// What a flower writes into the sun's shadow map: its depth, cut to the same outlines.
+export const flowerDepthFragment = /* glsl */ `
+#include <packing>
+varying vec2 vUv;
+varying float vKind;
+void main(){
+  float au = abs(vUv.x);
+  float v = vUv.y;
+  bool disc = (vKind > 1.5 && vKind < 2.5) || vKind > 4.5;
+  if (au > 0.001 && !disc) {
+    float w;
+    if (vKind > 3.5) w = mix(0.50, 1.0, smoothstep(0.0, 0.25, v)) * sqrt(max(1.0 - pow(max(v - 0.42, 0.0) / 0.58, 1.7), 0.0));
+    else if (vKind > 2.5) w = mix(0.50, 1.0, smoothstep(0.0, 0.22, v)) * sqrt(max(1.0 - pow(max(v - 0.74, 0.0) / 0.26, 2.2), 0.0));
+    else if (vKind > 0.5) w = mix(0.30, 1.0, smoothstep(0.0, 0.32, v)) * sqrt(max(1.0 - pow(max(v - 0.58, 0.0) / 0.42, 2.0), 0.0));
+    else w = mix(0.25, 1.0, smoothstep(0.0, 0.25, v)) * pow(max(1.0 - v, 0.0), 0.55);
+    if (au > w) discard;
+  }
+  gl_FragColor = packDepthToRGBA(gl_FragCoord.z);
+}
+`;
+
+// Butterflies over the beds by day: a point each, its two wings drawn and beaten in the shader.
+export const butterflyVertex = /* glsl */ `
+uniform float uTime;
+uniform float uDay;
+uniform float uPixelRatio;
+uniform float uScale;
+attribute vec4 aSeed;     // phase, speed, range, height
+attribute vec3 aColor;
+varying vec3 vColor;
+varying float vFlap;
+varying float vA;
+void main(){
+  float t = uTime * (0.25 + aSeed.y * 0.35) + aSeed.x * 40.0;
+  // a wandering loop that never quite repeats, with the little hops of a butterfly's flight
+  vec3 p = position;
+  p.x += (sin(t) + 0.5 * sin(t * 2.3 + 1.0)) * aSeed.z;
+  p.z += (cos(t * 0.8) + 0.5 * sin(t * 1.9 + 2.0)) * aSeed.z;
+  p.y += 0.25 * sin(t * 1.7) + 0.06 * sin(uTime * 9.0 + aSeed.x * 20.0) + aSeed.w;
+  // it settles on a flower now and then, wings slowly opening and closing
+  float rest = smoothstep(0.80, 0.90, sin(t * 0.37 + aSeed.x * 9.0));
+  p.y -= rest * (0.25 * sin(t * 1.7) + aSeed.w * 0.6);
+  vFlap = abs(sin(uTime * mix(17.0, 2.2, rest) + aSeed.x * 30.0));
+  vColor = aColor;
+  vA = uDay;
+  vec4 mv = viewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = uDay < 0.05 ? 0.0 : clamp(uScale * uPixelRatio * 0.085 / -mv.z, 1.5, 46.0);
+}
+`;
+export const butterflyFragment = /* glsl */ `
+uniform vec3 uAmb;
+uniform vec3 uSunCol;
+varying vec3 vColor;
+varying float vFlap;
+varying float vA;
+void main(){
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  float open = 0.22 + 0.78 * vFlap;                 // wings seen folding toward edge-on
+  vec2 q = vec2(abs(p.x) / open, p.y);
+  if (q.x > 1.0) discard;
+  // fore wing and hind wing as two overlapping lobes on each side of a thin body
+  float fore = length((q - vec2(0.50, -0.22)) * vec2(1.0, 1.25));
+  float hind = length((q - vec2(0.40, 0.38)) * vec2(1.25, 1.35));
+  float wing = min(fore - 0.50, hind - 0.40);
+  float body = max(abs(p.x) - 0.05, abs(p.y) - 0.55);
+  if (wing > 0.0 && body > 0.0) discard;
+  vec3 col = vColor * (0.55 + 0.45 * smoothstep(-0.35, 0.0, wing));     // paler toward the body
+  col = mix(col, vec3(0.03, 0.025, 0.02), smoothstep(-0.07, 0.0, wing)); // dark margin
+  if (body <= 0.0) col = vec3(0.03, 0.025, 0.02);
+  gl_FragColor = vec4(col * (uAmb + uSunCol * 0.45) * vA, 1.0);
 }
 `;
 

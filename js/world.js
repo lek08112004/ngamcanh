@@ -72,6 +72,7 @@ export function createTerrain(shared, quality = 1) {
       ...shared.aurora,
       ...shared.light,
       uGrassFar: shared.uGrassFar,
+      uRealFlowerShade: { value: shared.flowerShadows ? 1 : 0 },
       uTime: shared.uTime,
       uAuroraTint: shared.uAuroraTint,
       uCabinLight: shared.uCabinLight,

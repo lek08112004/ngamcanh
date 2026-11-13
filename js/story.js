@@ -23,22 +23,34 @@ export const CHAPTERS = [
   { id: 'photo', when: 'Đêm', title: 'Giữ lại một tấm', ask: 'Chọn một góc bạn thích và chụp ảnh (phím P).', memo: 'Một tấm ảnh để mang về.' },
 ];
 
+// The flower book: stand quietly among a kind of flower by day and it is pressed into the journal.
+export const FLOWERS = [
+  { id: 'tulip', name: 'Tulip', latin: 'Tulipa', where: 'Các luống màu phía bắc trại', note: 'Sáu cánh khép thành chén; mở ra khi nắng ấm và khép lại lúc chiều tối hay trời lạnh. Mọc từ củ, mỗi củ một hoa.' },
+  { id: 'rose', name: 'Hoa hồng', latin: 'Rosa', where: 'Vòng hoa quanh cây anh đào giữa vườn', note: 'Mọc thành bụi, mỗi bụi nhiều cành. Hồng vườn có hàng chục cánh xếp xoắn quanh nụ; hồng dại chỉ có năm cánh.' },
+  { id: 'sunflower', name: 'Hướng dương', latin: 'Helianthus annuus', where: 'Ruộng hoa phía đông vườn', note: 'Mỗi “bông” là cả nghìn hoa nhỏ xếp thành hai họ đường xoắn ốc ngược chiều. Cây non quay theo mặt trời; hoa đã nở thì đứng yên, thường hướng về phía đông.' },
+  { id: 'lavender', name: 'Oải hương', latin: 'Lavandula', where: 'Những hàng tím phía nam vườn', note: 'Hoa nhỏ mọc thành bông trên cuống dài. Mùi thơm nằm trong tinh dầu ở đài hoa, nên hoa khô vẫn giữ hương.' },
+  { id: 'daisy', name: 'Cúc dại', latin: 'Bellis / Cosmos', where: 'Rải rác trên cỏ quanh vườn', note: 'Giống hướng dương, mỗi bông là một cụm hoa: vành cánh bên ngoài và đĩa hoa li ti ở giữa.' },
+  { id: 'cherry', name: 'Anh đào', latin: 'Prunus', where: 'Ba cây trong vườn', note: 'Nở trước khi ra lá và chỉ giữ hoa chừng một hai tuần. Đứng dưới tán sẽ thấy cánh rơi.' },
+];
+
 export class Story {
   constructor() {
     this.done = new Set();
     this.seen = new Set();          // constellations recognised in the sky
+    this.flowers = new Set();       // kinds of flower pressed into the book
     this.folded = false;
     this.onPage = () => {};         // (chapter, allDone) when a page is completed
     try {
       const s = JSON.parse(localStorage.getItem(SAVE_KEY) || '{}');
       for (const id of s.done || []) if (CHAPTERS.some((c) => c.id === id)) this.done.add(id);
       for (const id of s.seen || []) this.seen.add(String(id).slice(0, 8));
+      for (const id of s.flowers || []) if (FLOWERS.some((f) => f.id === id)) this.flowers.add(id);
       this.folded = !!s.folded;
     } catch (e) { /* private mode */ }
   }
 
   save() {
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify({ done: [...this.done], seen: [...this.seen], folded: this.folded })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify({ done: [...this.done], seen: [...this.seen], flowers: [...this.flowers], folded: this.folded })); } catch (e) { /* ignore */ }
   }
 
   get total() { return CHAPTERS.length; }
@@ -64,6 +76,16 @@ export class Story {
     this.seen.add(id);
     this.save();
     return true;
+  }
+
+  /** press a kind of flower into the book; returns its entry the first time */
+  press(id) {
+    if (this.flowers.has(id)) return null;
+    const f = FLOWERS.find((x) => x.id === id);
+    if (!f) return null;
+    this.flowers.add(id);
+    this.save();
+    return f;
   }
 
   restart() {

@@ -76,6 +76,12 @@ Góc trên bên trái có một tấm thẻ nhỏ gợi ý việc tiếp theo. M
 - Mọi trang đã lật nằm trong Sổ tay (`J`), kèm một dòng ghi nhớ. Ở đó cũng có nút bắt đầu lại một ngày mới.
 - Thẻ thu gọn được bằng mũi tên ở góc thẻ. Tiến trình lưu trong `localStorage`.
 
+### Dạo vườn và Sổ hoa
+
+- **Dạo vườn** (nút trên thanh nhanh, hoặc phím `V`): máy quay tự thong thả đi một vòng qua luống tulip, cổng hoa hồng, vòng hồng, hàng oải hương và ruộng hướng dương, thỉnh thoảng dừng lại nhìn hoa. Bấm phím bất kỳ, kéo chuột hoặc cuộn là bạn tự đi tiếp từ đúng chỗ đang đứng.
+- **Sổ hoa**: buổi sáng, đứng yên giữa một loài hoa vài giây là loài đó được ép vào Sổ tay kèm vài dòng về nó. Có sáu loài: tulip, hồng, hướng dương, oải hương, cúc dại, anh đào (với anh đào, đứng dưới tán và ngước lên).
+- Ban ngày có bướm bay trên các luống hoa và thỉnh thoảng đậu lại.
+
 ### Trò dệt chòm sao (tuỳ chọn)
 
 Bật bằng nút "Trò dệt sao" hoặc phím `M`. Di chuột (hoặc kéo ngón tay) để dẫn đom đóm.
@@ -94,7 +100,7 @@ Bật bằng nút "Trò dệt sao" hoặc phím `M`. Di chuột (hoặc kéo ng�
 
 ### Phím tắt
 
-`W A S D` đi bộ · `Shift` chạy · `M` đổi Ngắm sao / Trò dệt sao · `H` ẩn giao diện · `O` âm thanh · `B` bảng tuỳ chỉnh · `G` vẫy tay · `F` toàn màn hình · `N` sáng/đêm · `P` chụp ảnh · `J` sổ tay · `T` tự lia máy · `C` chòm sao · `1`–`5` sắc trời · `Space` thêm củi · `Enter` bắt đầu.
+`W A S D` đi bộ · `Shift` chạy · `M` đổi Ngắm sao / Trò dệt sao · `V` dạo vườn · `H` ẩn giao diện · `O` âm thanh · `B` bảng tuỳ chỉnh · `G` vẫy tay · `F` toàn màn hình · `N` sáng/đêm · `P` chụp ảnh · `J` sổ tay · `T` tự lia máy · `C` chòm sao · `1`–`5` sắc trời · `Space` thêm củi · `Enter` bắt đầu.
 
 ## Chất lượng hình ảnh
 
@@ -103,8 +109,8 @@ Bật bằng nút "Trò dệt sao" hoặc phím `M`. Di chuột (hoặc kéo ng�
 - Ở chế độ Tự động, nếu khung hình tụt dưới ~48 FPS trang lần lượt bớt: lát dựng cực quang → xoá phông → mật độ cỏ → mật độ hoa → cuối cùng mới tới độ phân giải (trên máy tính không xuống dưới độ phân giải gốc).
 - **Núi là địa hình 3D thật** bao quanh thung lũng. Pháp tuyến mượt, chỗ trũng và bóng nắng của cả dãy được tính một lần lúc tải trang rồi chỉ tra cứu, nên vách núi không lộ mặt đa giác. Vỉa đá, khe rãnh, vành rừng và tuyết đọng tự mờ đi khi nhỏ hơn một điểm ảnh, không lấp lánh ở xa.
 - **Đồng cỏ** có ba lớp lá cỏ lồng nhau đi theo người (mịn và dày dưới chân, lớp chính, búi thưa ra tới chân đồi). Mặt đất và từng lá cỏ dùng chung một hàm màu nên không có đường ranh “hết cỏ”. Có đá lộ thiên, gân đất, luống đất giữa các hàng tulip và bờ sỏi ven suối.
-- **Bóng nắng thật** từ nhà gỗ, lều, hàng rào, đá và cây. Mặt trời buổi sáng đứng yên nên bản đồ bóng chỉ dựng một lần lúc tải trang. Hoa và cỏ không đổ bóng vào bản đồ này; vệt râm dưới các hàng tulip do shader mặt đất vẽ. Thêm bóng mây trôi trên đồng cỏ và sườn núi.
-- **Hoa**: tulip là sáu cánh xếp chồng khép thành chén, có đốm nhạt ở gốc cánh, gân mảnh, ánh sa-tanh và hạt sương buổi sáng; hoa hồng là ba mươi cánh xếp xoắn ốc quanh một nụ cuộn. Viền cánh được cắt theo từng điểm ảnh. Trong bán kính 7 m quanh bạn, tulip và hồng đổi sang mô hình cận cảnh nhiều chi tiết hơn (mức Vừa và Cao).
+- **Bóng nắng thật** từ nhà gỗ, lều, hàng rào, đá, cây và từng bông hoa (mức Vừa và Cao). Mặt trời buổi sáng đứng yên nên bản đồ bóng chỉ dựng một lần lúc tải trang, không tốn thêm gì mỗi khung hình. Cỏ không đổ bóng. Thêm bóng mây trôi trên đồng cỏ và sườn núi.
+- **Hoa**: tulip là sáu cánh xếp chồng khép thành chén, có đốm nhạt ở gốc cánh, gân mảnh, ánh sa-tanh và hạt sương buổi sáng; hoa hồng mọc thành bụi, mỗi bông ba mươi cánh xếp xoắn ốc quanh một nụ cuộn; hướng dương có lá bắc, hai vòng cánh và đĩa hạt xếp theo hai họ đường xoắn ốc 21 và 34. Viền cánh được cắt theo từng điểm ảnh. Trong bán kính 7 m quanh bạn, tulip, hồng và hướng dương đổi sang mô hình cận cảnh nhiều chi tiết hơn (mức Vừa và Cao).
 - **Ống kính tự lấy nét** vào chỗ bạn đang nhìn: nhìn ra thung lũng thì tiền cảnh mờ nhẹ cho có chiều sâu; cúi xuống một bông hoa thì chính bông hoa nét. Tắt bằng `&lens=0`; máy cảm ứng mặc định tắt.
 - **Suối** phản chiếu trời theo góc nhìn, nhìn xuống thấy đáy sỏi đổi màu theo độ sâu, có vệt nắng và viền bọt.
 - Nhà gỗ, lều và tảng đá dùng vân vẽ bằng canvas lúc tải trang (gỗ, vòng năm, đá xếp, vải bạt), không phải file ảnh.

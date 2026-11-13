@@ -151,7 +151,20 @@ async function story() {
     const d = await done();
     check(d.includes('night'), 'nightfall turns its page');
     check(d.includes('star') && (await b.eval('__av.story.seen.size')) >= 1, `holding ${aim.name} in the middle of the view recognises it`);
-    await b.eval('__av.story.restart(); __av.story.seen.clear(); __av.story.save()');
+    // the stroll walks by itself, and lingering among flowers presses them into the book
+    await open('time=day&x=0&z=6');
+    await b.eval('__av.story.flowers.clear()');
+    const s0 = await b.eval('({ x: __av.camBase.x, z: __av.camBase.z })');
+    await b.click('#qStroll');
+    await sleep(6000);
+    const s1 = await b.eval('({ x: __av.camBase.x, z: __av.camBase.z, on: __av.stroll.on })');
+    check(s1.on && Math.hypot(s1.x - s0.x, s1.z - s0.z) > 3, `"Dạo vườn" walks on its own: ${Math.hypot(s1.x - s0.x, s1.z - s0.z).toFixed(1)} m in 6 s`);
+    await b.hold('w', 300);
+    check(!(await b.eval('__av.stroll.on')), 'touching a key hands the walk back');
+    await open('time=day&x=43&z=2');
+    await sleep(3500);
+    check((await b.eval('[...__av.story.flowers]')).includes('sunflower'), 'standing among the sunflowers presses one into the flower book');
+    await b.eval('__av.story.restart(); __av.story.seen.clear(); __av.story.flowers.clear(); __av.story.save()');
     check(errorsOf(b).length === 0, `no console errors${errorsOf(b).length ? ': ' + errorsOf(b).join(' | ') : ''}`);
   } finally { await b.close(); }
 }

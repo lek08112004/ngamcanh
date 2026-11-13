@@ -38,11 +38,20 @@ float sunShadowSoft(vec3 w){
   if (uShadowOn < 0.5) return 1.0;
   vec3 p = shadowCoord(w);
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
-  float t = uShadowTexel * 1.7;
-  float s = shadowTap(p.xy + vec2(-t, -t), p.z) + shadowTap(p.xy + vec2(t, -t), p.z)
-          + shadowTap(p.xy + vec2(-t, t), p.z) + shadowTap(p.xy + vec2(t, t), p.z)
-          + shadowTap(p.xy, p.z);
-  return s * 0.2;
+  // nine taps on a small disc: the edge of a shadow is a soft ramp, not a staircase
+  float t = uShadowTexel * 1.5;
+  float s = shadowTap(p.xy, p.z) * 2.0;
+  s += shadowTap(p.xy + vec2(t, 0.0), p.z) + shadowTap(p.xy + vec2(-t, 0.0), p.z);
+  s += shadowTap(p.xy + vec2(0.0, t), p.z) + shadowTap(p.xy + vec2(0.0, -t), p.z);
+  s += (shadowTap(p.xy + vec2(t, t) * 1.4, p.z) + shadowTap(p.xy + vec2(-t, t) * 1.4, p.z)
+      + shadowTap(p.xy + vec2(t, -t) * 1.4, p.z) + shadowTap(p.xy + vec2(-t, -t) * 1.4, p.z)) * 0.75;
+  return s / 9.0;
+}
+// 1 inside the area the shadow map covers, 0 outside
+float shadowCover(vec3 w){
+  if (uShadowOn < 0.5) return 0.0;
+  vec3 p = shadowCoord(w);
+  return (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) ? 0.0 : 1.0;
 }
 float cloudShade(vec2 xz, float t){
   vec2 q = xz * 0.0065 + vec2(t * 0.0042, t * 0.0016);
