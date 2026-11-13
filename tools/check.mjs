@@ -3,6 +3,7 @@
 //
 //   node tools/check.mjs audio          loudness and spectrum of every sound layer, rendered offline
 //   node tools/check.mjs walk           hold real keys down: walking, strafing, running, bumping into a boulder
+//   node tools/check.mjs story          the day's thread: pages turn when you do the thing
 //   node tools/check.mjs party [png]    two browsers meet in a room through the public PeerJS broker
 //   node tools/check.mjs fps [query]    frame rate, and which renderer produced it (~12 s)
 //
@@ -123,6 +124,38 @@ async function party(png) {
   } finally { await host.close(); await guest.close(); }
 }
 
+// The day's thread: pages turn when you really do the thing.
+async function story() {
+  const b = await launch();
+  const done = () => b.eval('[...__av.story.done]');
+  const open = async (q) => { await b.goto(`${BASE}/?auto=view&q=low&debug=1&${q}`); await b.waitFor('window.__av && __av.started()', 60000, 'the scene to start'); await sleep(1000); };
+  try {
+    await open('time=day&x=-40&z=60');
+    await b.eval('__av.story.restart(); __av.story.seen.clear()');
+    await b.hold(['shift', 'w'], 6500);
+    await sleep(700);
+    check((await done()).includes('walk'), 'walking a little turns the first page');
+    await b.hold(' ', 80);
+    await sleep(500);
+    check((await done()).includes('fire'), 'stoking the fire turns its page');
+    check((await b.eval('document.getElementById("storyTitle").textContent')) === 'Xuống luống tulip', 'the card moves on to the next open page');
+    await open('time=day&x=-3.6&z=-5.2&eye=1.2&pitch=-40');
+    await sleep(3500);
+    check((await done()).includes('bloom'), 'bending to a flower is noticed');
+    check((await done()).includes('walk'), 'progress survives a reload');
+    // aim at the middle of the first constellation and hold still
+    await open('time=night');
+    const aim = await b.eval('(() => { const c = __av.game.cons[0]; let x = 0, y = 0, z = 0; for (const d of c.dirs) { x += d.x; y += d.y; z += d.z; } const l = Math.hypot(x, y, z); return { yaw: Math.atan2(x, -z) * 180 / Math.PI, pitch: Math.asin(y / l) * 180 / Math.PI, name: c.def.name }; })()');
+    await open(`time=night&yaw=${aim.yaw.toFixed(1)}&pitch=${aim.pitch.toFixed(1)}`);
+    await sleep(5000);
+    const d = await done();
+    check(d.includes('night'), 'nightfall turns its page');
+    check(d.includes('star') && (await b.eval('__av.story.seen.size')) >= 1, `holding ${aim.name} in the middle of the view recognises it`);
+    await b.eval('__av.story.restart(); __av.story.seen.clear(); __av.story.save()');
+    check(errorsOf(b).length === 0, `no console errors${errorsOf(b).length ? ': ' + errorsOf(b).join(' | ') : ''}`);
+  } finally { await b.close(); }
+}
+
 // Frame rate. Headless Chrome normally draws in software, which says nothing about a real
 // machine, so this asks for the graphics card; the line it prints names the renderer that
 // was actually used. Set HEADFUL=1 to measure in a normal visible window instead.
@@ -137,6 +170,6 @@ async function fps(query = 'auto=view&time=day') {
   } finally { await b.close(); }
 }
 
-const run = { audio, walk, party: () => party(process.argv[3]), fps: () => fps(process.argv[3]) }[what];
-if (!run) { console.log('usage: node tools/check.mjs audio | walk | party [png] | fps [query]'); process.exit(2); }
+const run = { audio, walk, story, party: () => party(process.argv[3]), fps: () => fps(process.argv[3]) }[what];
+if (!run) { console.log('usage: node tools/check.mjs audio | walk | story | party [png] | fps [query]'); process.exit(2); }
 run().then(() => { if (fail.length) { console.log(`\n${fail.length} check(s) failed`); process.exit(1); } }, (e) => { console.error(String(e && e.stack || e)); process.exit(1); });

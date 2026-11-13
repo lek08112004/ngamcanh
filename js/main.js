@@ -18,6 +18,7 @@ import { Party, cleanName, cleanCode } from './net.js';
 import { Soundscape } from './audio.js';
 import { StardustGame, CONSTELLATIONS } from './game.js';
 import { LORE } from './lore.js';
+import { Story, CHAPTERS } from './story.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -428,6 +429,7 @@ function updateWalk(dt) {
     walker.speed = moved / Math.max(dt, 1e-4);
     walker.bob += moved * 2.1;
     trek.dist += moved;
+    storyAcc.walked += moved;
     walker.stepAcc += moved;
     if (walker.stepAcc > (run > 1 ? 1.15 : 0.82)) { walker.stepAcc = 0; audio.step(wet); }
   }
@@ -638,7 +640,7 @@ const _proj = new THREE.Vector3();
 const fireBtn = $('fireBtn');
 function stoke(remote) {
   if (fire.cooldown > 0 || mode === 'intro') return;
-  if (remote !== true) party.sendEvent('stoke');
+  if (remote !== true) { party.sendEvent('stoke'); if (mode === 'view') story.mark('fire'); }
   fire.cooldown = 0.35;
   fire.level = Math.min(1, fire.level + 0.28);
   audio.init();
@@ -680,12 +682,73 @@ let toastTimer = 0;
 let lastScore = -1;
 let lastStatus = '';
 let wantPhoto = false;
+let focusHit = 40;            // how far along the view ray the ground (or a flower) is
 
 function toast(text) {
   ui.toast.textContent = text;
   ui.toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ui.toast.classList.remove('show'), 3600);
+}
+
+/* the day's thread: a card that suggests one small thing to do next */
+const story = new Story();
+const storyEl = $('story');
+function renderStory(turned) {
+  const ch = story.current;
+  $('storyStep').textContent = ch ? `Một ngày ở trại · ${ch.when} · ${story.count + 1}/${story.total}` : 'Một ngày ở trại · trọn vẹn';
+  $('storyTitle').textContent = ch ? ch.title : 'Thung lũng là của bạn';
+  $('storyAsk').textContent = ch ? ch.ask : 'Bạn đã đi hết một ngày ở trại. Cứ ở lại bao lâu tuỳ thích; trong Sổ tay có nút để bắt đầu lại một ngày mới.';
+  $('storyBar').style.transform = `scaleX(${(story.count / story.total).toFixed(3)})`;
+  storyEl.classList.toggle('folded', story.folded);
+  $('storyFold').setAttribute('aria-expanded', String(!story.folded));
+  if (turned) { storyEl.classList.remove('turn'); void storyEl.offsetWidth; storyEl.classList.add('turn'); }
+}
+story.onPage = (ch, all) => {
+  renderStory(true);
+  if (all) { toast('Một ngày ở trại đã trọn vẹn. Thung lũng là của bạn.'); audio.complete(); }
+  else { toast(`✓ ${ch.title} — ${ch.memo}`); audio.node(story.count); }
+};
+$('storyFold').addEventListener('click', () => { story.folded = !story.folded; story.save(); renderStory(false); });
+renderStory(false);
+
+// Pages are turned by what you actually do. Checked a few times a second, never per frame.
+const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map() };
+const _cen = new THREE.Vector3();
+function updateStory(step) {
+  if (mode !== 'view' || !started) return;
+  const dayNow = uDay.value > 0.6, nightNow = uDay.value < 0.15;
+  const x = camBase.x, z = camBase.z;
+  if (storyAcc.walked > 30) story.mark('walk');
+  if (trek.found.has('tulips')) story.mark('tulips');
+  if (trek.found.has('garden')) story.mark('garden');
+  if (trek.found.has('east') || trek.found.has('south')) story.mark('hill');
+  if (inStream(x, z)) story.mark('stream');
+  // close study of a flower: the view ray ends within arm's reach, among the beds, by daylight
+  const inBeds = (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55) || (Math.abs(x - GARDEN.x) < GARDEN.hx && Math.abs(z - GARDEN.z) < GARDEN.hz);
+  storyAcc.bloom = dayNow && inBeds && focusHit < 1.6 && view.pitch < -15 ? storyAcc.bloom + step : 0;
+  if (storyAcc.bloom > 1.6) story.mark('bloom');
+  storyAcc.bench = Math.hypot(x - (GARDEN.x - 1.9), z - (GARDEN.z + 2.0)) < 2.6 && walker.speed < 0.2 ? storyAcc.bench + step : 0;
+  if (storyAcc.bench > 2.5) story.mark('bench');
+  if (nightNow && day.target === 0) story.mark('night');
+  if (nightNow && !lanternOn) story.mark('lamp');
+  storyAcc.lie = nightNow && view.pitch > 42 ? storyAcc.lie + step : 0;
+  if (storyAcc.lie > 5) story.mark('lie');
+  if (nightNow && meteor.active && meteor.head.dot(_fwd) > 0.86) story.mark('meteor');
+  // picking out a constellation: hold its middle near the centre of the view
+  if (nightNow) {
+    for (const c of game.cons) {
+      _cen.set(0, 0, 0);
+      for (const d of c.dirs) _cen.add(d);
+      const on = _cen.normalize().dot(_fwd) > 0.988;            // within about 9 degrees
+      const t = on ? (storyAcc.gaze.get(c.def.id) || 0) + step : 0;
+      storyAcc.gaze.set(c.def.id, t);
+      if (t > 2.2 && story.spot(c.def.id)) {
+        audio.node(story.seen.size + 2);
+        if (!story.mark('star')) toast(`Bạn vừa nhận ra chòm ${c.def.name} (${story.seen.size}/${game.cons.length}). Chuyện của nó có trong Sổ tay.`);
+      }
+    }
+  }
 }
 
 function renderHud(s) {
@@ -1222,6 +1285,37 @@ function openJournal(open, focusId) {
       li.append(nm, nt);
       tl.appendChild(li);
     }
+    $('storySum').textContent = story.finished
+      ? 'Bạn đã đi trọn một ngày ở trại. Những dòng dưới đây là những gì còn lại trong sổ.'
+      : `Mười lăm việc nhỏ từ sáng tới đêm, làm theo thứ tự nào cũng được, bỏ qua cũng không sao. Đã xong ${story.count}/${story.total}.`;
+    const sl = $('storyList');
+    sl.innerHTML = '';
+    const nextCh = story.current;
+    for (const ch of CHAPTERS) {
+      const li = document.createElement('li');
+      const isDone = story.done.has(ch.id);
+      if (isDone) li.className = 'done'; else if (ch === nextCh) li.className = 'next';
+      const nm = document.createElement('b');
+      nm.textContent = ch.title;
+      const wh = document.createElement('small');
+      wh.textContent = ch.when;
+      nm.appendChild(wh);
+      const nt = document.createElement('span');
+      nt.textContent = isDone ? ch.memo : ch.ask;
+      li.append(nm, nt);
+      sl.appendChild(li);
+    }
+    if (story.count > 0) {
+      const li = document.createElement('li');
+      const again = document.createElement('button');
+      again.type = 'button';
+      again.className = 'chip';
+      again.textContent = 'Bắt đầu lại một ngày mới';
+      again.addEventListener('click', () => { story.restart(); storyAcc.walked = 0; renderStory(true); openJournal(true); });
+      li.style.cssText = 'padding:9px 12px;border-style:dashed;place-content:center';
+      li.appendChild(again);
+      sl.appendChild(li);
+    }
     const n = game.woven.size;
     $('journalSum').textContent =
       'Bảy chòm sao của bầu trời đêm nay: chúng từ đâu mà có tên, ngôi sao nào đáng nhìn, và tìm chúng bằng cách nào. Bấm vào từng chòm để mở. '
@@ -1236,6 +1330,7 @@ function openJournal(open, focusId) {
       if (woven) li.className = 'woven';
       const det = document.createElement('details');
       det.open = c.id === focusId;
+      det.addEventListener('toggle', () => { if (det.open) story.mark('lore'); });
       const sum = document.createElement('summary');
       const mark = document.createElement('span');
       mark.className = 'mark';
@@ -1248,6 +1343,12 @@ function openJournal(open, focusId) {
       const latin = document.createElement('small');
       latin.textContent = c.latin;
       name.appendChild(latin);
+      if (story.seen.has(c.id)) {
+        const tag = document.createElement('span');
+        tag.className = 'seen-tag';
+        tag.textContent = 'đã nhận ra trên trời';
+        name.appendChild(tag);
+      }
       const season = document.createElement('span');
       season.className = 'jseason';
       season.textContent = L.season;
@@ -1332,6 +1433,7 @@ function savePhoto() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`Đã lưu ảnh ${canvas.width}×${canvas.height}`);
+    if (mode === 'view') story.mark('photo');
   }, 'image/png');
   const f = $('flash');
   f.classList.remove('go');
@@ -1342,7 +1444,7 @@ function savePhoto() {
 // ?debug=1 hands the page's state to the developer tools (tools/check.mjs reads it).
 if (query.has('debug')) {
   window.__av = {
-    camBase, view, walker, trek, party, friends, fire, tier, rocks: ROCK_SPOTS,
+    camBase, view, walker, trek, party, friends, fire, tier, story, game, rocks: ROCK_SPOTS,
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -1360,6 +1462,7 @@ let skyAngle = (Number(query.get('sky')) || 0) * DEG;
 let perfAcc = 0, perfFrames = 0, perfSkip = 3;
 let grassFrac = 1;
 let firstFrame = true;
+let storyClock = 0;
 const _q = new THREE.Quaternion();
 const _fwd = new THREE.Vector3();
 const _m4 = new THREE.Matrix4();
@@ -1508,6 +1611,7 @@ function frame() {
       const hx = camera.position.x + _fwd.x * d, hy = camera.position.y + _fwd.y * d, hz = camera.position.z + _fwd.z * d;
       if (hy < terrainH(hx, hz) + 0.55) { hit = d; break; }
     }
+    focusHit = hit;
     const want = mode === 'play' ? 0 : clamp(hit * 0.6, 0.3, 11);
     const u = lensPass.uniforms.uFocus;
     u.value += (want - u.value) * (frames < 6 ? 1 : 1 - Math.exp(-dt * 3.5));   // no hunting on arrival
@@ -1518,6 +1622,8 @@ function frame() {
   }
   updateLabels();
   updateCompass();
+  if (frames % 12 === 0) updateStory(Math.min(0.6, (time - storyClock)));
+  if (frames % 12 === 0) storyClock = time;
   updateParty(dt);
   {
     const sd = camBase.z < -20 ? Math.abs(camBase.x - streamX(camBase.z)) : 60;
