@@ -47,20 +47,21 @@ float cnoise(vec2 p){
 }
 // colour of the grass at a spot: lush hollows, sun-dried rises, dark clover
 vec3 meadowColor(vec2 p, float y){
-  float big = cnoise(p * 0.035) * 0.6 + cnoise(p * 0.081 + 5.0) * 0.4;
-  float pat = cnoise(p * 0.07 + 31.0) * 0.6 + cnoise(p * 0.19 + 7.0) * 0.4;
-  vec3 c = mix(vec3(0.030, 0.064, 0.018), vec3(0.068, 0.100, 0.028), big);
-  float dry = clamp(smoothstep(0.46, 0.74, pat) * 0.85 + smoothstep(9.0, 30.0, y) * 0.40, 0.0, 1.0);
+  // one lookup per term: this runs for every vertex of every blade
+  float big = cnoise(p * 0.045);
+  float pat = cnoise(p * 0.085 + 31.0);
+  vec3 c = mix(vec3(0.030, 0.064, 0.018), vec3(0.068, 0.100, 0.028), smoothstep(0.15, 0.85, big));
+  float dry = clamp(smoothstep(0.50, 0.82, pat) * 0.85 + smoothstep(9.0, 30.0, y) * 0.40, 0.0, 1.0);
   c = mix(c, vec3(0.110, 0.112, 0.044), dry * 0.66);
-  float clover = smoothstep(0.60, 0.80, cnoise(p * 0.11 + 53.0));
+  float clover = smoothstep(0.62, 0.84, cnoise(p * 0.13 + 53.0));
   return mix(c, vec3(0.024, 0.058, 0.022), clover * 0.6);
 }
 // 0..1 where bare rock breaks through the turf (kept away from the camp and the flower beds)
 float rockMask(vec2 p){
   float keep = max(smoothstep(-64.0, -86.0, p.y), max(smoothstep(38.0, 60.0, p.y), smoothstep(112.0, 134.0, abs(p.x))));
   if (keep <= 0.0) return 0.0;
-  float n = cnoise(p * 0.045 + 90.0) * 0.50 + cnoise(p * 0.13 + 40.0) * 0.30 + cnoise(p * 0.43 + 13.0) * 0.20;
-  return smoothstep(0.66, 0.72, n) * keep;
+  float n = cnoise(p * 0.045 + 90.0) * 0.62 + cnoise(p * 0.17 + 40.0) * 0.38;
+  return smoothstep(0.68, 0.74, n) * keep;
 }
 // 0..1 inside the tilled tulip beds (same stripes as createTulips in flora.js)
 float tulipBed(vec2 p){
@@ -146,7 +147,7 @@ void main(){
   float lA = 1.0 - smoothstep(1.2, 5.0, px);
   lB = 1.0 - smoothstep(0.10, 0.45, px);
   float lC = 1.0 - smoothstep(0.012, 0.05, px);
-  float hum = fbm2(xz * 0.16 + 3.0);
+  float hum = vnoise(xz * 0.16 + 3.0) * 0.65 + vnoise(xz * 0.41 + 8.0) * 0.35;
   clump = mix(0.5, vnoise(xz * 1.7 + 9.0), lB);
   vec2 rq = mat2(0.8, -0.6, 0.6, 0.8) * xz;
   fibre = mix(0.5, vnoise(rq * vec2(46.0, 11.0)) * 0.6 + vnoise(xz * vec2(9.0, 41.0) + 3.0) * 0.4, lC);
@@ -165,7 +166,7 @@ void main(){
 
   // thin seams of bare earth where the turf has slipped
   float vn = 1.0 - abs(2.0 * vnoise(xz * 0.05 + 70.0) - 1.0);
-  float vein = smoothstep(0.93, 0.985, vn) * smoothstep(0.45, 0.70, fbm2(xz * 0.02 + 8.0));
+  float vein = smoothstep(0.93, 0.985, vn) * smoothstep(0.45, 0.70, vnoise(xz * 0.03 + 8.0));
   albedo = mix(albedo, vec3(0.092, 0.066, 0.042) * (0.7 + 0.6 * clump), vein * 0.8);
   hRel -= vein * 0.14;
   grassAmt *= 1.0 - vein * 0.8;
@@ -187,7 +188,15 @@ void main(){
 
   // tilled earth between the tulip rows
   float bed = tulipBed(xz);
+  float rowShade = 0.0;
   if (bed > 0.0) {
+    // every row throws a ragged band of shade away from the low sun, and the earth is
+    // darker right at the foot of the stems: without it the flowers seem to float
+    float reach = uSunDir.x / max(uSunDir.y, 0.2) * 0.50;
+    float toBand = abs(fract((xz.x + reach) / 0.44 + 0.5) - 0.5) * 0.44;
+    rowShade = (1.0 - smoothstep(0.03, 0.12, toBand)) * smoothstep(0.22, 0.60, vnoise(vec2(xz.x * 2.0, xz.y * 5.0 + 3.0))) * bed;
+    float toStem = abs(fract(xz.x / 0.44 + 0.5) - 0.5) * 0.44 / 0.05;
+    albedo *= 1.0 - 0.38 * exp(-toStem * toStem) * bed;
     float row = 0.5 + 0.5 * cos(xz.x * 14.27997);
     vec3 soil = vec3(0.060, 0.041, 0.028) * (0.70 + 0.60 * vnoise(xz * 7.0)) * (0.72 + 0.56 * row);
     albedo = mix(albedo, soil, bed * 0.80);
@@ -239,7 +248,7 @@ void main(){
 #endif
   vec3 L = normalize(vec3(-0.2, 0.55, -0.8));       // the aurora, a broad light ahead of the viewer
   float diff = max(dot(nb, L), 0.0);
-  float vis = sunShadowSoft(vWorld) * cloudShade(xz, uTime);
+  float vis = sunShadowSoft(vWorld) * cloudShade(xz, uTime) * (1.0 - 0.60 * rowShade);
   float ndl = max(dot(nb, uSunDir), 0.0);
   vec3 light = uAmb * (0.5 + 0.5 * nb.y) + uAuroraTint * (0.30 + 1.2 * diff) + uSunCol * (0.05 + 0.95 * ndl) * vis;
   vec3 col = albedo * light;

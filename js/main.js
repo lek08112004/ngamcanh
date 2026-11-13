@@ -10,7 +10,7 @@ import { FinalShader, LensShader } from './shaders/post.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import {
   makeRng, terrainH, createTerrain, createMountains, createCabin, createFence,
-  createRocks, createGrass, createFireflies, createCamp, streamX, streamW,
+  createRocks, createGrass, createFireflies, createCamp, streamX, streamW, ROCK_SPOTS,
 } from './world.js';
 import { createGarden, createTulips, createSignposts, GARDEN_TREES, GARDEN_ARCH } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
@@ -43,7 +43,7 @@ function detectTier() {
     const gpu = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
     if (/swiftshader|llvmpipe|software|basic render/i.test(gpu)) return 'low';
     // integrated and mobile-class chips
-    if (/intel|uhd|iris|hd graphics|mali|adreno|powervr|radeon\(tm\) graphics|vega \d/i.test(gpu) && !/arc\b/i.test(gpu)) return 'medium';
+    if (/intel|uhd|iris|hd graphics|mali|adreno|powervr|radeon\(tm\) graphics|radeon\(tm\) \d{3}m\b|vega \d/i.test(gpu) && !/arc\b/i.test(gpu)) return 'medium';
   } catch (e) { return 'medium'; }
   if ((navigator.deviceMemory || 8) <= 4 || (navigator.hardwareConcurrency || 8) <= 4) return 'medium';
   return 'high';
@@ -52,7 +52,7 @@ const tier = qualityChoice === 'auto' ? detectTier() : qualityChoice;
 const TIERS = {
   low: { steps: 14, grassNear: 9000, grass: 24000, grassFar: 0, roof: 2500, terrainQ: 0, flowerLod: 0, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.4, mtnMap: 256, mtnQ: 0 },
   medium: { steps: 20, grassNear: 30000, grass: 60000, grassFar: 26000, roof: 6000, terrainQ: 1, flowerLod: 1, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 1024, mountains: 0.66, mtnMap: 512, mtnQ: 1 },
-  high: { steps: 32, grassNear: 70000, grass: 120000, grassFar: 70000, roof: 12000, terrainQ: 1, flowerLod: 1, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 2048, mountains: 1, mtnMap: 1024, mtnQ: 2 },
+  high: { steps: 32, grassNear: 50000, grass: 110000, grassFar: 50000, roof: 12000, terrainQ: 1, flowerLod: 1, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 2048, mountains: 1, mtnMap: 1024, mtnQ: 2 },
 };
 const Q = { ...TIERS[tier] };
 // keep very large canvases (4K at 200%) within a sane pixel budget
@@ -378,6 +378,7 @@ const BLOCKS = [
   [CAMP.tent.x, CAMP.tent.z, 2.4],
   [CAMP.fire.x, CAMP.fire.z, 1.25],
   ...GARDEN_TREES.map(([x, z]) => [x, z, 0.6]),
+  ...ROCK_SPOTS.map(([x, z, size]) => [x, z, size * 0.82 + 0.25]),
 ];
 const trek = { dist: 0, found: new Set(['camp']), saveAt: 0 };
 try {
@@ -931,11 +932,61 @@ function updateLabels() {
 const party = new Party();
 const partyBox = $('party');
 const friends = new Map();          // id -> { group, label, x, z, yaw }
-const friendMat = new THREE.MeshStandardMaterial({ color: 0x2c3a4a, roughness: 0.9 });
 function friendColor(id) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;          // similar ids must not get similar colours
   return new THREE.Color().setHSL((h % 360) / 360, 0.75, 0.6);
+}
+// A walking companion: a small hiker in a jacket of their own colour, pack on the back,
+// lantern in one hand. Limbs hang from pivots at hip and shoulder so they can swing.
+const FRIEND_GEO = {
+  leg: new THREE.CapsuleGeometry(0.07, 0.52, 3, 8),
+  arm: new THREE.CapsuleGeometry(0.052, 0.40, 3, 8),
+  torso: new THREE.CapsuleGeometry(0.175, 0.36, 4, 12),
+  head: new THREE.SphereGeometry(0.125, 14, 12),
+  hat: new THREE.SphereGeometry(0.135, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+  bobble: new THREE.SphereGeometry(0.04, 8, 6),
+  scarf: new THREE.TorusGeometry(0.135, 0.05, 6, 14),
+  pack: new THREE.CapsuleGeometry(0.105, 0.20, 3, 10),
+  boot: new THREE.BoxGeometry(0.11, 0.09, 0.22),
+  lamp: new THREE.SphereGeometry(0.055, 10, 8),
+};
+const FRIEND_MAT = {
+  trousers: new THREE.MeshStandardMaterial({ color: 0x2a2f38, roughness: 0.95 }),
+  boots: new THREE.MeshStandardMaterial({ color: 0x1a1512, roughness: 0.9 }),
+  face: new THREE.MeshStandardMaterial({ color: 0x9a8576, roughness: 0.85 }),
+  pack: new THREE.MeshStandardMaterial({ color: 0x33342b, roughness: 1 }),
+};
+function makeFriend(c) {
+  const group = new THREE.Group();
+  const hsl = c.getHSL({});
+  const jacket = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hsl.h, 0.42, 0.26), roughness: 0.9 });
+  const wool = new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, emissive: c, emissiveIntensity: 0.30 });
+  const body = new THREE.Group();                 // everything above the hips; leans and bobs
+  group.add(body);
+  const add = (parent, geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const limb = (parent, geo, mat, x, y, len) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, y, 0);
+    add(pivot, geo, mat, 0, -len / 2, 0);
+    parent.add(pivot);
+    return pivot;
+  };
+  const legL = limb(group, FRIEND_GEO.leg, FRIEND_MAT.trousers, -0.095, 0.74, 0.66);
+  const legR = limb(group, FRIEND_GEO.leg, FRIEND_MAT.trousers, 0.095, 0.74, 0.66);
+  for (const leg of [legL, legR]) add(leg, FRIEND_GEO.boot, FRIEND_MAT.boots, 0, -0.70, -0.04);
+  add(body, FRIEND_GEO.torso, jacket, 0, 1.06, 0);
+  add(body, FRIEND_GEO.head, FRIEND_MAT.face, 0, 1.53, 0);
+  add(body, FRIEND_GEO.hat, wool, 0, 1.56, 0);
+  add(body, FRIEND_GEO.bobble, wool, 0, 1.71, 0);
+  add(body, FRIEND_GEO.scarf, wool, 0, 1.36, 0).rotation.x = Math.PI / 2;
+  add(body, FRIEND_GEO.pack, FRIEND_MAT.pack, 0, 1.10, 0.21).scale.set(1.25, 1, 0.8);
+  const armL = limb(body, FRIEND_GEO.arm, jacket, -0.235, 1.30, 0.50);
+  const armR = limb(body, FRIEND_GEO.arm, jacket, 0.235, 1.30, 0.50);
+  // the lantern hangs from the right hand
+  add(armR, FRIEND_GEO.lamp, new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2 * c.r + 0.8, 3.2 * c.g + 0.8, 3.2 * c.b + 0.8) }), 0, -0.62, -0.02);
+  return { group, body, legL, legR, armL, armR };
 }
 function syncFriends() {
   for (const [id, f] of friends) {
@@ -943,23 +994,12 @@ function syncFriends() {
   }
   for (const [id, o] of party.others) {
     if (friends.has(id)) continue;
-    const c = friendColor(id);
-    const group = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.27, 1.15, 10), friendMat);
-    body.position.y = 0.62;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), friendMat);
-    head.position.y = 1.42;
-    const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.06, 6, 14), new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, emissive: c, emissiveIntensity: 0.35 }));
-    scarf.rotation.x = Math.PI / 2;
-    scarf.position.y = 1.22;
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2 * c.r + 0.8, 3.2 * c.g + 0.8, 3.2 * c.b + 0.8) }));
-    lamp.position.set(0.3, 0.9, -0.22);
-    group.add(body, head, scarf, lamp);
-    scene.add(group);
+    const f = makeFriend(friendColor(id));
+    scene.add(f.group);
     const label = document.createElement('div');
     label.className = 'friend-label';
     labelBox.parentNode.insertBefore(label, labelBox);
-    friends.set(id, { group, label, x: o.x, z: o.z, yaw: o.yaw });
+    friends.set(id, { ...f, label, x: o.x, z: o.z, yaw: o.yaw, speed: 0, stride: 0, wave: 0 });
   }
   $('qFriends').textContent = party.active ? `Bạn đường · ${party.count}` : 'Đi cùng bạn';
   $('partyWho').textContent = party.active
@@ -970,7 +1010,10 @@ party.onChange = syncFriends;
 party.onStatus = (t) => { $('partyStatus').textContent = t; };
 party.onEvent = (kind, who) => {
   if (kind === 'stoke') stoke(true);
-  else if (kind === 'wave' && who) toast(`${who.name} vẫy tay chào bạn`);
+  else if (kind === 'wave' && who) {
+    toast(`${who.name} vẫy tay chào bạn`);
+    for (const [id, f] of friends) if (party.others.get(id) === who) f.wave = 2.4;
+  }
   else if (kind === 'world') {
     if ((day.target === 1) !== who.day) setDay(who.day, true);
     if (mood.index !== who.mood) { mood.index = who.mood; mood.auto = false; syncMoodChips(); }
@@ -978,8 +1021,28 @@ party.onEvent = (kind, who) => {
 };
 let netAcc = 0, worldAcc = 0;
 const _fp = new THREE.Vector3();
+// ?ghost=N puts N make-believe companions on the hill, with no network at all: a way to
+// look at the figures and their labels without opening a room.
+const ghosts = clamp(Math.floor(Number(query.get('ghost')) || 0), 0, 7);
+function updateGhosts() {
+  const now = performance.now();
+  for (let i = 0; i < ghosts; i++) {
+    const id = `ghost-${i}`;
+    let o = party.others.get(id);
+    if (!o) { o = { name: ['Mai', 'Linh', 'An', 'Vy', 'Khang', 'Thu', 'Nam'][i], x: 0, z: 0, yaw: 0, t: now }; party.others.set(id, o); syncFriends(); }
+    // the first one stands still by the fire; the others stroll round a small loop
+    const a = i === 0 ? 0.6 : time * 0.42 / (1 + i * 0.3) + i * 2.1, r = i === 0 ? 0 : 1.6 + i * 0.5;
+    o.x = 1.2 + i * 1.5 + Math.cos(a) * r;
+    o.z = 1.5 - i * 1.2 + Math.sin(a) * r;
+    o.yaw = i === 0 ? 150 : Math.atan2(-Math.sin(a), -Math.cos(a)) / DEG;
+    o.t = now;
+    const f = friends.get(id);
+    if (f && i === 0 && f.wave <= 0 && Math.floor(time) % 7 === 0) f.wave = 2.4;
+  }
+}
 function updateParty(dt) {
-  if (!party.active) return;
+  if (ghosts) updateGhosts();
+  if (!party.active && !ghosts) return;
   netAcc += dt; worldAcc += dt;
   if (netAcc > 0.1) { netAcc = 0; party.sendState(camBase.x, camBase.z, view.yaw); }
   if (worldAcc > 2) { worldAcc = 0; party.sendWorld(day.target === 1, mood.index); party.prune(); }
@@ -987,12 +1050,29 @@ function updateParty(dt) {
   for (const [id, f] of friends) {
     const o = party.others.get(id);
     if (!o) continue;
+    const px = f.x, pz = f.z;
     f.x += (o.x - f.x) * k; f.z += (o.z - f.z) * k;
     f.yaw += wrapYaw(o.yaw - f.yaw) * k;
     const y = terrainH(f.x, f.z);
     f.group.position.set(f.x, y, f.z);
     f.group.rotation.y = -f.yaw * DEG;
-    _fp.set(f.x, y + 1.95, f.z).project(camera);
+    // gait: the faster they cover ground, the longer and quicker the stride
+    const v = Math.hypot(f.x - px, f.z - pz) / Math.max(dt, 1e-3);
+    f.speed += (Math.min(v, 7) - f.speed) * (1 - Math.exp(-dt * 6));
+    f.stride += f.speed * dt * 3.0;
+    const amp = Math.min(1, f.speed / 3.2), sw = Math.sin(f.stride) * 0.50 * amp;
+    f.legL.rotation.x = sw; f.legR.rotation.x = -sw;
+    f.armL.rotation.x = -sw * 0.8; f.armR.rotation.x = sw * 0.35;         // the lantern arm is held steadier
+    f.body.position.y = Math.abs(Math.cos(f.stride)) * 0.035 * amp + Math.sin(time * 1.4 + f.x) * 0.006;
+    f.body.rotation.x = -0.06 * amp;
+    f.armL.rotation.z = 0;
+    if (f.wave > 0) {
+      f.wave -= dt;
+      const up = Math.min(1, (2.4 - f.wave) * 4) * Math.min(1, f.wave * 3);
+      f.armL.rotation.x *= 1 - up;
+      f.armL.rotation.z = -(2.55 + Math.sin(time * 11) * 0.32) * up;
+    }
+    _fp.set(f.x, y + 1.84, f.z).project(camera);
     const vis = _fp.z < 1 && Math.abs(_fp.x) < 1 && Math.abs(_fp.y) < 1 && !zen;
     f.label.style.display = vis ? '' : 'none';
     if (vis) {
@@ -1257,6 +1337,19 @@ function savePhoto() {
   f.classList.remove('go');
   void f.offsetWidth;
   f.classList.add('go');
+}
+
+// ?debug=1 hands the page's state to the developer tools (tools/check.mjs reads it).
+if (query.has('debug')) {
+  window.__av = {
+    camBase, view, walker, trek, party, friends, fire, tier, rocks: ROCK_SPOTS,
+    started: () => started,
+    gpu: () => {
+      const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown renderer';
+    },
+    quality: () => ({ pixelRatio, grassFrac, flowerFrac, steps: skyMat.uniforms.uSteps.value, lens: lensPass.enabled }),
+  };
 }
 
 /* -------------------------------------------------------------- render loop */

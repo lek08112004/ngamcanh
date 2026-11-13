@@ -46,7 +46,7 @@ void main(){
   float dist = length(toCam);
   float slope = 1.0 - n.y;
 
-  float big = fbm2(xz * 0.011);
+  float big = vnoise(xz * 0.011) * 0.65 + vnoise(xz * 0.027 + 4.0) * 0.35;
   float mid = fbm2(xz * 0.045 + 7.0);
 
   // size of a pixel on the mountainside, in metres: detail finer than this is averaged out
@@ -54,7 +54,7 @@ void main(){
   float lT = 1.0 - smoothstep(0.30, 1.3, px);
 
   // ---- what grows where
-  float treeN = fbm2(xz * 0.021 + 3.0);
+  float treeN = vnoise(xz * 0.021 + 3.0) * 0.62 + vnoise(xz * 0.055 + 9.0) * 0.38;
   float crowns = vnoise(xz * 0.17) * 0.6 + vnoise(xz * 0.41 + 5.0) * 0.4;
   float treeline = 104.0 + 80.0 * treeN - 30.0 * (1.0 - ao);
   float forest = (1.0 - smoothstep(treeline - 40.0, treeline + 14.0, vRise)) * (1.0 - smoothstep(0.36, 0.72, slope + (mid - 0.5) * 0.3));

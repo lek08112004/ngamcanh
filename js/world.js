@@ -874,6 +874,12 @@ export function createFence(rng) {
 }
 
 /* ---------- mossy boulders ---------- */
+// x, z, size. Also used by the walker, so nobody strolls through a rock.
+export const ROCK_SPOTS = [
+  [9.5, -2.5, 1.25], [11.8, -4.2, 0.7], [14.5, -1.8, 0.9], [-5.5, 0.4, 0.55],
+  [3.4, -12, 0.8], [18, -9, 1.5], [-22, -9, 1.1], [7.5, 2.2, 0.5],
+  [22, -30, 1.8], [-30, -34, 2.2], [35, -60, 2.6], [-8, -48, 1.6],
+];
 function noise3(x, y, z) {
   const iy = Math.floor(y), fy0 = y - iy, fy = fy0 * fy0 * (3 - 2 * fy0);
   const a = noise2(x + iy * 37.7, z + iy * 17.3), b = noise2(x + (iy + 1) * 37.7, z + (iy + 1) * 17.3);
@@ -897,11 +903,7 @@ export function createRocks(rng) {
   tex.repeat.set(5, 3);
   tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map: tex, bumpMap: tex, bumpScale: 1.4, roughness: 0.96 });
-  const spots = [
-    [9.5, -2.5, 1.25], [11.8, -4.2, 0.7], [14.5, -1.8, 0.9], [-5.5, 0.4, 0.55],
-    [3.4, -12, 0.8], [18, -9, 1.5], [-22, -9, 1.1], [7.5, 2.2, 0.5],
-    [22, -30, 1.8], [-30, -34, 2.2], [35, -60, 2.6], [-8, -48, 1.6],
-  ];
+  const spots = ROCK_SPOTS;
   const rock = new THREE.Color(0x77797a);
   const dark = new THREE.Color(0x3d3f42);
   const moss = new THREE.Color(0x3c5a26);

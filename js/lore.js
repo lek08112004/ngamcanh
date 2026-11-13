@@ -36,7 +36,7 @@ export const LORE = {
     ],
     stars: [
       'Betelgeuse (vai): sao siêu khổng lồ đỏ, cách ta chừng 500–700 năm ánh sáng, to đến mức nếu đặt vào chỗ Mặt Trời nó sẽ nuốt quỹ đạo sao Hoả. Nó đang ở cuối đời và sẽ nổ thành siêu tân tinh, nhưng "sắp" ở đây có thể là hàng trăm nghìn năm.',
-      'Rigel (chân): sao siêu khổng lồ xanh, cách khoảng 860 năm ánh sáng, sáng gấp hàng chục nghìn lần Mặt Trời.',
+      'Rigel (chân): sao siêu khổng lồ xanh, cách khoảng 860 năm ánh sáng. Tính cả phần bức xạ mắt không thấy, nó phát ra năng lượng gấp cỡ một trăm nghìn lần Mặt Trời.',
       'Ba sao thắt lưng: Alnitak, Alnilam, Mintaka. Ngay bên dưới là tinh vân Lạp Hộ (M42), một vườn ươm sao cách khoảng 1.300 năm ánh sáng, nhìn thấy bằng mắt thường như một đốm mờ.',
     ],
     find: 'Tìm ba ngôi sao sáng thẳng hàng sát nhau. Kéo dài thắt lưng về một phía sẽ gặp Sirius — sao sáng nhất trời đêm, về phía kia là Aldebaran đỏ cam của chòm Kim Ngưu.',
@@ -48,7 +48,7 @@ export const LORE = {
       'Phần thân và cánh tạo thành hình chữ thập nên chòm sao còn được gọi là Thập tự phương Bắc.',
     ],
     stars: [
-      'Deneb (đuôi): một trong những ngôi sao phát sáng mạnh nhất mà mắt thường thấy được. Khoảng cách còn chưa chắc chắn, ước chừng 1.500–2.600 năm ánh sáng — xa hơn Vega cả trăm lần mà vẫn nằm trong nhóm 20 sao sáng nhất trời đêm.',
+      'Deneb (đuôi): một trong những ngôi sao phát sáng mạnh nhất mà mắt thường thấy được. Khoảng cách còn chưa chắc chắn, ước chừng 1.500–2.600 năm ánh sáng — xa hơn Vega từ 60 đến 100 lần mà vẫn nằm trong nhóm 20 sao sáng nhất trời đêm.',
       'Albireo (mỏ): qua kính nhỏ tách thành một cặp sao vàng cam và xanh lam, một trong những sao đôi đẹp nhất.',
       'Cygnus X-1: nguồn tia X phát hiện năm 1964, là vật thể đầu tiên được giới khoa học chấp nhận rộng rãi là lỗ đen.',
     ],

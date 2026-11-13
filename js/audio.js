@@ -1,6 +1,7 @@
 // Fully synthesised soundscape — no audio files.
 // Wind (filtered pink noise + slow LFOs), campfire crackle, ambient pad,
-// pentatonic chimes and game cues.
+// pentatonic chimes and game cues. Short sounds are placed left or right and nearer
+// or farther (dry level against reverb), so the valley has some depth to it.
 
 const midi = (m) => 440 * Math.pow(2, (m - 69) / 12);
 const PENTA = [62, 64, 66, 69, 71];            // D major pentatonic
@@ -36,7 +37,10 @@ export class Soundscape {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16;
     comp.ratio.value = 3;
-    this.master.connect(comp).connect(ctx.destination);
+    // nothing useful lives below ~35 Hz: it only eats headroom and makes small speakers flap
+    const sub = ctx.createBiquadFilter();
+    sub.type = 'highpass'; sub.frequency.value = 35; sub.Q.value = 0.7;
+    this.master.connect(sub).connect(comp).connect(ctx.destination);
 
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this._impulse(4.2, 2.4);
@@ -120,6 +124,21 @@ export class Soundscape {
     return buf;
   }
 
+  /** route a node to the mix at a place in the stereo field; `far` 0..1 trades dry level for reverb */
+  _place(node, pan = 0, far = 0) {
+    let out = node;
+    if (this.ctx.createStereoPanner) {
+      out = this.ctx.createStereoPanner();
+      out.pan.value = Math.max(-1, Math.min(1, pan));
+      node.connect(out);
+    }
+    const dry = this.ctx.createGain(), wet = this.ctx.createGain();
+    dry.gain.value = 1 - 0.75 * far;
+    wet.gain.value = 0.35 + 0.65 * far;
+    out.connect(dry).connect(this.master);
+    out.connect(wet).connect(this.reverb);
+  }
+
   _lfo(freq, depth, param) {
     const o = this.ctx.createOscillator();
     o.frequency.value = freq;
@@ -164,9 +183,9 @@ export class Soundscape {
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 130;
     const g3 = ctx.createGain();
-    g3.gain.value = 0.30;
+    g3.gain.value = 0.17;
     src.connect(lp).connect(g3).connect(this.master);
-    this._lfo(0.05, 0.12, g3.gain);
+    this._lfo(0.05, 0.07, g3.gain);
 
     src.start();
   }
@@ -195,7 +214,7 @@ export class Soundscape {
   setFire(level) {
     this.fire = Math.min(1, Math.max(0, level));
     if (!this.ctx) return;
-    this.fireGain.gain.setTargetAtTime(0.06 + 0.26 * this.fire, this.ctx.currentTime, 0.4);
+    this.fireGain.gain.setTargetAtTime(0.05 + 0.20 * this.fire, this.ctx.currentTime, 0.4);
   }
 
   _crackle(when, vel) {
@@ -231,24 +250,39 @@ export class Soundscape {
     next();
   }
 
-  /** One footfall in grass (or a splash when wading). */
+  /** One footfall in grass (or a splash when wading): a soft thud, then the swish of the blades. */
   step(wet) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const ctx = this.ctx;
     const t = ctx.currentTime + 0.005;
+    this._foot = -(this._foot || 1);                       // left, right, left…
+    const bus = ctx.createGain();
+    bus.gain.value = 0.8 + Math.random() * 0.4;            // no two steps quite alike
+    this._place(bus, this._foot * 0.16, 0);
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const f = ctx.createBiquadFilter();
     f.type = 'bandpass';
-    f.frequency.value = wet ? 1700 + Math.random() * 900 : 420 + Math.random() * 260;
+    f.frequency.value = wet ? 1700 + Math.random() * 900 : 380 + Math.random() * 340;
     f.Q.value = wet ? 0.7 : 0.9;
     const g = ctx.createGain();
-    const dur = wet ? 0.22 : 0.11;
+    const dur = wet ? 0.22 : 0.10 + Math.random() * 0.04;
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(wet ? 0.16 : 0.12, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(wet ? 0.16 : 0.10, t + 0.014);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(bus);
     src.start(t, Math.random() * 6, dur + 0.03);
+    // weight coming down on turf
+    const thud = ctx.createBufferSource();
+    thud.buffer = this.noise;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = wet ? 300 : 150 + Math.random() * 40;
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.0001, t);
+    tg.gain.exponentialRampToValueAtTime(wet ? 0.10 : 0.16, t + 0.008);
+    tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    thud.connect(lp).connect(tg).connect(bus);
+    thud.start(t, Math.random() * 6, 0.1);
   }
 
   /** 0..1 — how close the stream is. */
@@ -268,46 +302,95 @@ export class Soundscape {
       this._lfo(0.31, 420, bp.frequency);
       this._lfo(1.7, 0.012, this.streamGain.gain);
       src.start(0, 5.2);
+      // underneath the riffle, the lower voice of water turning over stones
+      const low = ctx.createBufferSource();
+      low.buffer = this.noise;
+      low.loop = true;
+      low.loopEnd = low.buffer.duration - 0.5;
+      const gb = ctx.createBiquadFilter();
+      gb.type = 'bandpass'; gb.frequency.value = 620; gb.Q.value = 1.6;
+      this.gurgleGain = ctx.createGain();
+      this.gurgleGain.gain.value = 0;
+      low.connect(gb).connect(this.gurgleGain).connect(this.master);
+      this._lfo(2.3, 170, gb.frequency);
+      this._lfo(3.7, 110, gb.frequency);
+      this._lfo(0.9, 0.006, this.gurgleGain.gain);
+      low.start(0, 1.7);
       this._stream = -1;
     }
     if (Math.abs(level - this._stream) < 0.02) return;
     this._stream = level;
-    this.streamGain.gain.setTargetAtTime(0.11 * level * level, this.ctx.currentTime, 0.5);
+    this.streamGain.gain.setTargetAtTime(0.16 * level * level, this.ctx.currentTime, 0.5);
+    this.gurgleGain.gain.setTargetAtTime(0.12 * level * level * level, this.ctx.currentTime, 0.5);   // only heard close to the bank
   }
 
   /** 0 night .. 1 morning: birdsong comes in with the light. */
   setDay(d) { this.day = d; }
 
-  _chirp(when, f0, f1, dur, vel) {
+  _chirp(when, f0, f1, dur, vel, out, vib = 0) {
     const ctx = this.ctx;
     const o = ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(f0, when);
     o.frequency.exponentialRampToValueAtTime(f1, when + dur);
+    if (vib > 0) {                                   // a warble inside the note
+      const l = ctx.createOscillator();
+      l.frequency.value = 22 + Math.random() * 14;
+      const lg = ctx.createGain();
+      lg.gain.value = f0 * vib;
+      l.connect(lg).connect(o.frequency);
+      l.start(when); l.stop(when + dur + 0.02);
+    }
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, when);
     g.gain.exponentialRampToValueAtTime(vel, when + dur * 0.25);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-    o.connect(g);
-    g.connect(this.master);
-    g.connect(this.reverb);
+    o.connect(g).connect(out);
     o.start(when); o.stop(when + dur + 0.02);
+  }
+
+  /** One bird, one phrase. Each kind has its own shape so the morning is not one call on repeat. */
+  _birdPhrase(t, kind, pan, far, gain) {
+    const out = this.ctx.createGain();
+    out.gain.value = gain;
+    this._place(out, pan, far);
+    const r = Math.random;
+    if (kind === 0) {                                // twitter: a handful of quick, uneven notes
+      const base = 2500 + r() * 2200, up = r() < 0.5, n = 2 + Math.floor(r() * 5);
+      for (let i = 0; i < n; i++) {
+        const f = base * (1 + (r() - 0.5) * 0.25);
+        this._chirp(t + i * (0.09 + r() * 0.07), f, f * (up ? 1.35 : 0.72), 0.05 + r() * 0.07, 1, out);
+      }
+    } else if (kind === 1) {                         // two falling notes, said twice or three times
+      const f = 1900 + r() * 700, n = 2 + Math.floor(r() * 2);
+      for (let i = 0; i < n; i++) {
+        this._chirp(t + i * 0.52, f, f * 0.97, 0.16, 0.9, out);
+        this._chirp(t + i * 0.52 + 0.20, f * 0.79, f * 0.76, 0.20, 0.8, out);
+      }
+    } else if (kind === 2) {                         // a dry trill climbing a little
+      const f = 3200 + r() * 1500, n = 8 + Math.floor(r() * 9), gap = 0.045 + r() * 0.02;
+      for (let i = 0; i < n; i++) this._chirp(t + i * gap, f * (1 + i * 0.012), f * (1.06 + i * 0.012), 0.03, 0.7 * Math.sin(Math.PI * (i + 0.5) / n) + 0.3, out);
+    } else {                                         // a slow, slurred whistle with a warble in it
+      const f = 1500 + r() * 900;
+      this._chirp(t, f, f * 1.28, 0.26, 0.9, out, 0.012);
+      this._chirp(t + 0.30, f * 1.25, f * 0.92, 0.34, 0.8, out, 0.018);
+      if (r() < 0.5) this._chirp(t + 0.72, f * 0.95, f * 1.10, 0.18, 0.6, out, 0.01);
+    }
   }
 
   _loopBirds() {
     const next = () => {
-      const wait = 1.2 + Math.random() * 4.5;
+      const wait = 1.0 + Math.random() * 4.2;
       setTimeout(() => {
         if (this.ctx && this.ctx.state === 'running' && !document.hidden && this.day > 0.5) {
           const t = this.ctx.currentTime + 0.02;
-          const base = 2300 + Math.random() * 2400;
-          const n = 2 + Math.floor(Math.random() * 5);
-          const up = Math.random() < 0.5;
-          const vel = (0.012 + Math.random() * 0.02) * this.day;
-          for (let i = 0; i < n; i++) {
-            const f = base * (1 + (Math.random() - 0.5) * 0.25);
-            this._chirp(t + i * (0.09 + Math.random() * 0.07), f, f * (up ? 1.35 : 0.72), 0.05 + Math.random() * 0.07, vel);
-          }
+          const far = Math.random() < 0.6 ? 0.55 + Math.random() * 0.45 : Math.random() * 0.3;
+          const kind = Math.floor(Math.random() * 4);
+          const vel = (0.022 + Math.random() * 0.026) * this.day * (1 - 0.6 * far);
+          const pan = (Math.random() * 2 - 1) * 0.85;
+          this._birdPhrase(t, kind, pan, far, vel);
+          // now and then another of the same kind answers from somewhere else
+          if (Math.random() < 0.28) this._birdPhrase(t + 0.9 + Math.random() * 1.2, kind, -pan * (0.4 + Math.random() * 0.6), Math.min(1, far + 0.3), vel * 0.6);
         }
         next();
       }, wait * 1000);
@@ -355,7 +438,7 @@ export class Soundscape {
       const b = ctx.createOscillator();
       b.type = 'triangle'; b.frequency.value = f; b.detune.value = 6;
       const g = ctx.createGain();
-      g.gain.value = i < 2 ? 0.075 : 0.05;
+      g.gain.value = i < 2 ? 0.045 : 0.05;                 // the two bass notes sit back; they were most of the mix
       a.connect(g); b.connect(g);
       g.connect(this.padFilter);
       this._lfo(0.05 + i * 0.017, 0.018, g.gain);
@@ -436,8 +519,7 @@ export class Soundscape {
     o1.connect(g);
     o2.connect(g2).connect(g);
     o3.connect(g3).connect(g);
-    g.connect(this.master);
-    g.connect(this.reverb);
+    this._place(g, (Math.random() * 2 - 1) * 0.5, 0.2);
     for (const o of [o1, o2, o3]) { o.start(when); o.stop(when + dur + 0.1); }
   }
 

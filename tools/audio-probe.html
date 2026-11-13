@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Aurora Vale — audio probe</title>
+<!--
+  Developer tool. Renders each layer of js/audio.js offline (no speakers needed) and prints
+  how loud it is and where its energy sits, so a change can be checked for clipping or
+  harshness on a machine that cannot play sound. It measures; it does not replace listening.
+  Serve the repo root, then open /tools/audio-probe.html (results are printed to the console
+  and into the page).
+-->
+<pre id="out">rendering…</pre>
+<script type="module">
+import { Soundscape } from '../js/audio.js';
+
+const RATE = 44100, SECONDS = 12;
+const out = document.getElementById('out');
+const lines = [];
+const say = (t) => { lines.push(t); out.textContent = lines.join('\n'); console.log('PROBE ' + t); };
+
+// Run one scenario: build the soundscape inside an OfflineAudioContext, let `setup` trigger
+// sounds at time 0 (or schedule them), render, and summarise the result.
+async function probe(name, setup) {
+  const off = new OfflineAudioContext(2, RATE * SECONDS, RATE);
+  const Real = window.AudioContext;
+  window.AudioContext = function () { return off; };
+  // the offline clock does not advance until rendering starts: pretend it is running
+  Object.defineProperty(off, 'state', { get: () => 'running' });
+  off.resume = () => Promise.resolve();
+  const realTimeout = window.setTimeout, realInterval = window.setInterval;
+  window.setTimeout = () => 0;                    // the random loops are driven by hand below
+  window.setInterval = () => 0;
+  const s = new Soundscape();
+  try {
+    s.init();
+    s.master.gain.cancelScheduledValues(0);
+    s.master.gain.value = 0.9;                    // full volume, as with the slider at 100%
+    setup(s, off);
+  } finally {
+    window.setTimeout = realTimeout; window.setInterval = realInterval; window.AudioContext = Real;
+  }
+  const buf = await off.startRendering();
+  const L = buf.getChannelData(0), R = buf.getChannelData(1);
+  let peak = 0, sum = 0, n = 0;
+  const skip = RATE * 3;                          // let the master fade and LFOs settle
+  for (let i = skip; i < L.length; i++) {
+    const a = Math.max(Math.abs(L[i]), Math.abs(R[i]));
+    if (a > peak) peak = a;
+    sum += L[i] * L[i] + R[i] * R[i]; n += 2;
+  }
+  const rms = Math.sqrt(sum / n);
+  // band energies with a bank of one-pole splits (coarse, but enough to spot a harsh layer)
+  const band = (lo, hi) => {
+    let e = 0, y1 = 0, y2 = 0;
+    const a1 = Math.exp(-2 * Math.PI * hi / RATE), a2 = Math.exp(-2 * Math.PI * lo / RATE);
+    for (let i = skip; i < L.length; i++) {
+      y1 = (1 - a1) * L[i] + a1 * y1;
+      y2 = (1 - a2) * L[i] + a2 * y2;
+      const v = y1 - y2;
+      e += v * v;
+    }
+    return e;
+  };
+  const eLow = band(20, 250), eMid = band(250, 2000), eHigh = band(2000, 6000), eAir = band(6000, 20000);
+  const tot = eLow + eMid + eHigh + eAir || 1;
+  const db = (v) => (v > 0 ? (20 * Math.log10(v)).toFixed(1) : '-inf');
+  const pct = (v) => ((100 * v) / tot).toFixed(0).padStart(3) + '%';
+  say(`${name.padEnd(26)} peak ${db(peak).padStart(6)} dBFS  rms ${db(rms).padStart(6)} dBFS  low ${pct(eLow)} mid ${pct(eMid)} high ${pct(eHigh)} air ${pct(eAir)}${peak >= 0.99 ? '  << CLIPS' : ''}`);
+}
+
+const every = (s, off, from, gap, fn) => { for (let t = from; t < SECONDS; t += gap) fn(t); };
+const at = (off, t, fn) => {                    // call fn as if the clock read t
+  Object.defineProperty(off, 'currentTime', { get: () => t, configurable: true });
+  fn();
+  delete off.currentTime;
+};
+
+(async () => {
+  await probe('bed (wind+fire+pad), night', (s) => { s.setIntensity(0.6); });
+  await probe('bed, aurora at full', (s) => { s.setIntensity(1); });
+  await probe('bed + fire stoked', (s, off) => { s.setFire(1); every(s, off, 3.5, 2.5, (t) => at(off, t, () => s.stoke())); });
+  await probe('bed + stream at the bank', (s) => { s.setStream(1); });
+  await probe('bed + birdsong (dense)', (s, off) => {
+    s.setDay(1); s.setIntensity(0);
+    every(s, off, 3.2, 0.9, (t) => s._birdPhrase(t, Math.floor(t * 7) % 4, Math.sin(t * 3), (t * 0.37) % 1, 0.045));
+  });
+  await probe('bed + running footsteps', (s, off) => { every(s, off, 3.2, 0.33, (t) => at(off, t, () => s.step(false))); });
+  await probe('bed + wading', (s, off) => { s.setStream(1); every(s, off, 3.2, 0.5, (t) => at(off, t, () => s.step(true))); });
+  await probe('bed + chimes (busy)', (s, off) => { s.setIntensity(1); every(s, off, 3.2, 0.7, (t) => s._bell(440 * Math.pow(2, ((t * 5) % 12) / 12), t, 0.08, 3.5)); });
+  await probe('game: complete + storm', (s, off) => { at(off, 4, () => s.complete()); at(off, 6, () => s.storm()); at(off, 8, () => s.wish()); });
+  await probe('everything at once', (s, off) => {
+    s.setIntensity(1); s.setFire(1); s.setStream(1); s.setDay(1);
+    every(s, off, 3.2, 0.33, (t) => at(off, t, () => s.step(false)));
+    every(s, off, 3.2, 0.9, (t) => s._birdPhrase(t, Math.floor(t * 7) % 4, Math.sin(t * 3), 0.2, 0.045));
+    every(s, off, 3.5, 2.5, (t) => at(off, t, () => s.stoke()));
+    at(off, 5, () => s.complete());
+  });
+  say('done');
+  document.title = 'probe done';
+})().catch((e) => say('FAILED ' + (e && e.stack || e)));
+</script>
