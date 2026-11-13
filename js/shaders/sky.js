@@ -101,7 +101,7 @@ vec3 daySky(vec3 d){
 void main(){
   vec3 d = normalize(vDir);
   if (d.y < -0.08) {
-    gl_FragColor = vec4(mix(vec3(0.004, 0.010, 0.014), vec3(0.34, 0.54, 0.82), uDay), 1.0);
+    gl_FragColor = vec4(mix(vec3(0.004, 0.010, 0.014), vec3(0.46, 0.63, 0.86), uDay), 1.0);
     return;
   }
   vec3 col = vec3(0.0);

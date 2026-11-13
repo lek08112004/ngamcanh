@@ -6,6 +6,7 @@ export const FinalShader = {
     uTime: { value: 0 },
     uGrain: { value: 0.012 },
     uVignette: { value: 0.55 },
+    uDay: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -19,6 +20,7 @@ export const FinalShader = {
     uniform float uTime;
     uniform float uGrain;
     uniform float uVignette;
+    uniform float uDay;
     varying vec2 vUv;
     float hash(vec2 p){
       vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -29,13 +31,17 @@ export const FinalShader = {
       vec4 c = texture2D(tDiffuse, vUv);
       vec2 q = vUv - 0.5;
       float v = smoothstep(0.95, 0.30, length(q * vec2(1.05, 1.25)));
-      // gentle grade: a touch more colour and a soft S-curve
+      // The grade. Night wants rich colour and deep contrast for the aurora; daylight wants
+      // restraint, or the meadow turns to poster paint: less saturation, a gentler curve,
+      // a lighter vignette, and a faint split tone (cool shadows, warm highlights).
       float l0 = dot(c.rgb, vec3(0.299, 0.587, 0.114));
-      c.rgb = mix(vec3(l0), c.rgb, 1.26);
+      c.rgb = mix(vec3(l0), c.rgb, mix(1.26, 1.06, uDay));
       c.rgb = clamp(c.rgb, 0.0, 1.0);
-      c.rgb = mix(c.rgb, c.rgb * c.rgb * (3.0 - 2.0 * c.rgb), 0.62);
+      c.rgb = mix(c.rgb, c.rgb * c.rgb * (3.0 - 2.0 * c.rgb), mix(0.62, 0.40, uDay));
+      float l1 = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+      c.rgb *= mix(vec3(1.0), mix(vec3(0.965, 0.99, 1.045), vec3(1.035, 1.005, 0.955), smoothstep(0.15, 0.75, l1)), uDay);
       c.rgb = max(c.rgb - 0.010, 0.0) * 1.012;
-      c.rgb *= mix(1.0 - uVignette, 1.0, v);
+      c.rgb *= mix(1.0 - uVignette * mix(1.0, 0.62, uDay), 1.0, v);
       float luma = dot(c.rgb, vec3(0.299, 0.587, 0.114));
       float g = hash(gl_FragCoord.xy + fract(uTime * 7.31) * 913.0) - 0.5;
       c.rgb += g * uGrain * (1.0 - 0.6 * luma);

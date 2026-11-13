@@ -31,15 +31,21 @@ class Geo {
     }
   }
   /** one petal or leaf growing from the stem axis toward azimuth `a` */
-  petal({ a, y0, r0 = 0.01, R, rise, W, curl = 0, prof = 'open', droop = 0, open = 0, kind = 1, nu = 3, nv = 4 }) {
+  petal({ a, y0, r0 = 0.01, R, rise, W, curl = 0, prof = 'open', droop = 0, open = 0, kind = 1, nu = 3, nv = 4, broad = false, roll = 0 }) {
     const dx = Math.cos(a), dz = Math.sin(a);
     const rOf = prof === 'cup'
       ? (v) => r0 + R * Math.sin(Math.min(v * 2.3, Math.PI))
       : (v) => r0 + R * Math.pow(v, 0.8);
+    // a rose petal is widest near its tip; the others swell in the middle
+    const wOf = broad
+      ? (v) => W * (0.40 + 0.60 * Math.sin(Math.PI * (0.15 + 0.60 * v)))
+      : (v) => W * (0.55 + 0.45 * Math.sin(Math.PI * v));
     this.strip((u, v) => {
-      const w = W * (0.55 + 0.45 * Math.sin(Math.PI * v));
-      const r = rOf(v) + curl * u * u * w;
-      return [dx * r - dz * u * w, y0 + rise * v - droop * v * v, dz * r + dx * u * w];
+      const w = wOf(v);
+      // `roll` turns the lip of the petal back outward, as an opened rose does
+      const lip = roll * Math.max(0, v - 0.6) * Math.max(0, v - 0.6) * 6.0;
+      const r = rOf(v) + curl * u * u * w + lip * W;
+      return [dx * r - dz * u * w, y0 + rise * v - droop * v * v - lip * W * 0.5, dz * r + dx * u * w];
     }, nu, nv, kind, open);
   }
   tube(h, r, sides = 5) {
@@ -92,27 +98,33 @@ class Geo {
 const TAU = Math.PI * 2;
 
 /* ---------- species ---------- */
-function tulipGeo() {
+// `fine` builds the close-up version: the same flower with enough facets that the curl of
+// a petal is a curve, not a fold. It is only ever drawn for the few flowers beside you.
+function tulipGeo(fine) {
   const g = new Geo();
-  g.tube(0.66, 0.013);
-  g.petal({ kind: 0, a: 0.5, y0: 0.03, R: 0.17, rise: 0.46, W: 0.055, curl: -0.35 });
-  g.petal({ kind: 0, a: 3.5, y0: 0.03, R: 0.15, rise: 0.40, W: 0.050, curl: -0.35 });
+  const nu = fine ? 6 : 3, nv = fine ? 7 : 4;
+  g.tube(0.66, 0.013, fine ? 8 : 5);
+  g.petal({ kind: 0, a: 0.5, y0: 0.03, R: 0.17, rise: 0.46, W: 0.055, curl: -0.35, nu: fine ? 5 : 3, nv: fine ? 7 : 4 });
+  g.petal({ kind: 0, a: 3.5, y0: 0.03, R: 0.15, rise: 0.40, W: 0.050, curl: -0.35, nu: fine ? 5 : 3, nv: fine ? 7 : 4 });
   for (let k = 0; k < 3; k++) {
-    g.petal({ a: (k / 3) * TAU, y0: 0.655, r0: 0.012, R: 0.088, rise: 0.345, W: 0.078, curl: -0.55, prof: 'cup', open: 1 });
-    g.petal({ a: (k / 3) * TAU + TAU / 6, y0: 0.66, r0: 0.010, R: 0.074, rise: 0.33, W: 0.070, curl: -0.55, prof: 'cup', open: 1 });
+    g.petal({ a: (k / 3) * TAU, y0: 0.655, r0: 0.012, R: 0.088, rise: 0.345, W: 0.078, curl: -0.55, prof: 'cup', open: 1, nu, nv });
+    g.petal({ a: (k / 3) * TAU + TAU / 6, y0: 0.66, r0: 0.010, R: 0.074, rise: 0.33, W: 0.070, curl: -0.55, prof: 'cup', open: 1, nu, nv });
   }
   return g.build();
 }
-function roseGeo() {
+function roseGeo(fine) {
   const g = new Geo();
-  g.tube(0.70, 0.014);
+  const nu = fine ? 6 : 3, nv = fine ? 6 : 4;
+  g.tube(0.70, 0.014, fine ? 8 : 5);
   g.petal({ kind: 0, a: 0.3, y0: 0.22, R: 0.14, rise: 0.05, W: 0.042 });
   g.petal({ kind: 0, a: 2.5, y0: 0.38, R: 0.13, rise: 0.05, W: 0.040 });
   g.petal({ kind: 0, a: 4.6, y0: 0.52, R: 0.12, rise: 0.04, W: 0.036 });
-  for (let k = 0; k < 5; k++) g.petal({ a: (k / 5) * TAU, y0: 0.70, r0: 0.02, R: 0.135, rise: 0.13, W: 0.085, curl: 0.25, droop: 0.05, open: 0.3 });
-  for (let k = 0; k < 5; k++) g.petal({ a: (k / 5) * TAU + 0.63, y0: 0.71, r0: 0.015, R: 0.095, rise: 0.20, W: 0.070, curl: -0.2, open: 0.2 });
-  for (let k = 0; k < 4; k++) g.petal({ a: (k / 4) * TAU + 0.3, y0: 0.72, r0: 0.008, R: 0.050, rise: 0.25, W: 0.050, curl: -0.6, prof: 'cup', open: 0.1 });
-  for (let k = 0; k < 3; k++) g.petal({ a: (k / 3) * TAU + 1.1, y0: 0.73, r0: 0.004, R: 0.025, rise: 0.26, W: 0.034, curl: -0.8, prof: 'cup', open: 0.05, nv: 3 });
+  if (fine) for (let k = 0; k < 5; k++) g.petal({ kind: 0, a: (k / 5) * TAU + 0.3, y0: 0.695, r0: 0.012, R: 0.060, rise: -0.012, W: 0.014, droop: 0.02, nu: 2, nv: 3 });   // sepals
+  // whorls of broad petals, each a little tighter and more upright than the one outside it
+  for (let k = 0; k < 5; k++) g.petal({ kind: 3, broad: true, roll: 0.9, a: (k / 5) * TAU, y0: 0.70, r0: 0.02, R: 0.128, rise: 0.12, W: 0.092, curl: 0.22, droop: 0.05, open: 0.3, nu, nv });
+  for (let k = 0; k < 5; k++) g.petal({ kind: 3, broad: true, roll: 0.5, a: (k / 5) * TAU + 0.63, y0: 0.71, r0: 0.015, R: 0.092, rise: 0.19, W: 0.078, curl: -0.25, open: 0.2, nu, nv });
+  for (let k = 0; k < 4; k++) g.petal({ kind: 3, broad: true, roll: 0.2, a: (k / 4) * TAU + 0.3, y0: 0.72, r0: 0.008, R: 0.052, rise: 0.235, W: 0.056, curl: -0.6, prof: 'cup', open: 0.1, nu, nv });
+  for (let k = 0; k < 3; k++) g.petal({ kind: 3, broad: true, a: (k / 3) * TAU + 1.1, y0: 0.73, r0: 0.004, R: 0.026, rise: 0.25, W: 0.038, curl: -0.8, prof: 'cup', open: 0.05, nu: fine ? 4 : 3, nv: fine ? 4 : 3 });
   return g.build();
 }
 function lavenderGeo() {
@@ -150,12 +162,19 @@ function daisyGeo() {
 }
 
 /* ---------- instancing ---------- */
-function flowerMaterial(shared) {
+// Flowers within LOD_NEAR metres of the camera swap to their close-up model. Both models
+// share the same instance buffers; each one's vertex shader drops the flowers that belong
+// to the other, so nothing is ever drawn twice.
+export const LOD_NEAR = 7;
+function flowerMaterial(shared, lod) {
+  const defines = {};
+  if (lod) defines[lod] = LOD_NEAR.toFixed(1);
   return new THREE.ShaderMaterial({
     vertexShader: tulipVertex,
     fragmentShader: tulipFragment,
     side: THREE.DoubleSide,
     alphaToCoverage: true,
+    defines,
     uniforms: {
       ...shared.light,
       uTime: shared.uTime,
@@ -172,7 +191,7 @@ function flowerMaterial(shared) {
   });
 }
 
-function instanced(geometry, material, list) {
+function instanceAttributes(list) {
   const n = list.length;
   const off = new Float32Array(n * 3), par = new Float32Array(n * 3), col = new Float32Array(n * 3);
   list.forEach((f, i) => {
@@ -180,16 +199,34 @@ function instanced(geometry, material, list) {
     par[i * 3] = f.h; par[i * 3 + 1] = f.yaw; par[i * 3 + 2] = f.seed;
     col[i * 3] = f.c[0]; col[i * 3 + 1] = f.c[1]; col[i * 3 + 2] = f.c[2];
   });
+  return {
+    n,
+    aOffset: new THREE.InstancedBufferAttribute(off, 3),
+    aParams: new THREE.InstancedBufferAttribute(par, 3),
+    aColor: new THREE.InstancedBufferAttribute(col, 3),
+  };
+}
+function instanced(geometry, material, inst) {
+  if (Array.isArray(inst)) inst = instanceAttributes(inst);
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = geometry.index;
   for (const name of ['position', 'normal', 'aInfo', 'aUv']) geo.setAttribute(name, geometry.attributes[name]);
-  geo.setAttribute('aOffset', new THREE.InstancedBufferAttribute(off, 3));
-  geo.setAttribute('aParams', new THREE.InstancedBufferAttribute(par, 3));
-  geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(col, 3));
-  geo.instanceCount = n;
+  geo.setAttribute('aOffset', inst.aOffset);
+  geo.setAttribute('aParams', inst.aParams);
+  geo.setAttribute('aColor', inst.aColor);
+  geo.instanceCount = inst.n;
   const mesh = new THREE.Mesh(geo, material);
   mesh.frustumCulled = false;
   return mesh;
+}
+/** one species, as one mesh, or as a far model plus a close-up model when `lod` is on */
+function species(shared, makeGeo, list, lod) {
+  if (!lod) return [instanced(makeGeo(false), flowerMaterial(shared), list)];
+  const inst = instanceAttributes(list);
+  return [
+    instanced(makeGeo(false), flowerMaterial(shared, 'LOD_FAR'), inst),
+    instanced(makeGeo(true), flowerMaterial(shared, 'LOD_NEAR'), inst),
+  ];
 }
 
 /** thousands of small blossom (or leaf) cards */
@@ -269,7 +306,7 @@ export const GARDEN_TREES = [[GARDEN.x, GARDEN.z], [GARDEN.x - 5.5, GARDEN.z + 9
 export const GARDEN_ARCH = { x: GARDEN.x - 8.5, z: GARDEN.z };
 
 /* ---------- tulip beds: colour stripes running down toward the valley ---------- */
-export function createTulips(shared, rng, count) {
+export function createTulips(shared, rng, count, lod) {
   const ROW = 0.44, STRIPE = 3.6;
   const list = [];
   let guard = 0;
@@ -294,11 +331,13 @@ export function createTulips(shared, rng, count) {
       c: [c[0] * tone, c[1] * tone, c[2] * tone],
     });
   }
-  return instanced(tulipGeo(), flowerMaterial(shared), list);
+  const group = new THREE.Group();
+  group.add(...species(shared, tulipGeo, list, lod));
+  return group;
 }
 
 /* ---------- the garden ---------- */
-export function createGarden(shared, rng, scale) {
+export function createGarden(shared, rng, scale, lod) {
   const group = new THREE.Group();
   const cx = GARDEN.x, cz = GARDEN.z;
   const mat = flowerMaterial(shared);
@@ -332,7 +371,7 @@ export function createGarden(shared, rng, scale) {
       h, yaw: rng() * TAU, seed: rng(), c: tone(ROSES[rng() < 0.6 ? 1 : rng() < 0.5 ? 0 : 2]),
     });
   }
-  group.add(instanced(roseGeo(), mat, roses));
+  group.add(...species(shared, roseGeo, roses, lod));
 
   /* --- lavender rows --- */
   const lav = [];
@@ -366,7 +405,7 @@ export function createGarden(shared, rng, scale) {
   group.add(instanced(daisyGeo(), mat, dz));
 
   /* --- rose arch, leafed over --- */
-  const wood = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: 1 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x6a5138, roughness: 1 });
   for (const ox of [0.0, 0.6]) {
     const arc = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.045, 8, 28, Math.PI), wood);
     arc.rotation.y = Math.PI / 2;
@@ -386,7 +425,7 @@ export function createGarden(shared, rng, scale) {
   group.add(cards(shared, leaves, true));
 
   /* --- cherry trees: crowns of blossom, petals drifting down --- */
-  const bark = new THREE.MeshStandardMaterial({ color: 0x33221a, roughness: 1 });
+  const bark = new THREE.MeshStandardMaterial({ color: 0x5c4336, roughness: 1 });
   const blossom = [];
   const petalPos = [], petalSeed = [];
   for (const [tx, tz] of GARDEN_TREES) {

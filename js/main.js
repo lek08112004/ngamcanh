@@ -50,9 +50,9 @@ function detectTier() {
 }
 const tier = qualityChoice === 'auto' ? detectTier() : qualityChoice;
 const TIERS = {
-  low: { steps: 14, grass: 28000, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.6 },
-  medium: { steps: 20, grass: 70000, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 1024, mountains: 0.8 },
-  high: { steps: 32, grass: 140000, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 2048, mountains: 1 },
+  low: { steps: 14, grassNear: 9000, grass: 24000, grassFar: 0, roof: 2500, terrainQ: 0, flowerLod: 0, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.4, mtnMap: 256, mtnQ: 0 },
+  medium: { steps: 20, grassNear: 30000, grass: 60000, grassFar: 26000, roof: 6000, terrainQ: 1, flowerLod: 1, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 1024, mountains: 0.66, mtnMap: 512, mtnQ: 1 },
+  high: { steps: 32, grassNear: 70000, grass: 120000, grassFar: 70000, roof: 12000, terrainQ: 1, flowerLod: 1, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 2048, mountains: 1, mtnMap: 1024, mtnQ: 2 },
 };
 const Q = { ...TIERS[tier] };
 // keep very large canvases (4K at 200%) within a sane pixel budget
@@ -102,6 +102,7 @@ const shared = {
   uPixelRatio: { value: pixelRatio },
   uPointScale: { value: 600 },
   uPlayer: { value: camBase },
+  uGrassFar: { value: Q.grassFar ? 108 : 54 },
   light: {
     uShadowMap: { value: null },
     uShadowMatrix: { value: new THREE.Matrix4() },
@@ -230,8 +231,8 @@ function createStarPoints(count, rng) {
 const rng = makeRng(20261112);
 const starPoints = createStarPoints(Q.stars * 2, rng);
 scene.add(starPoints);
-scene.add(createMountains(shared, Q.mountains));
-scene.add(createTerrain(shared));
+scene.add(createMountains(shared, Q.mountains, Q.mtnMap, Q.mtnQ));
+scene.add(createTerrain(shared, Q.terrainQ));
 const cabin = createCabin(rng, shared);
 scene.add(cabin.group, cabin.smoke);
 shared.uCabinLight.value.copy(cabin.lightWorld);
@@ -241,8 +242,12 @@ scene.add(fence, rocks);
 const camp = createCamp(shared, rng);
 scene.add(camp.group);
 shared.uFireLight.value.set(camp.firePos.x, camp.firePos.y, camp.firePos.z, 0.5);
-const grass = createGrass(shared, rng, Q.grass, cabin);
-const grassTotal = grass.userData.meadow.geometry.instanceCount;
+// three nested tiles of blades: fine and dense underfoot, the meadow proper, coarse tufts far out
+const grass = createGrass(shared, rng, [
+  { r: 13, count: Q.grassNear, h: [0.30, 0.80], w: [0.012, 0.024], grow: 0.0, widen: 0.8 },
+  { r: 56, count: Q.grass, h: [0.42, 1.04], w: [0.028, 0.054], grow: 0.5, widen: 2.0 },
+  { r: 110, count: Q.grassFar, h: [0.55, 1.15], w: [0.07, 0.14], grow: 0.6, widen: 1.0, fadeIn: 46 },
+], cabin, Q.roof);
 scene.add(grass);
 
 // Places worth walking to. Reaching one writes it into the trek log.
@@ -256,12 +261,12 @@ const PLACES = [
   { id: 'east', name: 'Đồi phía đông', x: 118, z: -58, r: 12, note: 'Cao hơn trại, nhìn được cả thung lũng.' },
   { id: 'south', name: 'Đồi sau trại', x: -6, z: 112, r: 12, note: 'Nhìn ngược về trại và dãy núi phương bắc.' },
 ];
-const garden = createGarden(shared, rng, Q.garden);
+const garden = createGarden(shared, rng, Q.garden, Q.flowerLod);
 const signposts = createSignposts(PLACES);
-const tulips = createTulips(shared, rng, Q.tulips);
+const tulips = createTulips(shared, rng, Q.tulips, Q.flowerLod);
 scene.add(garden, signposts, tulips);
 // every instanced flower bed, so the quality ladder can thin them out together
-const flowerBeds = [tulips, ...garden.children.filter((c) => c.geometry && c.geometry.isInstancedBufferGeometry)]
+const flowerBeds = [...tulips.children, ...garden.children].filter((c) => c.geometry && c.geometry.isInstancedBufferGeometry)
   .map((m) => ({ geo: m.geometry, total: m.geometry.instanceCount }));
 scene.add(createFireflies(shared, rng, Q.flies));
 
@@ -292,7 +297,8 @@ if (Q.shadow) {
   shared.light.uShadowTexel.value = 1 / Q.shadow;
   for (const root of [cabin.group, camp.group, fence, rocks, garden, signposts]) {
     root.traverse((o) => {
-      if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
+      const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (o.isMesh && mat && mat.isMeshStandardMaterial) {
         o.castShadow = true;
         o.receiveShadow = !o.userData.shadowOnly;
       }
@@ -586,9 +592,12 @@ const day = { target: 0, value: 0 };
   const h = new Date().getHours();
   day.target = day.value = want === 'day' ? 1 : want === 'night' ? 0 : (h >= 6 && h < 18 ? 1 : 0);
 }
-const NIGHT_AMB = [0.08, 0.13, 0.18], DAY_AMB = [0.34, 0.48, 0.74];
-const NIGHT_FOG = [0.010, 0.026, 0.034], DAY_FOG = [0.34, 0.54, 0.82];
-const HEMI_GROUND_N = new THREE.Color(0x0a160d), HEMI_GROUND_D = new THREE.Color(0x55603c);
+const NIGHT_AMB = [0.08, 0.13, 0.18], DAY_AMB = [0.40, 0.50, 0.68];
+const NIGHT_FOG = [0.010, 0.026, 0.034], DAY_FOG = [0.46, 0.63, 0.86];
+// Lamps for the built things (cabin, tent, rocks). By day they are matched to the light the
+// ground and the grass get from the shader uniforms: three.js divides by pi, so the numbers differ.
+const HEMI_SKY_N = new THREE.Color(0x3a6a86), HEMI_SKY_D = new THREE.Color().setRGB(DAY_AMB[0], DAY_AMB[1], DAY_AMB[2]);
+const HEMI_GROUND_N = new THREE.Color(0x0a160d), HEMI_GROUND_D = new THREE.Color().setRGB(0.20, 0.22, 0.13);
 const SUN = [2.9, 2.55, 1.95];
 let lanternOn = true;
 function applyDay(dt) {
@@ -602,16 +611,20 @@ function applyDay(dt) {
   const warm = 1 - d;
   shared.uSunCol.value.set(SUN[0] * d, SUN[1] * d * (1 - 0.35 * warm), SUN[2] * d * (1 - 0.6 * warm));
   fogColor.setRGB(mix(NIGHT_FOG[0], DAY_FOG[0]), mix(NIGHT_FOG[1], DAY_FOG[1]), mix(NIGHT_FOG[2], DAY_FOG[2]));
-  hemi.intensity = mix(0.9, 2.2);
+  hemi.intensity = mix(0.9, Math.PI);
+  hemi.color.copy(HEMI_SKY_N).lerp(HEMI_SKY_D, d);
   hemi.groundColor.copy(HEMI_GROUND_N).lerp(HEMI_GROUND_D, d);
   shared.uFogDensity.value = scene.fog.density = mix(0.0042, 0.0012);
-  sunLight.intensity = 4.6 * d;
+  sunLight.intensity = 9.1 * d;
   bloom.threshold = mix(0.82, 1.08);
   renderer.toneMappingExposure = mix(1.12, 1.04);
   const dim = 1 - 0.88 * d;
   for (const [m, r, g, b] of cabin.glows) m.color.setRGB(r * dim, g * dim, b * dim);
   const lamp = lanternOn ? dim : 0.05;
   for (const [m, r, g, b] of camp.glows) m.color.setRGB(r * lamp, g * lamp, b * lamp);
+  cabin.paneMat.uniforms.uLit.value = dim;
+  camp.doorMat.uniforms.uLit.value = lamp;
+  camp.canvasMat.emissiveIntensity = 0.03 + 0.34 * lamp;       // the lantern glows through the cloth
   cabin.light.intensity = 7 * dim;
   camp.tentLight.intensity = lanternOn ? 2.2 * dim : 0;
   return d;
@@ -1274,7 +1287,7 @@ function adaptQuality(dt) {
     lensPass.enabled = false;
   } else if (grassFrac > 0.6) {
     grassFrac = 0.6;
-    grass.userData.meadow.geometry.instanceCount = Math.floor(grassTotal * grassFrac);
+    for (const l of grass.userData.layers) l.geo.instanceCount = Math.floor(l.total * grassFrac);
   } else if (flowerFrac > 0.55) {
     flowerFrac = 0.55;
     for (const b of flowerBeds) b.geo.instanceCount = Math.floor(b.total * flowerFrac);
@@ -1294,6 +1307,7 @@ function frame() {
   frames++;
   shared.uTime.value = time;
   finalPass.uniforms.uTime.value = time;
+  finalPass.uniforms.uDay.value = uDay.value;
   skyMat.uniforms.uFrame.value = frames % 64;
 
   /* ---- camera ---- */
@@ -1386,6 +1400,7 @@ function frame() {
   shared.uFire.value += (fire.level - shared.uFire.value) * (1 - Math.exp(-dt * 3));
   shared.uFireLight.value.w = shared.uFire.value * flicker;
   camp.light.intensity = 10 * shared.uFire.value * flicker;
+  camp.charred.emissiveIntensity = (0.12 + 0.75 * shared.uFire.value * flicker) * (1 - 0.8 * dayAmt);   // embers pale in daylight
   camp.flame.rotation.y = Math.atan2(camera.position.x - camp.firePos.x, camera.position.z - camp.firePos.z);
   if (Math.abs(fire.level - fire.lastAudio) > 0.03) { fire.lastAudio = fire.level; audio.setFire(fire.level); }
 
@@ -1434,6 +1449,15 @@ function frame() {
     {
       const si = SPOTS.findIndex((sp) => sp.id === query.get('spot'));
       if (si > 0) { goSpot(si); camBase.copy(camTarget); view.yaw = view.yawT; view.pitch = view.pitchT; view.fov = view.fovT; }
+    }
+    if (query.has('x') && query.has('z')) {
+      // test hook: stand anywhere (x, z in metres, eye height above the ground)
+      const px = clamp(Number(query.get('x')) || 0, BOUNDS.minX, BOUNDS.maxX);
+      const pz = clamp(Number(query.get('z')) || 0, BOUNDS.minZ, BOUNDS.maxZ);
+      const eye = clamp(Number(query.get('eye')) || 1.7, 0.2, 60);
+      walker.on = false;
+      camTarget.set(px, terrainH(px, pz) + eye, pz);
+      camBase.copy(camTarget);
     }
     if (query.has('yaw') || query.has('pitch') || query.has('fov')) {
       setTour(false);
