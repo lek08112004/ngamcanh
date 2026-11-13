@@ -1361,6 +1361,7 @@ let perfAcc = 0, perfFrames = 0, perfSkip = 3;
 let grassFrac = 1;
 let firstFrame = true;
 const _q = new THREE.Quaternion();
+const _fwd = new THREE.Vector3();
 const _m4 = new THREE.Matrix4();
 
 // Quality ladder (automatic mode only). When frames drop, shed in this order:
@@ -1497,12 +1498,23 @@ function frame() {
   camp.flame.rotation.y = Math.atan2(camera.position.x - camp.firePos.x, camera.position.z - camp.firePos.z);
   if (Math.abs(fire.level - fire.lastAudio) > 0.03) { fire.lastAudio = fire.level; audio.setFire(fire.level); }
 
-  // focus sits out in the landscape; sitting low among flowers pulls it closer for a stronger blur
+  // The lens focuses on what you are looking at. Walk the view ray out to where it meets the
+  // flowers or the ground: look out over the valley and everything is sharp; bend down to a
+  // bloom and it is the bloom that is sharp, with only what lies nearer still going soft.
   {
-    const low = clamp((1.5 - (camBase.y - terrainH(camBase.x, camBase.z))) / 0.8, 0, 1);
-    const want = mode === 'play' ? 0 : 11 - 5 * low;
+    camera.getWorldDirection(_fwd);
+    let hit = 40;
+    for (let i = 0, d = 0.5; i < 30; i++, d *= 1.17) {
+      const hx = camera.position.x + _fwd.x * d, hy = camera.position.y + _fwd.y * d, hz = camera.position.z + _fwd.z * d;
+      if (hy < terrainH(hx, hz) + 0.55) { hit = d; break; }
+    }
+    const want = mode === 'play' ? 0 : clamp(hit * 0.6, 0.3, 11);
     const u = lensPass.uniforms.uFocus;
-    u.value += (want - u.value) * (1 - Math.exp(-dt * 2));
+    u.value += (want - u.value) * (frames < 6 ? 1 : 1 - Math.exp(-dt * 3.5));   // no hunting on arrival
+    // and it stops down as the subject comes near: studying a flower, nothing is smeared;
+    // the soft foreground is kept for the long views, where it gives depth
+    const t = clamp((u.value - 1.5) / 6.5, 0, 1);
+    lensPass.uniforms.uAperture.value = 0.22 * t * t * (3 - 2 * t);
   }
   updateLabels();
   updateCompass();

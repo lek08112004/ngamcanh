@@ -153,10 +153,14 @@ void main(){
   fibre = mix(0.5, vnoise(rq * vec2(46.0, 11.0)) * 0.6 + vnoise(xz * vec2(9.0, 41.0) + 3.0) * 0.4, lC);
   hRel = hum * 0.60 * lA + clump * 0.07 * lB;
 #endif
+  // grain you only see when you crouch: crumbs of soil, grit, the specks in a stone
+  float lD = 1.0 - smoothstep(0.002, 0.012, px);
+  float micro = 0.5;
+  if (lD > 0.0) micro = mix(0.5, vnoise(xz * 150.0) * 0.55 + vnoise(mat2(0.6, 0.8, -0.8, 0.6) * xz * 290.0 + 3.0) * 0.45, lD);
   // near you the ground is the dim thatch between the blades; far off it stands for the whole sward
   float near = 1.0 - smoothstep(uGrassFar * 0.30, uGrassFar, dist);
   vec3 albedo = base * mix(1.04, 0.60, near);
-  albedo *= (0.80 + 0.40 * clump) * (0.80 + 0.40 * fibre);
+  albedo *= (0.80 + 0.40 * clump) * (0.80 + 0.40 * fibre) * (0.82 + 0.36 * micro);
   float grassAmt = 1.0;
 
   // a dusting of far-off wildflowers by day
@@ -199,6 +203,7 @@ void main(){
     albedo *= 1.0 - 0.38 * exp(-toStem * toStem) * bed;
     float row = 0.5 + 0.5 * cos(xz.x * 14.27997);
     vec3 soil = vec3(0.060, 0.041, 0.028) * (0.70 + 0.60 * vnoise(xz * 7.0)) * (0.72 + 0.56 * row);
+    soil *= 0.60 + 0.80 * micro;
     albedo = mix(albedo, soil, bed * 0.80);
     hRel += row * 0.07 * bed * lB;
     grassAmt *= 1.0 - bed * 0.8;
@@ -208,6 +213,7 @@ void main(){
   // gravel: two grids of pebbles laid across each other, so no lattice shows up close
   float gv = vnoise(mat2(0.8, -0.6, 0.6, 0.8) * xz * 27.0) * 0.55 + vnoise(mat2(0.6, 0.8, -0.8, 0.6) * xz * 41.0 + 7.0) * 0.45;
   vec3 gravel = mix(vec3(0.13, 0.115, 0.095), vec3(0.34, 0.31, 0.26), gv) * (0.85 + 0.3 * vnoise(xz * 2.3));
+  gravel *= 0.62 + 0.76 * micro;
   albedo = mix(albedo, gravel, gp * 0.92);
   grassAmt *= 1.0 - gp;
   // soft grounding under the cabin and the tent (the cast shadows do the rest by day)
@@ -230,6 +236,7 @@ void main(){
   float peb = vnoise(xz * 5.5) * 0.6 + vnoise(xz * 13.0 + 2.0) * 0.4;
   vec3 pebble = mix(vec3(0.075, 0.068, 0.058), vec3(0.230, 0.210, 0.180), peb);
   pebble *= mix(1.0, 0.55, smoothstep(sw + 0.9, sw, sd));          // wet near the waterline
+  pebble *= 0.70 + 0.60 * micro;
   albedo = mix(albedo, pebble, bank);
   hRel += peb * 0.05 * bank * lB - bank * 0.05;
   grassAmt *= 1.0 - bank;

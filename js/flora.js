@@ -33,9 +33,12 @@ class Geo {
   /** one petal or leaf growing from the stem axis toward azimuth `a` */
   petal({ a, y0, r0 = 0.01, R, rise, W, curl = 0, prof = 'open', droop = 0, open = 0, kind = 1, nu = 3, nv = 4, broad = false, roll = 0 }) {
     const dx = Math.cos(a), dz = Math.sin(a);
+    // 'egg' is the closed goblet of a tulip: widest two fifths of the way up, the tips nearly meeting
     const rOf = prof === 'cup'
       ? (v) => r0 + R * Math.sin(Math.min(v * 2.3, Math.PI))
-      : (v) => r0 + R * Math.pow(v, 0.8);
+      : prof === 'egg'
+        ? (v) => r0 + R * Math.pow(Math.sin(Math.min(v * 2.62, Math.PI)), 0.75)
+        : (v) => r0 + R * Math.pow(v, 0.8);
     // a rose petal is widest near its tip; the others swell in the middle
     const wOf = broad
       ? (v) => W * (0.40 + 0.60 * Math.sin(Math.PI * (0.15 + 0.60 * v)))
@@ -102,29 +105,50 @@ const TAU = Math.PI * 2;
 // a petal is a curve, not a fold. It is only ever drawn for the few flowers beside you.
 function tulipGeo(fine) {
   const g = new Geo();
-  const nu = fine ? 6 : 3, nv = fine ? 7 : 4;
-  g.tube(0.66, 0.013, fine ? 8 : 5);
-  g.petal({ kind: 0, a: 0.5, y0: 0.03, R: 0.17, rise: 0.46, W: 0.055, curl: -0.35, nu: fine ? 5 : 3, nv: fine ? 7 : 4 });
-  g.petal({ kind: 0, a: 3.5, y0: 0.03, R: 0.15, rise: 0.40, W: 0.050, curl: -0.35, nu: fine ? 5 : 3, nv: fine ? 7 : 4 });
+  const nu = fine ? 7 : 3, nv = fine ? 9 : 4;
+  g.tube(0.66, 0.016, fine ? 8 : 5);
+  // broad strap leaves that clasp the stem and arch outward, the way a tulip's do
+  const ln = fine ? 5 : 3, lv = fine ? 8 : 4;
+  g.petal({ kind: 0, a: 0.5, y0: 0.02, R: 0.20, rise: 0.50, W: 0.070, curl: -0.55, droop: 0.10, nu: ln, nv: lv });
+  g.petal({ kind: 0, a: 3.4, y0: 0.02, R: 0.17, rise: 0.44, W: 0.062, curl: -0.55, droop: 0.06, nu: ln, nv: lv });
+  if (fine) g.petal({ kind: 0, a: 1.9, y0: 0.16, R: 0.11, rise: 0.34, W: 0.040, curl: -0.6, droop: 0.02, nu: ln, nv: lv });
+  // six tepals in two whorls of three, overlapping into a goblet
   for (let k = 0; k < 3; k++) {
-    g.petal({ a: (k / 3) * TAU, y0: 0.655, r0: 0.012, R: 0.088, rise: 0.345, W: 0.078, curl: -0.55, prof: 'cup', open: 1, nu, nv });
-    g.petal({ a: (k / 3) * TAU + TAU / 6, y0: 0.66, r0: 0.010, R: 0.074, rise: 0.33, W: 0.070, curl: -0.55, prof: 'cup', open: 1, nu, nv });
+    g.petal({ a: (k / 3) * TAU, y0: 0.655, r0: 0.010, R: 0.082, rise: 0.300, W: 0.086, curl: -0.62, prof: 'egg', open: 1, nu, nv });
+    g.petal({ a: (k / 3) * TAU + TAU / 6, y0: 0.660, r0: 0.008, R: 0.070, rise: 0.292, W: 0.078, curl: -0.62, prof: 'egg', open: 1, nu, nv });
   }
   return g.build();
 }
 function roseGeo(fine) {
   const g = new Geo();
-  const nu = fine ? 6 : 3, nv = fine ? 6 : 4;
   g.tube(0.70, 0.014, fine ? 8 : 5);
   g.petal({ kind: 0, a: 0.3, y0: 0.22, R: 0.14, rise: 0.05, W: 0.042 });
   g.petal({ kind: 0, a: 2.5, y0: 0.38, R: 0.13, rise: 0.05, W: 0.040 });
   g.petal({ kind: 0, a: 4.6, y0: 0.52, R: 0.12, rise: 0.04, W: 0.036 });
-  if (fine) for (let k = 0; k < 5; k++) g.petal({ kind: 0, a: (k / 5) * TAU + 0.3, y0: 0.695, r0: 0.012, R: 0.060, rise: -0.012, W: 0.014, droop: 0.02, nu: 2, nv: 3 });   // sepals
-  // whorls of broad petals, each a little tighter and more upright than the one outside it
-  for (let k = 0; k < 5; k++) g.petal({ kind: 3, broad: true, roll: 0.9, a: (k / 5) * TAU, y0: 0.70, r0: 0.02, R: 0.128, rise: 0.12, W: 0.092, curl: 0.22, droop: 0.05, open: 0.3, nu, nv });
-  for (let k = 0; k < 5; k++) g.petal({ kind: 3, broad: true, roll: 0.5, a: (k / 5) * TAU + 0.63, y0: 0.71, r0: 0.015, R: 0.092, rise: 0.19, W: 0.078, curl: -0.25, open: 0.2, nu, nv });
-  for (let k = 0; k < 4; k++) g.petal({ kind: 3, broad: true, roll: 0.2, a: (k / 4) * TAU + 0.3, y0: 0.72, r0: 0.008, R: 0.052, rise: 0.235, W: 0.056, curl: -0.6, prof: 'cup', open: 0.1, nu, nv });
-  for (let k = 0; k < 3; k++) g.petal({ kind: 3, broad: true, a: (k / 3) * TAU + 1.1, y0: 0.73, r0: 0.004, R: 0.026, rise: 0.25, W: 0.038, curl: -0.8, prof: 'cup', open: 0.05, nu: fine ? 4 : 3, nv: fine ? 4 : 3 });
+  if (!fine) {
+    for (let k = 0; k < 5; k++) g.petal({ kind: 3, broad: true, roll: 0.7, a: (k / 5) * TAU, y0: 0.70, r0: 0.016, R: 0.082, rise: 0.105, W: 0.066, curl: 0.15, droop: 0.03, open: 0.3 });
+    for (let k = 0; k < 5; k++) g.petal({ kind: 3, broad: true, roll: 0.4, a: (k / 5) * TAU + 0.63, y0: 0.71, r0: 0.012, R: 0.060, rise: 0.145, W: 0.056, curl: -0.3, open: 0.2 });
+    for (let k = 0; k < 4; k++) g.petal({ kind: 3, broad: true, a: (k / 4) * TAU + 0.3, y0: 0.72, r0: 0.006, R: 0.038, rise: 0.165, W: 0.044, curl: -0.7, prof: 'egg', open: 0.1 });
+    for (let k = 0; k < 3; k++) g.petal({ kind: 3, broad: true, a: (k / 3) * TAU + 1.1, y0: 0.73, r0: 0.003, R: 0.022, rise: 0.165, W: 0.032, curl: -0.9, prof: 'egg', open: 0.05, nv: 3 });
+    return g.build();
+  }
+  // close up: more leaves, sepals, and the real thing: some thirty petals on a spiral, each
+  // turned 137.5 degrees from the last. The heart is a furled bud; each petal further out
+  // stands a little lower and leans a little more, and only the outermost lay their lips back.
+  g.petal({ kind: 0, a: 1.4, y0: 0.30, R: 0.12, rise: 0.06, W: 0.040, nu: 4, nv: 5 });
+  g.petal({ kind: 0, a: 3.6, y0: 0.45, R: 0.13, rise: 0.05, W: 0.040, nu: 4, nv: 5 });
+  g.petal({ kind: 0, a: 5.6, y0: 0.60, R: 0.10, rise: 0.04, W: 0.034, nu: 4, nv: 5 });
+  for (let k = 0; k < 5; k++) g.petal({ kind: 0, a: (k / 5) * TAU + 0.3, y0: 0.695, r0: 0.012, R: 0.050, rise: -0.012, W: 0.012, droop: 0.02, nu: 2, nv: 3 });
+  const N = 30;
+  for (let k = 0; k < N; k++) {
+    const t = k / (N - 1);                         // 0 at the heart .. 1 outermost
+    g.petal({
+      kind: 3, broad: true, a: k * 2.39996, y0: 0.728 - 0.022 * t, r0: 0.002 + 0.012 * t,
+      R: 0.012 + 0.030 * t + 0.050 * t * t, rise: 0.165 - 0.060 * t, W: 0.022 + 0.050 * t,
+      curl: -0.95 + 0.85 * t, roll: 0.9 * t * t * t, droop: 0.02 * t * t, prof: t < 0.5 ? 'egg' : 'open',
+      open: 0.05 + 0.25 * t, nu: t < 0.3 ? 4 : 6, nv: t < 0.3 ? 5 : 6,
+    });
+  }
   return g.build();
 }
 function lavenderGeo() {
@@ -346,7 +370,7 @@ export function createGarden(shared, rng, scale, lod) {
 
   /* --- roses: a ring bed around the central cherry tree, cut by four paths --- */
   const roses = [];
-  for (let i = 0, n = Math.floor(1700 * scale); i < n; i++) {
+  for (let i = 0, n = Math.floor(1250 * scale); i < n; i++) {
     const a = rng() * TAU;
     if (Math.abs(Math.sin(2 * a)) < 0.16) continue;
     const r = 3.75 + rng() * 2.35;

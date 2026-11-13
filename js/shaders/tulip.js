@@ -39,7 +39,8 @@ void main(){
   if (distance(aOffset.xz, cameraPosition.xz) <= LOD_FAR) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 #endif
   vec3 p = position;
-  float open = mix(0.40, 1.0 + 0.18 * aParams.z, uDay);
+  // most blooms stay goblets by day; one here and there has opened wide to the sun
+  float open = mix(0.42, 0.80 + 0.55 * aParams.z * aParams.z * aParams.z, uDay);
   p.xz *= mix(1.0, open, aInfo.y);
   float c = cos(aParams.y);
   float s = sin(aParams.y);
@@ -112,7 +113,9 @@ void main(){
     } else {
       w = mix(0.25, 1.0, smoothstep(0.0, 0.25, v)) * pow(max(1.0 - v, 0.0), 0.55);
     }
-    alpha = 1.0 - smoothstep(w - 0.10, w, au);
+    // the cut is as crisp as the pixels allow: razor-edged close up, soft only far away
+    float ew = clamp(fwidth(au) * 1.6, 0.006, 0.10);
+    alpha = 1.0 - smoothstep(w - ew, w, au);
     if (alpha < 0.02) discard;
   }
 
@@ -133,35 +136,40 @@ void main(){
     albedo = vCol * 0.30 * grad;
     albedo = mix(albedo * 0.35, albedo, smoothstep(0.0, 0.30, v));
     float veins = cos(u * 11.0 + sin(v * 5.0 + vSeed * 20.0) * 0.9);
-    albedo *= 0.965 + 0.035 * veins * smoothstep(0.2, 0.8, v);
+    albedo *= 0.992 + 0.008 * veins * smoothstep(0.2, 0.8, v);
     albedo += vCol * 0.045 * smoothstep(0.80, 1.0, v);
     float mott = fnoise(vec2(u * 4.0 + vSeed * 30.0, v * 6.0));
-    albedo *= 0.90 + 0.16 * mott;
-    vBump = -sin(u * 11.0 + sin(v * 5.0 + vSeed * 20.0) * 0.9) * 0.16 * smoothstep(0.2, 0.8, v);
+    albedo *= 0.95 + 0.08 * mott;
+    // the heart of the bloom holds a warmer, deeper tone than the open lips
+    albedo = mix(albedo * vec3(1.06, 0.94, 0.86), albedo, smoothstep(0.0, 0.7, v));
+    vBump = -sin(u * 11.0 + sin(v * 5.0 + vSeed * 20.0) * 0.9) * 0.04 * smoothstep(0.2, 0.8, v);
     thin = 0.55;
   } else if (petal) {
-    float grad = mix(0.50, 1.12, smoothstep(0.0, 0.9, v));
-    albedo = vCol * 0.31 * grad;
-    albedo = mix(albedo, vec3(dot(albedo, vec3(0.33))) * vec3(1.0, 0.97, 0.90), 0.08);
-    albedo = mix(albedo * 0.30 + vec3(0.03, 0.035, 0.0), albedo, smoothstep(0.0, 0.22, v));   // deep throat
-    float vp = u * 19.0 + sin(v * 7.0 + vSeed * 20.0) * 0.6;
-    float veins = cos(vp);
-    albedo *= 0.955 + 0.045 * veins * smoothstep(0.15, 0.7, v);
-    albedo *= 1.0 - 0.16 * exp(-u * u * 40.0) * (1.0 - v);                                    // centre crease
-    albedo += vCol * 0.05 * smoothstep(0.55, 1.0, au);                                        // paler rim
-    float mott = fnoise(vec2(u * 5.0 + vSeed * 30.0, v * 9.0));
-    float streak = fnoise(vec2(u * 26.0 + vSeed * 17.0, v * 2.2));
-    albedo *= 0.86 + 0.20 * mott + 0.10 * (streak - 0.5) * smoothstep(0.1, 0.8, v);
-    // veins stand up from the surface: close by they catch the light on one side, and a finer
-    // set of ribs shows between them
-    vBump = -sin(vp) * (0.20 + 0.10 * closeUp) * smoothstep(0.15, 0.7, v);
-    vBump += -sin(vp * 3.0 + 1.0) * 0.05 * closeUp * smoothstep(0.2, 0.8, v);
-    vBump += exp(-u * u * 40.0) * sign(u) * 0.25 * (1.0 - v);                                 // the fold down the middle
-    thin = 0.75;
+    // a tulip tepal: satin, deepest in colour low down, a pale blotch at the very base,
+    // fine parallel veins running to the tip, the rim thin enough to glow
+    float grad = mix(0.62, 1.06, smoothstep(0.05, 0.95, v));
+    albedo = vCol * 0.30 * grad;
+    vec3 blotch = mix(vec3(0.16, 0.15, 0.05), vec3(0.20, 0.19, 0.15), vSeed);
+    albedo = mix(blotch, albedo, smoothstep(0.02, 0.20, v + 0.04 * sin(u * 9.0)));
+    float vp = u * 44.0 + sin(v * 5.0 + vSeed * 20.0) * 0.5;
+    float fineVeins = cos(vp);
+    albedo *= 1.0 - 0.035 * (0.5 - 0.5 * fineVeins) * smoothstep(0.1, 0.5, v) * (0.4 + 0.6 * closeUp);
+    albedo *= 1.0 - 0.10 * exp(-u * u * 60.0) * (1.0 - v * 0.6);                              // midrib groove
+    float mott = fnoise(vec2(u * 3.0 + vSeed * 30.0, v * 5.0));
+    albedo *= 0.92 + 0.14 * mott;
+    // some varieties are feathered: a paler flame licking up from the base
+    float flame = step(0.80, fract(vSeed * 5.37)) * smoothstep(0.55, 0.15, au + 0.25 * fnoise(vec2(u * 6.0, v * 14.0 + vSeed * 9.0))) * smoothstep(0.9, 0.2, v);
+    albedo = mix(albedo, albedo * 0.5 + vec3(0.20, 0.17, 0.10), flame * 0.55);
+    albedo += vCol * 0.035 * smoothstep(0.75, 1.0, max(au, v));                               // paler, thinner rim
+    vBump = -sin(vp) * 0.07 * closeUp * smoothstep(0.1, 0.5, v);
+    vBump += exp(-u * u * 60.0) * sign(u) * 0.22 * (1.0 - v * 0.6);
+    thin = 0.70 + 0.25 * smoothstep(0.6, 1.0, au);
   } else if (disc) {
     albedo = mix(vec3(0.050, 0.028, 0.008), vec3(0.20, 0.12, 0.025), v);
   } else {
-    albedo = mix(vec3(0.016, 0.050, 0.018), vec3(0.055, 0.135, 0.040), clamp(v * 0.8 + vSeed * 0.25, 0.0, 1.0));
+    // glaucous green, with the faint grey bloom such leaves carry
+    albedo = mix(vec3(0.018, 0.050, 0.024), vec3(0.058, 0.128, 0.058), clamp(v * 0.8 + vSeed * 0.25, 0.0, 1.0));
+    albedo = mix(albedo, vec3(0.085, 0.115, 0.095), 0.22 * fnoise(vec2(u * 2.0 + vSeed * 7.0, v * 3.0)));
     albedo += vec3(0.020, 0.040, 0.008) * exp(-u * u * 70.0) * step(0.001, au);               // midrib
     float lv = sin(au * 30.0 - v * 22.0);                                                     // side veins sweeping to the tip
     albedo *= 1.0 - 0.07 * lv * closeUp * step(0.001, au);
@@ -172,11 +180,12 @@ void main(){
   // tilt the normal sideways along the veins (cheap bump)
   N = normalize(N + normalize(cross(N, vec3(0.0, 1.0, 0.001))) * vBump);
   float nl = dot(N, L);
-  float diff = clamp(nl * 0.62 + 0.38, 0.0, 1.0);
+  float diff = clamp(nl * 0.72 + 0.28, 0.0, 1.0);
   float through = pow(clamp(-nl, 0.0, 1.0), 1.4) * thin;
   float sky = 0.55 + 0.45 * N.y;
   float ao = mix(0.42, 1.0, smoothstep(0.0, 0.55, vY));           // darker down among the stems
-  if (rose) ao *= mix(0.55, 1.0, smoothstep(0.0, 0.5, v));        // and deep between the petals
+  if (rose) ao *= mix(0.45, 1.0, smoothstep(0.0, 0.6, v));        // and deep between the petals
+  else if (petal) ao *= mix(0.62, 1.0, smoothstep(0.0, 0.55, v)); // the shaded well of the cup
   vec3 light = uAmb * sky * ao
     + uSunCol * (diff * 0.95 + through * 0.85) * ao * vVis
     + uAuroraTint * (0.25 + 0.65 * max(N.y, 0.0));
@@ -184,7 +193,8 @@ void main(){
   // soft sheen where the waxy surface catches the sun; a rose is velvet and glows at grazing angles instead
   vec3 H = normalize(L + V);
   float nh = max(dot(N, H), 0.0);
-  col += uSunCol * pow(nh, 26.0) * (rose ? 0.012 : 0.045) * (petal ? 1.0 : 0.6) * vVis;
+  // satin: a broad soft sheen with a tighter glint inside it
+  col += uSunCol * (pow(nh, 9.0) * 0.030 + pow(nh, 48.0) * 0.050) * (rose ? 0.25 : 1.0) * (petal ? 1.0 : 0.7) * vVis;
   if (rose) col += albedo * (uAmb + uSunCol * 0.5 * vVis) * pow(1.0 - abs(dot(N, V)), 2.5) * 0.9;
 
   // morning dew: a few beads sitting on petals and leaves, each a tiny lens with one glint
@@ -192,14 +202,14 @@ void main(){
     vec2 cell = vec2(u * 3.2, v * (petal ? 11.0 : 15.0)) + vSeed * 13.0;
     vec2 id = floor(cell);
     float pick = fhash(id + 3.7);
-    if (pick > 0.80) {
+    if (pick > 0.90) {
       vec2 c = vec2(0.3 + 0.4 * fhash(id), 0.3 + 0.4 * fhash(id + 9.1));
       vec2 q = fract(cell) - c;
       float rr = 0.10 + 0.13 * fhash(id + 5.3);
       float dd = length(q) / rr;
       float bead = (1.0 - smoothstep(0.82, 1.0, dd)) * closeUp * uDay;
       // darker toward the sun side, a bright crescent on the far side where it focuses the light
-      float lens = mix(0.70, 1.45, smoothstep(-0.7, 0.9, q.y / rr)) * mix(1.0, 0.8, smoothstep(0.6, 1.0, dd));
+      float lens = mix(0.78, 1.30, smoothstep(-0.7, 0.9, q.y / rr));
       float tw = 0.75 + 0.25 * sin(uTime * 1.3 + pick * 60.0);
       vec2 gq = (q - vec2(-0.32, 0.36) * rr) / rr;
       float glint = exp(-dot(gq, gq) * 60.0) * tw;
