@@ -90,6 +90,10 @@ Bật bằng nút "Trò dệt sao" hoặc phím `M`. Di chuột (hoặc kéo ng�
 ## Chất lượng hình ảnh
 
 - Cực quang được lọc trơn bằng giải tích (rèm tự nới rộng theo khoảng cách giữa các lát dựng) nên không cần nhiễu hạt để che dải màu; hạt phim gần như bằng không.
+- **Ba mức chất lượng** (Thấp / Vừa / Cao), tự chọn theo máy: màn cảm ứng và máy dựng hình bằng phần mềm dùng mức Thấp, card tích hợp dùng mức Vừa, card rời dùng mức Cao. Đổi tay trong bảng Tuỳ chỉnh (trang tải lại), hoặc thêm `&q=low|medium|high` vào địa chỉ. Mức Thấp tắt khử răng cưa, bóng đổ và xoá phông, giảm cỏ và hoa còn khoảng một phần tư.
+- Ở chế độ Tự động, nếu khung hình tụt dưới ~48 FPS trang lần lượt bớt: lát dựng cực quang → xoá phông → mật độ cỏ → mật độ hoa → cuối cùng mới tới độ phân giải.
+- **Núi là địa hình 3D thật** bao quanh thung lũng (đá, rừng dưới chân, tuyết trên cao), không phải phông vẽ.
+- **Bóng nắng thật** từ nhà gỗ, lều, hàng rào, đá và cây. Mặt trời buổi sáng đứng yên nên bản đồ bóng chỉ dựng một lần lúc tải trang, sau đó chỉ tra cứu. Thêm bóng mây trôi trên đồng cỏ và sườn núi.
 - Hoa được dựng từ các dải cánh cong mượt có toạ độ UV: viền cánh bo tròn được cắt theo từng điểm ảnh, có gân, màu chuyển từ họng ra mép và ánh nắng xuyên qua cánh. Tán anh đào và lá trên cổng là hàng nghìn chùm hoa, chùm lá nhỏ.
 - Xoá phông tiền cảnh kiểu ống kính (depth of field): cảnh xa và bầu trời luôn nét, vật ở gần hơn điểm lấy nét thì mờ dần. Tắt bằng `&lens=0`; máy cảm ứng mặc định tắt.
 - Dựng ở **độ phân giải gốc của màn hình** (Full HD trên màn Full HD, kể cả khi Windows đặt tỉ lệ 125–150%), tối đa pixel ratio 2, có khử răng cưa MSAA 4×.
@@ -117,7 +121,8 @@ js/shaders/aurora.js    Cực quang thể tích, màu và nhịp điều khiển
 js/shaders/terrain.js   Mặt đất, lối mòn, ánh đèn nhà, ánh lửa trại, lồng dòng suối
 js/shaders/water.js     Mặt suối: gợn sóng, fresnel, phản chiếu trời và cực quang
 js/shaders/grass.js     Cỏ instanced, hoa dại, đom đóm — gió thổi trong vertex shader
-js/shaders/tulip.js     Hoa tulip instanced, mở cánh theo ánh sáng ngày
+js/shaders/tulip.js     Shader hoa (cánh cong có UV, gân, ánh sáng xuyên cánh) và thẻ chùm hoa/lá
+js/shaders/light.js     Bóng nắng (shadow map tĩnh) và bóng mây dùng chung cho đất, cỏ, hoa, núi
 js/shaders/fire.js      Ngọn lửa trại và tàn lửa
 js/shaders/mountains.js Các lớp núi phía chân trời
 js/shaders/post.js      Film grain + vignette, sprite phát sáng của game

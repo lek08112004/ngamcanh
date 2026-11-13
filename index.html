@@ -8,10 +8,12 @@
   <meta name="theme-color" content="#03070d">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23040a14'/%3E%3Cpath d='M8 44c10-22 22-26 30-14s14 6 18-8' fill='none' stroke='%2345f0a0' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='46' cy='16' r='3' fill='%23ffe9b0'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="modulepreload" href="https://unpkg.com/three@0.160.0/build/three.module.min.js" crossorigin>
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.min.js",
       "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
     }
   }
@@ -113,6 +115,10 @@
         </div>
         <span class="label">Chỗ ngồi</span>
         <div class="chips" id="spots"></div>
+      </div>
+      <div class="dock-row">
+        <span class="label">Chất lượng</span>
+        <div class="chips" id="qualityChips"></div>
       </div>
       <div class="dock-row night-only">
         <span class="label">Sắc trời</span>

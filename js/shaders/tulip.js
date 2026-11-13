@@ -2,6 +2,8 @@
 // the silhouette (rounded petal tip, pointed leaf) is cut per pixel, so no polygon
 // edges show; the surface gets a throat-to-rim gradient, veins, wrap lighting,
 // and light glowing through the petal when the sun is behind it.
+import { lightGLSL } from './light.js';
+
 const windGLSL = /* glsl */ `
 vec2 windBend(vec2 wp, float seed, float t){
   float gust = sin(wp.x * 0.12 + t * 0.9 + sin(wp.y * 0.10 + t * 0.3) * 2.0) * 0.5 + 0.5;
@@ -26,7 +28,9 @@ varying vec2 vUv;
 varying float vKind;
 varying float vY;
 varying float vSeed;
+varying float vVis;
 ${windGLSL}
+${lightGLSL}
 void main(){
   vec3 p = position;
   float open = mix(0.40, 1.0 + 0.18 * aParams.z, uDay);
@@ -43,6 +47,7 @@ void main(){
   vKind = aInfo.x;
   vY = position.y;
   vSeed = aParams.z;
+  vVis = sunShadow(aOffset + vec3(0.0, 0.35 * aParams.x, 0.0)) * cloudShade(aOffset.xz, uTime);
   vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
@@ -65,6 +70,18 @@ varying vec2 vUv;
 varying float vKind;
 varying float vY;
 varying float vSeed;
+varying float vVis;
+float fhash(vec2 p){
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+float fnoise(vec2 p){
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(fhash(i), fhash(i + vec2(1.0, 0.0)), f.x), mix(fhash(i + vec2(0.0, 1.0)), fhash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 void main(){
   float u = vUv.x;
   float v = vUv.y;
@@ -78,6 +95,7 @@ void main(){
     float w = petal
       ? mix(0.30, 1.0, smoothstep(0.0, 0.32, v)) * sqrt(max(1.0 - pow(max(v - 0.58, 0.0) / 0.42, 2.0), 0.0))
       : mix(0.25, 1.0, smoothstep(0.0, 0.25, v)) * pow(max(1.0 - v, 0.0), 0.55);
+    if (petal) w *= 1.0 + 0.045 * sin(v * 31.0 + vSeed * 40.0) * smoothstep(0.35, 1.0, v);   // ruffled rim
     alpha = 1.0 - smoothstep(w - 0.10, w, au);
     if (alpha < 0.02) discard;
   }
@@ -86,6 +104,7 @@ void main(){
   if (!gl_FrontFacing) N = -N;
   vec3 V = normalize(cameraPosition - vWorld);
   vec3 L = uSunDir;
+  float vBump = 0.0;
 
   vec3 albedo;
   float thin = 0.0;                       // how much light passes through
@@ -98,6 +117,11 @@ void main(){
     albedo *= 0.93 + 0.07 * veins * smoothstep(0.15, 0.7, v);
     albedo *= 1.0 - 0.16 * exp(-u * u * 40.0) * (1.0 - v);                                    // centre crease
     albedo += vCol * 0.05 * smoothstep(0.55, 1.0, au);                                        // paler rim
+    float mott = fnoise(vec2(u * 5.0 + vSeed * 30.0, v * 9.0));
+    float streak = fnoise(vec2(u * 26.0 + vSeed * 17.0, v * 2.2));
+    albedo *= 0.86 + 0.20 * mott + 0.10 * (streak - 0.5) * smoothstep(0.1, 0.8, v);
+    // veins catch the light on one side: nudge the normal across the petal
+    vBump = -sin(u * 19.0 + sin(v * 7.0 + vSeed * 20.0) * 0.6) * 0.22 * smoothstep(0.15, 0.7, v);
     thin = 0.75;
   } else if (disc) {
     albedo = mix(vec3(0.050, 0.028, 0.008), vec3(0.20, 0.12, 0.025), v);
@@ -107,18 +131,20 @@ void main(){
     thin = 0.45;
   }
 
+  // tilt the normal sideways along the veins (cheap bump)
+  N = normalize(N + normalize(cross(N, vec3(0.0, 1.0, 0.001))) * vBump);
   float nl = dot(N, L);
   float diff = clamp(nl * 0.62 + 0.38, 0.0, 1.0);
   float through = pow(clamp(-nl, 0.0, 1.0), 1.4) * thin;
   float sky = 0.55 + 0.45 * N.y;
   float ao = mix(0.50, 1.0, smoothstep(0.0, 0.55, vY));           // darker down among the stems
   vec3 light = uAmb * sky * ao
-    + uSunCol * (diff * 0.95 + through * 0.85) * ao
+    + uSunCol * (diff * 0.95 + through * 0.85) * ao * vVis
     + uAuroraTint * (0.25 + 0.65 * max(N.y, 0.0));
   vec3 col = albedo * light;
   // soft sheen where the waxy surface catches the sun
   vec3 H = normalize(L + V);
-  col += uSunCol * pow(max(dot(N, H), 0.0), 26.0) * 0.045 * (petal ? 1.0 : 0.6);
+  col += uSunCol * pow(max(dot(N, H), 0.0), 26.0) * 0.045 * (petal ? 1.0 : 0.6) * vVis;
   if (petal) col *= mix(0.55, 1.0, uDay);                          // colours sleep at night
 
   vec3 lc = uCabinLight - vWorld;

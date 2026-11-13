@@ -3,6 +3,7 @@
 // meadow is endless; the ground height and the clearings are evaluated on the GPU.
 import { curvesGLSL } from './terrain.js';
 import { CABIN, CAMP, GARDEN } from '../layout.js';
+import { lightGLSL } from './light.js';
 export const GRASS_R = 56;
 const windGLSL = /* glsl */ `
 vec2 windBend(vec2 wp, float seed, float t){
@@ -22,9 +23,11 @@ attribute vec4 aParams;   // x: height, y: yaw, z: seed, w: width
 varying float vH;
 varying float vSeed;
 varying float vAcross;
+varying float vVis;
 varying vec3 vWorld;
 ${windGLSL}
 ${curvesGLSL}
+${lightGLSL}
 const float R = ${GRASS_R.toFixed(1)};
 // 0 = bare ground, 1 = full-height meadow
 float grassFactor(vec2 w){
@@ -73,6 +76,7 @@ void main(){
   vH = h;
   vSeed = aParams.z;
   vAcross = position.x * 2.0;
+  vVis = sunShadow(base + vec3(0.0, 0.25, 0.0)) * cloudShade(base.xz, uTime);
   vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
@@ -90,17 +94,18 @@ uniform float uFogDensity;
 varying float vH;
 varying float vSeed;
 varying float vAcross;
+varying float vVis;
 varying vec3 vWorld;
 void main(){
-  vec3 root = vec3(0.006, 0.020, 0.008);
+  vec3 root = vec3(0.014, 0.042, 0.016);
   vec3 tip = mix(vec3(0.050, 0.100, 0.036), vec3(0.120, 0.125, 0.055), vSeed * vSeed);
-  vec3 albedo = mix(root, tip, vH * vH) * (0.45 + 0.9 * fract(vSeed * 7.31));
-  vec3 light = uAmb * 0.88 * (0.3 + 0.7 * vH) + uAuroraTint * (0.12 + 0.85 * vH * vH) + uSunCol * (0.22 + 0.78 * vH);
+  vec3 albedo = mix(root, tip, vH) * (0.45 + 0.9 * fract(vSeed * 7.31));
+  vec3 light = uAmb * 0.88 * (0.3 + 0.7 * vH) + uAuroraTint * (0.12 + 0.85 * vH * vH) + uSunCol * (0.22 + 0.78 * vH) * vVis;
   // a blade is a shallow V: darker along the midrib, brighter at one edge, glowing where the sun shines through
   float rib = 1.0 - 0.28 * exp(-vAcross * vAcross * 9.0);
   float side = 0.86 + 0.20 * vAcross * (vSeed - 0.5) * 2.0;
   vec3 col = albedo * light * rib * side;
-  col += albedo * uSunCol * vec3(0.9, 1.0, 0.45) * 0.30 * vH * vH;
+  col += albedo * uSunCol * vec3(0.9, 1.0, 0.45) * 0.30 * vH * vH * vVis;
   vec3 lc = uCabinLight - vWorld;
   float below = smoothstep(-0.2, 0.6, uCabinLight.y - vWorld.y);
   col += albedo * vec3(1.0, 0.52, 0.16) * below * (1.0 - 0.9 * uDay) * 30.0 / (1.0 + dot(lc, lc) * 0.55);

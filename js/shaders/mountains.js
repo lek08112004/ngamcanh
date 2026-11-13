@@ -1,62 +1,64 @@
 import { commonGLSL } from './common.js';
+import { lightGLSL } from './light.js';
 
-// Distant fjells drawn on wide cylinders around the whole world (parallax layers).
-// The ridge is sampled on a circle in noise space, so it closes on itself seamlessly.
+// The fjells around the valley are real geometry (a ring of terrain, see world.js).
+// Rock, forest and snow are chosen from height and slope; light comes from the same
+// sun, sky and aurora as everything else, then fades into the air with distance.
 export const mountainVertex = /* glsl */ `
-varying vec2 vUv;
+attribute float aRise;      // height above the valley floor
+varying vec3 vWorld;
+varying vec3 vNormal;
+varying float vRise;
 void main(){
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 w = modelMatrix * vec4(position, 1.0);
+  vWorld = w.xyz;
+  vNormal = normal;
+  vRise = aRise;
+  gl_Position = projectionMatrix * viewMatrix * w;
 }
 `;
 
 export const mountainFragment = /* glsl */ `
-uniform float uSeed;
-uniform float uFreq;
-uniform vec3 uColor;
-uniform vec3 uDayColor;
+uniform float uTime;
 uniform float uDay;
+uniform vec3 uAmb;
+uniform vec3 uSunCol;
+uniform vec3 uSunDir;
 uniform vec3 uAuroraTint;
-varying vec2 vUv;
+uniform vec3 uFogColor;
+varying vec3 vWorld;
+varying vec3 vNormal;
+varying float vRise;
 ${commonGLSL}
-float ridge(float a){
-  vec2 c = vec2(cos(a), sin(a));
-  float h = 0.0;
-  float amp = 0.5;
-  float f = uFreq * 0.42;
-  for (int i = 0; i < 5; i++) {
-    h += amp * vnoise(c * f + vec2(uSeed + float(i) * 3.1, uSeed * 1.7));
-    amp *= 0.5;
-    f *= 2.13;
-  }
-  return h;
-}
+${lightGLSL}
 void main(){
-  float a = vUv.x * 6.2831853;
-  float x = a * uFreq * 0.45;
-  float r = ridge(a);
-  // plateau shaping: flatten the summits like Nordic fjells
-  float h = 0.22 + 0.72 * smoothstep(0.18, 0.80, r) * (0.82 + 0.18 * r);
-  float alpha = smoothstep(h, h - 0.006, vUv.y);
-  if (alpha < 0.002) discard;
-  float depth = h - vUv.y;
-  float tex = vnoise(vec2(x * 6.0, vUv.y * 22.0));
-  float snow = smoothstep(0.62, 0.86, vnoise(vec2(x * 9.0 + 4.0, vUv.y * 34.0))) * smoothstep(0.22, 0.02, depth);
+  vec3 n = normalize(vNormal);
+  float slope = 1.0 - n.y;
+  vec2 xz = vWorld.xz;
+  float grain = fbm2(xz * 0.045);
+  float fine = vnoise(xz * 0.35);
 
-  // night: silhouettes rimmed by the aurora
-  vec3 col = uColor * (0.75 + 0.5 * tex);
-  col += uAuroraTint * 0.10 * smoothstep(0.16, 0.0, depth);
-  col += vec3(0.030, 0.045, 0.060) * snow;
-  col = mix(col, uColor * 1.6 + uAuroraTint * 0.04, smoothstep(0.30, 0.0, vUv.y) * 0.5);
+  // forest on the lower, gentler ground; bare rock above and on cliffs; snow on high shoulders
+  vec3 forest = mix(vec3(0.018, 0.060, 0.030), vec3(0.045, 0.105, 0.040), grain);
+  vec3 rock = mix(vec3(0.060, 0.058, 0.060), vec3(0.165, 0.150, 0.135), fine * 0.6 + grain * 0.4);
+  vec3 snow = vec3(0.78, 0.82, 0.88);
+  float tree = (1.0 - smoothstep(80.0, 150.0, vRise + grain * 50.0)) * (1.0 - smoothstep(0.34, 0.60, slope));
+  vec3 albedo = mix(rock, forest, tree);
+  float snowLine = smoothstep(185.0, 245.0, vRise + (grain - 0.5) * 80.0) * (1.0 - smoothstep(0.40, 0.62, slope));
+  albedo = mix(albedo, snow, snowLine);
+  // strata on steep faces
+  albedo *= 1.0 - 0.18 * smoothstep(0.35, 0.7, slope) * (0.5 + 0.5 * sin(vWorld.y * 0.32 + grain * 9.0));
 
-  // day: slopes facing the sun are lit, snow on the high shoulders, haze at the foot
-  float broad = vnoise(vec2(x * 1.6 + 9.0, vUv.y * 5.0));
-  vec3 dc = uDayColor * (0.62 + 0.55 * broad) * (0.84 + 0.32 * tex);
-  dc = mix(dc, dc * vec3(0.72, 0.95, 0.70), smoothstep(0.45, 0.10, vUv.y / h) * 0.55);   // forested lower slopes
-  float cap = smoothstep(0.70, 0.86, h) * smoothstep(0.055, 0.0, depth) * (0.35 + 0.65 * tex);
-  dc = mix(dc, vec3(0.88, 0.91, 0.97), clamp(cap + snow * 0.07, 0.0, 1.0));
-  dc = mix(dc, vec3(0.30, 0.46, 0.70), smoothstep(0.26, 0.0, vUv.y) * 0.30);
-  col = mix(col, dc, uDay);
-  gl_FragColor = vec4(col, alpha);
+  float diff = max(dot(n, uSunDir), 0.0);
+  float sky = 0.55 + 0.45 * n.y;
+  vec3 aur = uAuroraTint * (0.25 + 0.9 * max(dot(n, normalize(vec3(-0.2, 0.55, -0.8))), 0.0));
+  vec3 light = uAmb * sky + uSunCol * diff * cloudShade(xz, uTime) + aur;
+  vec3 col = albedo * light;
+
+  // aerial perspective
+  float dist = length(cameraPosition - vWorld);
+  float air = 1.0 - exp(-dist * mix(0.0017, 0.00042, uDay));
+  col = mix(col, uFogColor * mix(1.0, 0.92, uDay), air);
+  gl_FragColor = vec4(col, 1.0);
 }
 `;

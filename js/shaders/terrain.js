@@ -2,6 +2,7 @@ import { commonGLSL } from './common.js';
 import { auroraGLSL } from './aurora.js';
 import { waterGLSL } from './water.js';
 import { CABIN, CAMP, GARDEN } from '../layout.js';
+import { lightGLSL } from './light.js';
 
 // Curves shared (by formula) with js/world.js — keep both in sync.
 export const curvesGLSL = /* glsl */ `
@@ -58,6 +59,7 @@ uniform float uFogDensity;
 varying vec3 vWorld;
 varying vec3 vNormal;
 ${commonGLSL}
+${lightGLSL}
 ${auroraGLSL}
 ${waterGLSL}
 ${curvesGLSL}
@@ -116,7 +118,7 @@ void main(){
   vec3 L = normalize(vec3(-0.2, 0.55, -0.8));
   float diff = max(dot(n, L), 0.0);
   float sky = 0.5 + 0.5 * n.y;
-  vec3 light = uAmb * sky + uAuroraTint * (0.30 + 1.2 * diff) + uSunCol * (0.25 + 0.75 * max(dot(n, uSunDir), 0.0));
+  vec3 light = uAmb * sky + uAuroraTint * (0.30 + 1.2 * diff) + uSunCol * (0.10 + 0.90 * max(dot(n, uSunDir), 0.0)) * sunShadowSoft(vWorld) * cloudShade(xz, uTime);
   vec3 col = albedo * light;
 
   // amber spill from the cabin

@@ -6,7 +6,7 @@ import {
 import { CABIN, CAMP } from './layout.js';
 
 export { CABIN, CAMP };
-import { flameVertex, flameFragment, emberVertex, emberFragment } from './shaders/fire.js';
+import { flameVertex, flameFragment, emberVertex, emberFragment, smokeVertex, smokeFragment } from './shaders/fire.js';
 import { tulipVertex, tulipFragment } from './shaders/tulip.js';
 import { mountainVertex, mountainFragment } from './shaders/mountains.js';
 
@@ -69,6 +69,7 @@ export function createTerrain(shared) {
     fragmentShader: terrainFragment,
     uniforms: {
       ...shared.aurora,
+      ...shared.light,
       uTime: shared.uTime,
       uAuroraTint: shared.uAuroraTint,
       uCabinLight: shared.uCabinLight,
@@ -87,39 +88,85 @@ export function createTerrain(shared) {
 }
 
 /* ---------- distant mountains ---------- */
-export function createMountains(shared) {
-  const group = new THREE.Group();
-  const layers = [
-    { r: 760, h: 250, y: -32, seed: 3.7, freq: 5.0, color: [0.012, 0.030, 0.052], day: [0.17, 0.25, 0.40] },
-    { r: 670, h: 180, y: -30, seed: 11.2, freq: 7.0, color: [0.009, 0.022, 0.038], day: [0.11, 0.20, 0.29] },
-    { r: 590, h: 122, y: -26, seed: 23.9, freq: 9.0, color: [0.006, 0.016, 0.024], day: [0.06, 0.15, 0.14] },
-  ];
-  layers.forEach((l, i) => {
-    // an open cylinder seen from inside; its seam sits behind the camp, due south
-    const geo = new THREE.CylinderGeometry(l.r, l.r, l.h, 128, 1, true);
-    geo.translate(0, l.h / 2, 0);
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: mountainVertex,
-      fragmentShader: mountainFragment,
-      transparent: true,
-      depthWrite: false,
-      side: THREE.BackSide,
-      uniforms: {
-        uSeed: { value: l.seed },
-        uFreq: { value: l.freq },
-        uColor: { value: new THREE.Color().setRGB(...l.color) },
-        uDayColor: { value: new THREE.Color().setRGB(...l.day) },
-        uDay: shared.uDay,
-        uAuroraTint: shared.uAuroraTint,
-      },
-    });
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(0, l.y, -150);
-    m.renderOrder = 2 + i;
-    m.frustumCulled = false;
-    group.add(m);
-  });
-  return group;
+/* ---------- value noise on the CPU (for the mountain ring) ---------- */
+function hash2(ix, iz) {
+  let h = (ix * 374761393 + iz * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function noise2(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  let fx = x - ix, fz = z - iz;
+  fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
+}
+const MOUNTAIN = { cx: 0, cz: -150, r0: 430, r1: 1050 };
+/** how far the fjells rise above the valley floor at (x, z) */
+export function mountainRise(x, z) {
+  const r = Math.hypot(x - MOUNTAIN.cx, z - MOUNTAIN.cz);
+  const ramp = smooth((r - MOUNTAIN.r0) / 230);
+  if (ramp <= 0) return 0;
+  // ridged noise: sharp crests, wide valleys
+  let ridged = 0, amp = 0.5, f = 0.0042, norm = 0;
+  for (let o = 0; o < 5; o++) {
+    const n = 1 - Math.abs(2 * noise2(x * f + o * 17.3, z * f - o * 9.1) - 1);
+    ridged += amp * n * n;
+    norm += amp;
+    amp *= 0.5; f *= 2.07;
+  }
+  ridged /= norm;
+  const massif = 0.45 + 0.55 * noise2(x * 0.0016 + 40, z * 0.0016 + 11);     // some ranges taller than others
+  const plateau = Math.min(ridged, 0.62 + 0.25 * noise2(x * 0.004, z * 0.004)); // flat Nordic summits
+  return ramp * (26 + 330 * Math.pow(plateau, 1.25) * massif);
+}
+
+/* ---------- the fjells: a ring of real terrain around the valley ---------- */
+export function createMountains(shared, detail = 1) {
+  const SEG = Math.round(300 * detail), RINGS = Math.round(46 * detail);
+  const pos = new Float32Array((SEG + 1) * (RINGS + 1) * 3);
+  const rise = new Float32Array((SEG + 1) * (RINGS + 1));
+  const idx = [];
+  let n = 0;
+  for (let j = 0; j <= RINGS; j++) {
+    const t = j / RINGS;
+    const r = MOUNTAIN.r0 + (MOUNTAIN.r1 - MOUNTAIN.r0) * Math.pow(t, 1.25);
+    for (let i = 0; i <= SEG; i++) {
+      const a = (i / SEG) * Math.PI * 2;
+      const x = MOUNTAIN.cx + Math.sin(a) * r, z = MOUNTAIN.cz + Math.cos(a) * r;
+      const h = mountainRise(x, z);
+      pos[n * 3] = x; pos[n * 3 + 1] = terrainH(x, z) + 0.6 + h; pos[n * 3 + 2] = z;
+      rise[n] = h;
+      n++;
+    }
+  }
+  for (let j = 0; j < RINGS; j++) {
+    for (let i = 0; i < SEG; i++) {
+      const a = j * (SEG + 1) + i, b = a + 1, c = a + SEG + 1, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aRise', new THREE.BufferAttribute(rise, 1));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+    vertexShader: mountainVertex,
+    fragmentShader: mountainFragment,
+    uniforms: {
+      ...shared.light,
+      uTime: shared.uTime,
+      uDay: shared.uDay,
+      uAmb: shared.uAmb,
+      uSunCol: shared.uSunCol,
+      uSunDir: shared.uSunDir,
+      uAuroraTint: shared.uAuroraTint,
+      uFogColor: shared.uFogColor,
+    },
+  }));
+  mesh.frustumCulled = false;
+  return mesh;
 }
 
 /* ---------- procedural wood texture ---------- */
@@ -153,14 +200,58 @@ function woodTexture(rng) {
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  // height map: every course bulges like a round log, with a little grain
+  const b = document.createElement('canvas');
+  b.width = b.height = 256;
+  const bg = b.getContext('2d');
+  for (let y = 0; y < 256; y++) {
+    const v = Math.pow(Math.sin(Math.PI * ((y % ph) / ph)), 0.55);
+    const k = Math.round(40 + 215 * v);
+    bg.fillStyle = `rgb(${k},${k},${k})`;
+    bg.fillRect(0, y, 256, 1);
+  }
+  for (let i = 0; i < 160; i++) {
+    bg.fillStyle = `rgba(0,0,0,${0.04 + rng() * 0.08})`;
+    bg.fillRect(rng() * 256, rng() * 256, 30 + rng() * 120, 1);
+  }
+  const bump = new THREE.CanvasTexture(b);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+  t.userData.bump = bump;
+  return t;
+}
+
+/* ---------- woven canvas for the tent ---------- */
+function canvasTexture(rng) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#b0623a';
+  g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 128; i += 2) {
+    g.fillStyle = `rgba(${rng() < 0.5 ? '255,220,180' : '60,20,5'},${0.03 + rng() * 0.05})`;
+    g.fillRect(i, 0, 1, 128);
+    g.fillRect(0, i, 128, 1);
+  }
+  g.fillStyle = 'rgba(40,14,4,0.35)';
+  g.fillRect(0, 62, 128, 3);                       // a stitched seam
+  for (let i = 0; i < 26; i++) {                   // weather stains
+    g.fillStyle = `rgba(60,30,12,${0.03 + rng() * 0.05})`;
+    g.beginPath();
+    g.arc(rng() * 128, rng() * 128, 6 + rng() * 22, 0, Math.PI * 2);
+    g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
 /* ---------- Nordic turf-roof cabin ---------- */
 
-export function createCabin(rng) {
+export function createCabin(rng, shared) {
   const g = new THREE.Group();
-  const wood = new THREE.MeshStandardMaterial({ map: woodTexture(rng), roughness: 0.92, metalness: 0 });
+  const woodMap = woodTexture(rng);
+  const wood = new THREE.MeshStandardMaterial({ map: woodMap, bumpMap: woodMap.userData.bump, bumpScale: 2.2, roughness: 0.9, metalness: 0 });
   const darkWood = new THREE.MeshStandardMaterial({ color: 0x24160c, roughness: 0.95 });
   const stone = new THREE.MeshStandardMaterial({ color: 0x34383a, roughness: 1 });
   const turf = new THREE.MeshStandardMaterial({ color: 0x1c3a19, roughness: 1 });
@@ -189,6 +280,27 @@ export function createCabin(rng) {
   };
 
   box(W * 2 + 0.3, 2.4, L * 2 + 0.3, stone, 0, -1.2, 0);           // foundation
+
+  // notched log ends sticking out at the four corners, course by course
+  const endGrain = new THREE.MeshStandardMaterial({ color: 0x6a4a30, roughness: 1 });
+  const logEnd = new THREE.CylinderGeometry(0.155, 0.155, 0.36, 10);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      for (let k = 0; k < 7; k++) {
+        const y = 0.17 + k * 0.33;
+        const along = new THREE.Mesh(logEnd, k % 2 ? wood : endGrain);       // runs along Z
+        along.rotation.x = Math.PI / 2;
+        along.position.set(sx * (W - 0.03), y, sz * (L + 0.17));
+        const across = new THREE.Mesh(logEnd, k % 2 ? endGrain : wood);      // runs along X
+        across.rotation.z = Math.PI / 2;
+        across.position.set(sx * (W + 0.17), y + 0.165, sz * (L - 0.03));
+        g.add(along, across);
+      }
+    }
+  }
+  // a window box of flowers under the gable window, and shutters
+  box(1.25, 0.16, 0.22, darkWood, 0.95, 0.74, L + 0.14);
+  for (const sx of [-1, 1]) box(0.34, 1.05, 0.05, endGrain, 0.95 + sx * 0.74, 1.38, L + 0.05);
 
   // turf roof slabs
   const a = Math.atan2(ridgeH - wallH, W);
@@ -265,7 +377,28 @@ export function createCabin(rng) {
   g.updateMatrixWorld(true);
 
   const lightWorld = light.getWorldPosition(new THREE.Vector3());
-  return { group: g, roofs: [roofL, roofR], lightWorld, light, glows: [[glow, 3.4, 1.75, 0.5], [lampMat, 5.0, 2.8, 0.9]] };
+
+  // smoke curling from the chimney
+  const top = g.localToWorld(new THREE.Vector3(0.95, 4.42, -1.5));
+  const PUFFS = 16;
+  const sp = new Float32Array(PUFFS * 3), ss = new Float32Array(PUFFS * 4);
+  for (let i = 0; i < PUFFS; i++) {
+    sp[i * 3] = top.x + (rng() - 0.5) * 0.2; sp[i * 3 + 1] = top.y; sp[i * 3 + 2] = top.z + (rng() - 0.5) * 0.2;
+    ss[i * 4] = i / PUFFS; ss[i * 4 + 1] = rng(); ss[i * 4 + 2] = rng(); ss[i * 4 + 3] = rng();
+  }
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+  sg.setAttribute('aSeed', new THREE.BufferAttribute(ss, 4));
+  const smoke = new THREE.Points(sg, new THREE.ShaderMaterial({
+    vertexShader: smokeVertex,
+    fragmentShader: smokeFragment,
+    uniforms: { uTime: shared.uTime, uPixelRatio: shared.uPixelRatio, uScale: shared.uPointScale, uAmb: shared.uAmb, uSunCol: shared.uSunCol },
+    transparent: true,
+    depthWrite: false,
+  }));
+  smoke.frustumCulled = false;
+  smoke.renderOrder = 7;
+  return { group: g, roofs: [roofL, roofR], lightWorld, light, smoke, glows: [[glow, 3.4, 1.75, 0.5], [lampMat, 5.0, 2.8, 0.9]] };
 }
 
 export function insideCabin(x, z, margin = 0.6) {
@@ -323,8 +456,8 @@ export function createRocks(rng) {
     [3.4, -12, 0.8], [18, -9, 1.5], [-22, -9, 1.1], [7.5, 2.2, 0.5],
     [22, -30, 1.8], [-30, -34, 2.2], [35, -60, 2.6], [-8, -48, 1.6],
   ];
-  const rock = new THREE.Color(0x3a3f42);
-  const moss = new THREE.Color(0x27491f);
+  const rock = new THREE.Color(0x7d8386);
+  const moss = new THREE.Color(0x4a7a36);
   const tmp = new THREE.Color();
   for (const [x, z, s] of spots) {
     const geo = new THREE.IcosahedronGeometry(1, 4);
@@ -365,6 +498,7 @@ export function createGrass(shared, rng, count, cabin) {
   blade.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6]);
 
   const uniforms = {
+    ...shared.light,
     uTime: shared.uTime,
     uPlayer: shared.uPlayer,
     uAuroraTint: shared.uAuroraTint,
@@ -515,7 +649,7 @@ export function insideCamp(x, z) {
 export function createCamp(shared, rng) {
   const g = new THREE.Group();
   const stone = new THREE.MeshStandardMaterial({ color: 0x4a4e50, roughness: 1 });
-  const bark = new THREE.MeshStandardMaterial({ color: 0x2a1c12, roughness: 1 });
+  const bark = new THREE.MeshStandardMaterial({ color: 0x5a4130, roughness: 1 });
   const charred = new THREE.MeshStandardMaterial({ color: 0x120b07, roughness: 1, emissive: 0xff4a10, emissiveIntensity: 0.5 });
 
   // --- fire ring ---
@@ -610,12 +744,63 @@ export function createCamp(shared, rng) {
   const HW = 1.55, HH = 1.9, HL = 1.9;
   const tri = new THREE.Shape();
   tri.moveTo(-HW, 0); tri.lineTo(HW, 0); tri.lineTo(0, HH); tri.closePath();
+  const cloth = canvasTexture(rng);
+  cloth.repeat.set(2, 2);
   const canvasMat = new THREE.MeshStandardMaterial({
-    color: 0x7c4630, roughness: 0.95, emissive: 0xff7a2a, emissiveIntensity: 0.05,
+    map: cloth, color: 0xc9a58a, roughness: 0.96, side: THREE.DoubleSide, emissive: 0xff7a2a, emissiveIntensity: 0.05,
   });
-  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(tri, { depth: HL * 2, bevelEnabled: false }), canvasMat);
-  body.position.z = -HL;
-  tent.add(body);
+  // the fly sheet: a ridge that sags between its poles and panels that belly inward
+  const NU = 14, NV = 12;
+  const cp = [], cuv = [], ci = [];
+  for (let j = 0; j <= NV; j++) {
+    const t = -1 + (2 * j) / NV;
+    const ridge = HH - 0.13 * (1 - t * t);
+    for (let i = 0; i <= NU; i++) {
+      const sN = -1 + (2 * i) / NU, as = Math.abs(sN);
+      const y = ridge * Math.pow(1 - as, 0.92) - 0.07 * Math.sin(Math.PI * as) * (1 - t * t);
+      cp.push(sN * (HW + 0.06), Math.max(y, 0.0), t * HL);
+      cuv.push(i / NU, j / NV);
+    }
+  }
+  for (let j = 0; j < NV; j++) {
+    for (let i = 0; i < NU; i++) {
+      const a = j * (NU + 1) + i, b = a + 1, c = a + NU + 1, d = c + 1;
+      ci.push(a, c, b, b, c, d);
+    }
+  }
+  const sheet = new THREE.BufferGeometry();
+  sheet.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
+  sheet.setAttribute('uv', new THREE.Float32BufferAttribute(cuv, 2));
+  sheet.setIndex(ci);
+  sheet.computeVertexNormals();
+  tent.add(new THREE.Mesh(sheet, canvasMat));
+  for (const sz of [-1, 1]) {                       // end walls
+    const wall = new THREE.Mesh(new THREE.ShapeGeometry(tri), canvasMat);
+    wall.position.z = sz * HL;
+    tent.add(wall);
+  }
+  const groundSheet = new THREE.Mesh(new THREE.PlaneGeometry(HW * 2, HL * 2), new THREE.MeshStandardMaterial({ color: 0x2c2a26, roughness: 1 }));
+  groundSheet.rotation.x = -Math.PI / 2;
+  groundSheet.position.y = 0.03;
+  tent.add(groundSheet);
+  // guy ropes down to pegs
+  const ropeMat = new THREE.MeshStandardMaterial({ color: 0xd8cfb8, roughness: 1 });
+  const rope = (ax, ay, az, bx, by, bz) => {
+    const a = new THREE.Vector3(ax, ay, az), b = new THREE.Vector3(bx, by, bz);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, a.distanceTo(b), 4), ropeMat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    tent.add(m);
+    const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.008, 0.22, 5), bark);
+    peg.position.set(bx, 0.07, bz);
+    peg.rotation.z = bx > 0 ? -0.5 : 0.5;
+    tent.add(peg);
+  };
+  for (const sz of [-1, 1]) {
+    rope(0, HH, sz * HL, 0, 0.02, sz * (HL + 1.5));
+    for (const sx of [-1, 1]) rope(sx * HW * 0.5, HH * 0.52, sz * HL, sx * (HW + 0.9), 0.02, sz * (HL + 0.7));
+  }
+  for (const sx of [-1, 1]) for (const t of [-0.6, 0, 0.6]) rope(sx * HW * 0.92, 0.14, t * HL, sx * (HW + 0.75), 0.02, t * HL);
   const door = new THREE.Shape();
   door.moveTo(-HW * 0.62, 0.02); door.lineTo(HW * 0.62, 0.02); door.lineTo(0, HH * 0.80); door.closePath();
   const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.5, 0.74, 0.22) });

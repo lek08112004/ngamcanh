@@ -88,6 +88,7 @@ export const LensShader = {
     uFocus: { value: 11 },
     uAperture: { value: 0.22 },
     uMaxBlur: { value: 12 },
+    uTaps: { value: 22 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -105,6 +106,7 @@ export const LensShader = {
     uniform float uFocus;
     uniform float uAperture;
     uniform float uMaxBlur;
+    uniform float uTaps;
     varying vec2 vUv;
     float viewZ(vec2 uv){
       float z = texture2D(tDepth, uv).x * 2.0 - 1.0;
@@ -122,7 +124,8 @@ export const LensShader = {
       // 22 taps on a golden-angle spiral; a tap counts when its own blur disc reaches this pixel
       for (int i = 1; i <= 22; i++) {
         float fi = float(i);
-        float rad = sqrt(fi / 22.0) * uMaxBlur;
+        if (fi > uTaps) break;
+        float rad = sqrt(fi / uTaps) * uMaxBlur;
         float ang = fi * 2.39996323;
         vec2 uv = vUv + vec2(cos(ang), sin(ang)) * rad * uTexel;
         float rs = max(coc(viewZ(uv)), r0);

@@ -26,17 +26,38 @@ const PITCH_DEG = 11.6;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 /* ---------------------------------------------------------------- quality */
-// Resolution is never the first thing to give: the image stays at the display's
-// native pixel grid (Full HD on a Full HD screen) and shader detail adapts instead.
+// Three tiers, chosen from the device unless the visitor picks one. Within a tier
+// the image stays sharp; if frames drop, detail is shed step by step (see adaptQuality).
 const coarse = matchMedia('(pointer: coarse)').matches;
 const lowPower = coarse || Math.min(innerWidth, innerHeight) < 560;
 const dpr = window.devicePixelRatio || 1;
-const Q = lowPower
-  ? { steps: 20, grass: 42000, flowers: 260, stars: 1600, flies: 36, tulips: 9000, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1.25), msaa: 2 }
-  : { steps: 32, grass: 140000, flowers: 760, stars: 3200, flies: 80, tulips: 20000, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1.5), msaa: 4 };
+let qualityChoice = 'auto';
+try { qualityChoice = localStorage.getItem('aurora-vale-quality') || 'auto'; } catch (e) { /* private mode */ }
+if (['low', 'medium', 'high'].includes(query.get('q'))) qualityChoice = query.get('q');
+function detectTier() {
+  if (lowPower) return 'low';
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return 'low';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    if (/swiftshader|llvmpipe|software|basic render/i.test(gpu)) return 'low';
+    // integrated and mobile-class chips
+    if (/intel|uhd|iris|hd graphics|mali|adreno|powervr|radeon\(tm\) graphics|vega \d/i.test(gpu) && !/arc\b/i.test(gpu)) return 'medium';
+  } catch (e) { return 'medium'; }
+  if ((navigator.deviceMemory || 8) <= 4 || (navigator.hardwareConcurrency || 8) <= 4) return 'medium';
+  return 'high';
+}
+const tier = qualityChoice === 'auto' ? detectTier() : qualityChoice;
+const TIERS = {
+  low: { steps: 14, grass: 28000, tulips: 5000, garden: 0.3, stars: 1400, flies: 30, maxPR: 1, minPR: 0.7, msaa: 0, lens: 0, shadow: 0, mountains: 0.6 },
+  medium: { steps: 20, grass: 70000, tulips: 11000, garden: 0.6, stars: 2400, flies: 50, maxPR: Math.min(dpr, 1.25), minPR: 0.85, msaa: 2, lens: 12, shadow: 1024, mountains: 0.8 },
+  high: { steps: 32, grass: 140000, tulips: 20000, garden: 1, stars: 3200, flies: 80, maxPR: Math.min(dpr, 2), minPR: Math.min(dpr, 1), msaa: 4, lens: 22, shadow: 2048, mountains: 1 },
+};
+const Q = { ...TIERS[tier] };
 // keep very large canvases (4K at 200%) within a sane pixel budget
-const budgetPR = Math.sqrt(4.6e6 / Math.max(1, innerWidth * innerHeight));
-Q.maxPR = Math.max(Math.min(Q.maxPR, budgetPR), Math.min(dpr, 1));
+const budgetPR = Math.sqrt((tier === 'high' ? 4.6e6 : 2.6e6) / Math.max(1, innerWidth * innerHeight));
+Q.maxPR = Math.max(Math.min(Q.maxPR, budgetPR), Math.min(dpr, tier === 'low' ? 0.8 : 1));
 Q.minPR = Math.min(Q.minPR, Q.maxPR);
 
 /* --------------------------------------------------------------- renderer */
@@ -81,6 +102,12 @@ const shared = {
   uPixelRatio: { value: pixelRatio },
   uPointScale: { value: 600 },
   uPlayer: { value: camBase },
+  light: {
+    uShadowMap: { value: null },
+    uShadowMatrix: { value: new THREE.Matrix4() },
+    uShadowOn: { value: 0 },
+    uShadowTexel: { value: 1 / 2048 },
+  },
   aurora: {
     uDay,
     uAurora: { value: 1.0 },
@@ -203,13 +230,14 @@ function createStarPoints(count, rng) {
 const rng = makeRng(20261112);
 const starPoints = createStarPoints(Q.stars * 2, rng);
 scene.add(starPoints);
-scene.add(createMountains(shared));
+scene.add(createMountains(shared, Q.mountains));
 scene.add(createTerrain(shared));
-const cabin = createCabin(rng);
-scene.add(cabin.group);
+const cabin = createCabin(rng, shared);
+scene.add(cabin.group, cabin.smoke);
 shared.uCabinLight.value.copy(cabin.lightWorld);
-scene.add(createFence(rng));
-scene.add(createRocks(rng));
+const fence = createFence(rng);
+const rocks = createRocks(rng);
+scene.add(fence, rocks);
 const camp = createCamp(shared, rng);
 scene.add(camp.group);
 shared.uFireLight.value.set(camp.firePos.x, camp.firePos.y, camp.firePos.z, 0.5);
@@ -228,9 +256,13 @@ const PLACES = [
   { id: 'east', name: 'Đồi phía đông', x: 118, z: -58, r: 12, note: 'Cao hơn trại, nhìn được cả thung lũng.' },
   { id: 'south', name: 'Đồi sau trại', x: -6, z: 112, r: 12, note: 'Nhìn ngược về trại và dãy núi phương bắc.' },
 ];
-scene.add(createGarden(shared, rng, lowPower ? 0.35 : 1));
-scene.add(createSignposts(PLACES));
-scene.add(createTulips(shared, rng, Q.tulips));
+const garden = createGarden(shared, rng, Q.garden);
+const signposts = createSignposts(PLACES);
+const tulips = createTulips(shared, rng, Q.tulips);
+scene.add(garden, signposts, tulips);
+// every instanced flower bed, so the quality ladder can thin them out together
+const flowerBeds = [tulips, ...garden.children.filter((c) => c.geometry && c.geometry.isInstancedBufferGeometry)]
+  .map((m) => ({ geo: m.geometry, total: m.geometry.instanceCount }));
 scene.add(createFireflies(shared, rng, Q.flies));
 
 const hemi = new THREE.HemisphereLight(0x3a6a86, 0x0a160d, 0.9);
@@ -239,8 +271,35 @@ const auroraLight = new THREE.DirectionalLight(0x5ce6a4, 0.55);
 auroraLight.position.set(-20, 55, -80);
 scene.add(auroraLight);
 const sunLight = new THREE.DirectionalLight(0xfff0d2, 0);
-sunLight.position.copy(shared.uSunDir.value).multiplyScalar(200);
-scene.add(sunLight);
+sunLight.target.position.set(14, 9, 2);
+sunLight.position.copy(sunLight.target.position).addScaledVector(shared.uSunDir.value, 220);
+scene.add(sunLight, sunLight.target);
+
+// Sun shadows. The morning sun never moves, so the shadow map is drawn once and
+// then only sampled: real shadows from the cabin, tent, fence, rocks and trees
+// at no per-frame cost.
+if (Q.shadow) {
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.autoUpdate = false;
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(Q.shadow, Q.shadow);
+  const sc = sunLight.shadow.camera;
+  sc.left = -52; sc.right = 52; sc.top = 52; sc.bottom = -52; sc.near = 60; sc.far = 400;
+  sc.updateProjectionMatrix();
+  sunLight.shadow.bias = -0.0006;
+  sunLight.shadow.normalBias = 0.04;
+  shared.light.uShadowTexel.value = 1 / Q.shadow;
+  for (const root of [cabin.group, camp.group, fence, rocks, garden, signposts]) {
+    root.traverse((o) => {
+      if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
+        o.castShadow = true;
+        o.receiveShadow = !o.userData.shadowOnly;
+      }
+    });
+  }
+  renderer.shadowMap.needsUpdate = true;
+}
 
 /* --------------------------------------------------------- post-processing */
 const target = new THREE.WebGLRenderTarget(4, 4, {
@@ -259,7 +318,8 @@ class GrabDepth extends Pass {
 }
 composer.addPass(new GrabDepth());
 composer.addPass(lensPass);
-lensPass.enabled = !lowPower && query.get('lens') !== '0';
+lensPass.enabled = Q.lens > 0 && query.get('lens') !== '0';
+lensPass.uniforms.uTaps.value = Q.lens;
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.72, 0.82);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -775,6 +835,22 @@ $('qPhoto').addEventListener('click', () => { wantPhoto = true; });
 $('qJournal').addEventListener('click', () => openJournal(true));
 $('qTime').addEventListener('click', () => setDay(day.target !== 1));
 
+/* picture quality: automatic by default, or pinned by the visitor */
+[['auto', 'Tự động'], ['low', 'Thấp'], ['medium', 'Vừa'], ['high', 'Cao']].forEach(([id, label]) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'chip';
+  b.textContent = id === 'auto' ? `${label} (${{ low: 'thấp', medium: 'vừa', high: 'cao' }[tier]})` : label;
+  b.setAttribute('aria-pressed', String(qualityChoice === id));
+  b.addEventListener('click', () => {
+    try { localStorage.setItem('aurora-vale-quality', id); } catch (e) { /* ignore */ }
+    const url = new URL(location.href);
+    url.searchParams.delete('q');
+    location.replace(url);
+  });
+  $('qualityChips').appendChild(b);
+});
+
 /* time of day */
 function setDay(on, quiet) {
   day.target = on ? 1 : 0;
@@ -1181,20 +1257,27 @@ let firstFrame = true;
 const _q = new THREE.Quaternion();
 const _m4 = new THREE.Matrix4();
 
-// Quality ladder: shader detail first, then grass density, resolution last (and never below native on desktop).
+// Quality ladder (automatic mode only). When frames drop, shed in this order:
+// aurora slices, lens blur, grass density, flower density, and resolution last.
+let flowerFrac = 1;
 function adaptQuality(dt) {
   perfAcc += dt; perfFrames++;
   if (perfAcc < 1.5) return;
   const fps = perfFrames / perfAcc;
   perfAcc = 0; perfFrames = 0;
-  if (perfSkip-- > 0) return;
-  if (fps >= 50) return;
+  if (perfSkip-- > 0 || qualityChoice !== 'auto') return;
+  if (fps >= 48) return;
   const u = skyMat.uniforms.uSteps;
   if (u.value > 14) {
     u.value = Math.max(14, u.value - 6);
+  } else if (lensPass.enabled) {
+    lensPass.enabled = false;
   } else if (grassFrac > 0.6) {
     grassFrac = 0.6;
     grass.userData.meadow.geometry.instanceCount = Math.floor(grassTotal * grassFrac);
+  } else if (flowerFrac > 0.55) {
+    flowerFrac = 0.55;
+    for (const b of flowerBeds) b.geo.instanceCount = Math.floor(b.total * flowerFrac);
   } else if (pixelRatio > Q.minPR + 0.01) {
     pixelRatio = Math.max(Q.minPR, pixelRatio - 0.125);
     resize();
@@ -1321,6 +1404,11 @@ function frame() {
     audio.setStream(clamp(1 - sd / 38, 0, 1));
   }
   composer.render(dt);
+  if (Q.shadow && !shared.light.uShadowOn.value && sunLight.shadow.map) {
+    shared.light.uShadowMap.value = sunLight.shadow.map.texture;
+    shared.light.uShadowMatrix.value.copy(sunLight.shadow.matrix);
+    shared.light.uShadowOn.value = 1;
+  }
   if (wantPhoto) { wantPhoto = false; savePhoto(); }
 
   /* ---- "+ củi" button rides on the fire ---- */

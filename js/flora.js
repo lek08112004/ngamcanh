@@ -157,6 +157,7 @@ function flowerMaterial(shared) {
     side: THREE.DoubleSide,
     alphaToCoverage: true,
     uniforms: {
+      ...shared.light,
       uTime: shared.uTime,
       uDay: shared.uDay,
       uAmb: shared.uAmb,
@@ -403,6 +404,11 @@ export function createGarden(shared, rng, scale) {
       br.rotation.set(Math.sin(a) * lean, 0, -Math.cos(a) * lean);
       tree.add(br);
     }
+    const shade = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshStandardMaterial({ colorWrite: false, depthWrite: false }));
+    shade.position.set(0, 4.0, 0);
+    shade.scale.set(2.7, 1.5, 2.7);
+    shade.userData.shadowOnly = true;
+    tree.add(shade);
     group.add(tree);
     for (let i = 0, n = Math.floor(2600 * scale); i < n; i++) {
       // an umbrella-shaped crown, denser toward the outside

@@ -60,3 +60,35 @@ void main(){
   gl_FragColor = vec4(vec3(1.0, 0.48, 0.12) * 2.6 * a, 1.0);
 }
 `;
+
+// Wood smoke from the cabin chimney: a few soft puffs that rise, drift and thin out.
+export const smokeVertex = /* glsl */ `
+uniform float uTime;
+uniform float uPixelRatio;
+uniform float uScale;
+attribute vec4 aSeed;
+varying float vA;
+void main(){
+  float life = fract(uTime * (0.045 + aSeed.y * 0.025) + aSeed.x);
+  vec3 p = position;
+  p.y += life * 4.2;
+  p.x += life * life * 4.5 + sin(life * 5.0 + aSeed.z * 9.0) * 0.5 * life;
+  p.z += life * 1.2 + cos(life * 4.0 + aSeed.w * 9.0) * 0.30 * life;
+  vA = smoothstep(0.0, 0.12, life) * pow(1.0 - life, 1.6);
+  vec4 mv = viewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = clamp(uScale * uPixelRatio * (0.5 + 3.0 * life) / -mv.z, 2.0, 140.0);
+}
+`;
+
+export const smokeFragment = /* glsl */ `
+uniform vec3 uAmb;
+uniform vec3 uSunCol;
+varying float vA;
+void main(){
+  vec2 q = gl_PointCoord * 2.0 - 1.0;
+  float a = exp(-dot(q, q) * 3.2) * vA * 0.17;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4((uAmb * 0.8 + uSunCol * 0.14) * 0.8, a);
+}
+`;
