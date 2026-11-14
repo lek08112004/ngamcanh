@@ -12,7 +12,7 @@ import {
   makeRng, terrainH, mountainRise, createTerrain, createMountains, createCabin, createFence,
   createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS,
 } from './world.js';
-import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH, GARDEN_BENCH, walkFlowerAt, nearBench } from './flora.js';
+import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH, GARDEN_BENCH, walkFlowerAt, nearBench, LOD_NEAR } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
 import { Party, cleanName, cleanCode } from './net.js';
 import { Soundscape } from './audio.js';
@@ -21,6 +21,7 @@ import { LORE, THREADS, SEASON_SKY, starOfFlower } from './lore.js';
 import { glowVertex, glowFragment } from './shaders/post.js';
 import { Story, CHAPTERS, FLOWERS } from './story.js';
 import { store } from './store.js';
+import * as cloud from './cloud.js';
 import { SHELF, pagesOf } from './library.js';
 import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt, sunAt } from './seasons.js';
 import { createCabinRoom, ROOM_LAYER } from './cabinroom.js';
@@ -317,6 +318,35 @@ sunLight.target.position.set(14, 9, 2);
 sunLight.position.copy(sunLight.target.position).addScaledVector(shared.uSunDir.value, 220);
 scene.add(sunLight, sunLight.target);
 
+// The sun's shadow camera is fitted round the part of the valley people play in, seen from the
+// sun: the cabin and the camp with the beds just round them, and the garden with the walk to it
+// (boxes below, up to the cherry crowns). It used to be a fixed 104 m square; fitted, its sides
+// run from about 26 m (early morning, the ground seen at a slant) to 100 m (noon, when the
+// cabin-to-garden diagonal lies across the view), so the same map has 1.6 to 6.7 times the
+// texels per square metre over the camp. Outside it, as before, the ground paints its own row
+// shade (shadowCover in light.js). Refitted at each redraw.
+const SHADOW_BOXES = [[-24, 12, -23, 4, 4, 15], [-1, 57, -12, 36, 4, 23]];       // x0 x1 z0 z1 y0 y1
+const SHADOW_PTS = [];
+for (const [x0, x1, z0, z1, y0, y1] of SHADOW_BOXES) for (const x of [x0, x1]) for (const z of [z0, z1]) for (const y of [y0, y1]) SHADOW_PTS.push(new THREE.Vector3(x, y, z));
+const _sx = new THREE.Vector3(), _sy = new THREE.Vector3(), _sz = new THREE.Vector3(), _sp = new THREE.Vector3();
+function fitSunShadow() {
+  // the axes three.js gives the shadow camera (lookAt from the sun to the target, up = +y)
+  _sz.copy(shared.uSunDir.value).normalize();
+  _sx.set(0, 1, 0).cross(_sz).normalize();
+  _sy.copy(_sz).cross(_sx);
+  let l = Infinity, r = -Infinity, b = Infinity, t = -Infinity;
+  for (const p of SHADOW_PTS) {
+    _sp.copy(p).sub(sunLight.target.position);
+    const u = _sp.dot(_sx), v = _sp.dot(_sy);
+    l = Math.min(l, u); r = Math.max(r, u); b = Math.min(b, v); t = Math.max(t, v);
+  }
+  // a metre of margin, and whole metres, so small sun steps rarely change the texel size
+  const sc = sunLight.shadow.camera;
+  sc.left = Math.floor(l - 1); sc.right = Math.ceil(r + 1); sc.bottom = Math.floor(b - 1); sc.top = Math.ceil(t + 1);
+  sc.updateProjectionMatrix();
+  // the push along the normal against acne scales with the texel (it was 0.04 m at 104 m)
+  sunLight.shadow.normalBias = 0.04 * Math.max(sc.right - sc.left, sc.top - sc.bottom) / 104;
+}
 // Sun shadows. The morning sun never moves, so the shadow map is drawn once and
 // then only sampled: real shadows from the cabin, tent, fence, rocks and trees
 // at no per-frame cost.
@@ -327,10 +357,9 @@ if (Q.shadow) {
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(Q.shadow, Q.shadow);
   const sc = sunLight.shadow.camera;
-  sc.left = -52; sc.right = 52; sc.top = 52; sc.bottom = -52; sc.near = 60; sc.far = 400;
-  sc.updateProjectionMatrix();
+  sc.near = 60; sc.far = 400;              // a 340 m depth range: light.js counts on it (sunShadowSoft)
   sunLight.shadow.bias = -0.0006;
-  sunLight.shadow.normalBias = 0.04;
+  fitSunShadow();
   shared.light.uShadowTexel.value = 1 / Q.shadow;
   for (const root of [cabin.group, camp.group, fence, rocks, garden, signposts, beds]) {
     root.traverse((o) => {
@@ -802,7 +831,8 @@ function applySeason(w) {
     for (const [name, u] of Object.entries(group.userData.grow)) {
       u.uGrow.value = ease(clock.grow(name));
       const ms = group.userData.meshes && group.userData.meshes[name];
-      if (ms) for (const m of ms) m.visible = u.uGrow.value > 0.02;
+      // a close-up plot (flora.js) is drawn only while the viewer is within reach of it
+      if (ms) for (const m of ms) m.visible = u.uGrow.value > 0.02 && (!m.userData.near || Math.hypot(camera.position.x - m.userData.near.center.x, camera.position.z - m.userData.near.center.z) < LOD_NEAR + 1 + m.userData.near.radius);
     }
   }
   garden.userData.grow.ring.uTint.value.set(0.72, 0.035, 0.075, w[3]);          // roses give way to red camellias
@@ -937,6 +967,7 @@ function applyDay(dt) {
       _sunWas.copy(shared.uSunDir.value);
       _seasonWas.copy(shared.uSeason.value);
       sunLight.position.copy(sunLight.target.position).addScaledVector(shared.uSunDir.value, 220);
+      fitSunShadow();
       renderer.shadowMap.needsUpdate = true;
       shadowStale = true;
       if (!moved) shadowSettle--;
@@ -1779,6 +1810,28 @@ $('autoDay').addEventListener('click', () => {
 });
 syncClockUi();
 
+/* the copy in the cloud (cloud.js) and the opt-in performance line */
+cloud.onStatus(({ state, text }) => {
+  const el = $('cloudStatus');
+  el.textContent = state === 'off' ? 'Tiến độ lưu trên máy này' : text;
+  el.dataset.state = state;
+  el.classList.toggle('act', state === 'newer');
+  el.title = state === 'newer' ? 'Bấm để tải lại trang' : '';
+});
+$('cloudStatus').addEventListener('click', () => { if ($('cloudStatus').dataset.state === 'newer') location.reload(); });
+function syncTelemetryUi() {
+  const on = store.get('settings.telemetry', false);
+  $('telemetryBtn').setAttribute('aria-pressed', String(on));
+}
+$('telemetryBtn').addEventListener('click', () => {
+  const on = !store.get('settings.telemetry', false);
+  store.set('settings.telemetry', on);
+  syncTelemetryUi();
+  toast(on ? 'Cảm ơn bạn. Sau một phút chơi, một dòng ẩn danh về hiệu năng máy sẽ được gửi (một lần mỗi lượt vào)' : 'Đã tắt: không gửi gì về hiệu năng máy');
+});
+syncTelemetryUi();
+cloud.start();
+
 /* seats */
 SPOTS.forEach((sp, i) => {
   const b = document.createElement('button');
@@ -2400,6 +2453,8 @@ if (query.has('debug')) {
     restInCabin, leaveCabin, openBook, book, corgi, petCorgi, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
     actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
+    setPixelRatio: (p) => { pixelRatio = p; resize(); },
+    cloud, perfTotal: () => ({ ...perfTotal }),
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
       return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown renderer';
@@ -2426,11 +2481,33 @@ const _m4 = new THREE.Matrix4();
 // Quality ladder (automatic mode only). When frames drop, shed in this order:
 // aurora slices, lens blur, grass density, flower density, and resolution last.
 let flowerFrac = 1;
+let perfWarm = 2;
+const perfTotal = { t: 0, n: 0 };
+let telemetrySent = false, telemetryTries = 0;
+function maybeSendTelemetry() {
+  if (telemetrySent || telemetryTries >= 3 || perfTotal.t < 60 || !store.get('settings.telemetry', false)) return;
+  telemetrySent = true;
+  telemetryTries++;
+  const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+  cloud.sendTelemetry({
+    tier,
+    avg_fps: Math.round(perfTotal.n / perfTotal.t * 10) / 10,
+    gpu: ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)).slice(0, 160) : null,
+    day_night: clock.day > 0.6 ? 'day' : clock.day > 0.15 ? 'dusk' : 'night',
+    season: clock.season.id,
+  }).then((ok) => { if (!ok) telemetrySent = false; });     // try again at the next window
+}
 function adaptQuality(dt) {
+  if (dt > 0.5) return;                 // back from a hidden tab: that gap was not a frame
   perfAcc += dt; perfFrames++;
   if (perfAcc < 1.5) return;
   const fps = perfFrames / perfAcc;
+  // the same windows feed the average frame rate of the visit (the telemetry line), once the
+  // start-up hitches are over, and only while the scene is actually being looked at
+  if (perfWarm > 0) perfWarm--;
+  else if (started) { perfTotal.t += perfAcc; perfTotal.n += perfFrames; }
   perfAcc = 0; perfFrames = 0;
+  maybeSendTelemetry();
   if (perfSkip-- > 0 || qualityChoice !== 'auto') return;
   if (fps >= 48) return;
   const u = skyMat.uniforms.uSteps;

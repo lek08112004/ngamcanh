@@ -388,46 +388,100 @@ function depthMaterial(shared, plant) {
   });
 }
 
+// A planting is cut into square plots, one mesh each, so that three.js can leave out whole plots
+// that are off screen (or outside the sun's shadow camera) before the GPU sees a vertex. Measured
+// in the garden on the 780M: the flowers' cost was nearly all vertex work (it hardly changed at
+// half resolution), some 23 million vertices a frame in spring, most of them for plants behind
+// the viewer or, for the close-up models, further away than LOD_NEAR and thrown out one vertex
+// at a time. THREE.BatchedMesh (per-plant culling) was tried on two plantings and was no faster.
+const PLOT = 12;          // metres, far models
+const PLOT_NEAR = 5;      // close-up models: only the few plots round the viewer are drawn at all
+
 function instanceAttributes(list) {
   const n = list.length;
   const off = new Float32Array(n * 3), par = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  let maxH = 0;
   list.forEach((f, i) => {
     off[i * 3] = f.x; off[i * 3 + 1] = f.y; off[i * 3 + 2] = f.z;
     par[i * 3] = f.h; par[i * 3 + 1] = f.yaw; par[i * 3 + 2] = f.seed;
     col[i * 3] = f.c[0]; col[i * 3 + 1] = f.c[1]; col[i * 3 + 2] = f.c[2];
+    maxH = Math.max(maxH, f.h);
   });
-  return {
-    n,
-    aOffset: new THREE.InstancedBufferAttribute(off, 3),
-    aParams: new THREE.InstancedBufferAttribute(par, 3),
-    aColor: new THREE.InstancedBufferAttribute(col, 3),
-  };
+  return { n, off, par, col, maxH };
 }
-function instanced(geometry, material, inst, caster) {
+/**
+ * The plants of one planting sorted into plots of `size` metres (in their original order inside
+ * each plot, so thinning a plot by its count still thins evenly). Each plot gets its own instance
+ * buffers and a bounding sphere that holds every plant in it, standing and leaning.
+ */
+function plots(inst, size) {
+  const bins = new Map();
+  for (let i = 0; i < inst.n; i++) {
+    const key = `${Math.floor(inst.off[i * 3] / size)},${Math.floor(inst.off[i * 3 + 2] / size)}`;
+    let b = bins.get(key);
+    if (!b) bins.set(key, (b = []));
+    b.push(i);
+  }
+  const out = [];
+  for (const idx of bins.values()) {
+    const n = idx.length;
+    const off = new Float32Array(n * 3), par = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    const lo = new THREE.Vector3(Infinity, Infinity, Infinity), hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    idx.forEach((s, j) => {
+      for (let c = 0; c < 3; c++) {
+        off[j * 3 + c] = inst.off[s * 3 + c]; par[j * 3 + c] = inst.par[s * 3 + c]; col[j * 3 + c] = inst.col[s * 3 + c];
+      }
+      lo.min(_v.set(off[j * 3], off[j * 3 + 1], off[j * 3 + 2]));
+      hi.max(_v);
+    });
+    const centre = lo.clone().add(hi).multiplyScalar(0.5);
+    centre.y += inst.maxH * 0.5;
+    const radius = hi.clone().sub(lo).length() * 0.5 + inst.maxH * 1.3 + 0.3;
+    out.push({
+      n, sphere: new THREE.Sphere(centre, radius),
+      aOffset: new THREE.InstancedBufferAttribute(off, 3),
+      aParams: new THREE.InstancedBufferAttribute(par, 3),
+      aColor: new THREE.InstancedBufferAttribute(col, 3),
+    });
+  }
+  return out;
+}
+const _v = new THREE.Vector3();
+function instanced(geometry, material, plot, caster) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = geometry.index;
   for (const name of ['position', 'normal', 'aInfo', 'aUv']) geo.setAttribute(name, geometry.attributes[name]);
-  geo.setAttribute('aOffset', inst.aOffset);
-  geo.setAttribute('aParams', inst.aParams);
-  geo.setAttribute('aColor', inst.aColor);
-  geo.instanceCount = inst.n;
+  geo.setAttribute('aOffset', plot.aOffset);
+  geo.setAttribute('aParams', plot.aParams);
+  geo.setAttribute('aColor', plot.aColor);
+  geo.instanceCount = plot.n;
+  geo.boundingSphere = plot.sphere;
   const mesh = new THREE.Mesh(geo, material);
-  mesh.frustumCulled = false;
+  mesh.frustumCulled = true;            // by the plot's sphere: in the view and in the sun's shadow camera
   if (caster) { mesh.castShadow = true; mesh.customDepthMaterial = caster; }
   return mesh;
 }
 /**
  * One planting: a species set out at the places in `list`. Returns its meshes (a far model,
- * plus a close-up model when `lod` is on) and the uniforms that grow and tint it.
+ * plus a close-up model when `lod` is on, each cut into plots) and the uniforms that grow and
+ * tint it. A close-up plot carries `userData.near` (its sphere): main.js shows it only while the
+ * viewer is within LOD_NEAR of it.
  */
 function plant(shared, makeGeo, list, lod) {
   const u = planting();
   const inst = instanceAttributes(list);
   const caster = shared.flowerShadows ? depthMaterial(shared, u) : null;
-  const meshes = lod
-    ? [instanced(makeGeo(false), flowerMaterial(shared, u, 'LOD_FAR'), inst, caster),     // the far model casts for both
-       instanced(makeGeo(true), flowerMaterial(shared, u, 'LOD_NEAR'), inst)]
-    : [instanced(makeGeo(false), flowerMaterial(shared, u), inst, caster)];
+  // the far model casts for both, so its plots are never hidden for being near
+  const farGeo = makeGeo(false), farMat = flowerMaterial(shared, u, lod ? 'LOD_FAR' : undefined);
+  const meshes = plots(inst, PLOT).map((p) => instanced(farGeo, farMat, p, caster));
+  if (lod) {
+    const nearGeo = makeGeo(true), nearMat = flowerMaterial(shared, u, 'LOD_NEAR');
+    for (const p of plots(inst, PLOT_NEAR)) {
+      const m = instanced(nearGeo, nearMat, p);
+      m.userData.near = p.sphere;
+      meshes.push(m);
+    }
+  }
   return { meshes, u };
 }
 

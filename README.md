@@ -2,7 +2,7 @@
 
 Một chuyến cắm trại yên bình ở phương Bắc, chạy hoàn toàn trong trình duyệt. **Buổi sáng**, sườn đồi là vườn tulip trồng theo luống màu dưới nắng sớm. **Ban đêm**, hoa khép cánh, Ngân Hà hiện ra và cực quang kéo màn. Đây là một thế giới nhỏ để đi bộ tự do: lều và lửa trại, nhà gỗ mái cỏ, luống tulip, vườn bách hoa (hồng, oải hương, hướng dương, cúc, anh đào), dòng suối và những ngọn đồi có cột mốc để tìm tới. Có la bàn, sổ hành trình, một mạch truyện nhỏ “Một ngày ở trại”, sổ tay thiên văn kể chuyện từng chòm sao, một trò chơi nhỏ dệt chòm sao, và có thể rủ bạn bè vào đi cùng. Không có thua, không có giờ.
 
-- 100% tĩnh, phía client: HTML + CSS + ES Modules, **không cần build, không cần backend**.
+- 100% tĩnh, phía client: HTML + CSS + ES Modules, **không cần build**. Tiến trình lưu trong trình duyệt; một bản sao được giữ trên Supabase (người dùng ẩn danh, mỗi người chỉ đọc/ghi được dòng của mình), và trang vẫn chạy đầy đủ khi không có mạng.
 - Toàn bộ hình ảnh sinh bằng shader và hình học thủ tục — không có file ảnh nào.
 - Toàn bộ âm thanh tổng hợp bằng Web Audio API — không có file âm thanh nào.
 - Phụ thuộc: Three.js `0.160.0`, nạp qua Import Map từ unpkg; PeerJS chỉ được tải khi bạn bật “Đi cùng bạn”.
@@ -146,6 +146,8 @@ js/flora.js             Luống tulip và vườn bách hoa: hồng, oải hươ
 js/story.js             Mười lăm trang của “Một ngày ở trại”, Sổ hoa
 js/seasons.js           Lịch và đồng hồ: bốn mùa, giờ trong ngày, hoa nào mọc mùa nào
 js/store.js             Lưu trữ: một tài liệu có phiên bản trong trình duyệt, sao lưu và khôi phục
+js/cloud.js             Bản sao tiến trình trên Supabase, và dòng hiệu năng ẩn danh (chỉ khi người chơi bật)
+js/boot.js              Điểm vào của trang: xem nhanh bản trên mây rồi nạp main.js
 js/net.js               Đi cùng bạn: phòng ngang hàng qua WebRTC (PeerJS), chỉ chạy khi người dùng bật
 js/lore.js              Nội dung sổ tay thiên văn (nguồn gốc, sao đáng chú ý, cách tìm)
 js/game.js              Trò dệt chòm sao: bụi sao, bão, điều ước, mạch dệt, lưu tiến trình

@@ -71,6 +71,17 @@ float sunShadowMap(vec3 w){
   return shadowTap(p.xy, p.z);
 }
 float sunShadow(vec3 w){ return sunShadowMap(w) * moverShadow(w) * sunReachAt(w); }
+// for vertex shaders (grass blades, flowers): one look into the movers' map instead of four.
+// A vertex is sampled once and its value is spread across the triangle anyway, and the flowers
+// alone run this some millions of times a frame.
+float moverShadowLite(vec3 w){
+  if (uMoverOn < 0.5) return 1.0;
+  vec4 sc = uMoverMatrix * vec4(w, 1.0);
+  vec3 p = sc.xyz / sc.w;
+  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
+  return step(p.z - 0.0004, textureLod(uMoverMap, p.xy, 0.0).r);
+}
+float sunShadowLite(vec3 w){ return sunShadowMap(w) * moverShadowLite(w) * sunReachAt(w); }
 // four taps blended by where the point falls between texels: a shadow edge becomes a ramp,
 // not the staircase (and the soft square blotches) of the map's grid
 float shadowBilinear(vec2 uv, float z){

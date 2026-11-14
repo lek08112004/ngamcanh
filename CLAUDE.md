@@ -23,8 +23,13 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
   if it is there and adds it to the bench shelf (kind `licensed`, `imgBase` for its pictures);
   without it the shelf has its usual six books. In the text, `[[img:NN]]` is a picture,
   `[[q]]` a quoted passage, `[[sub:…]]` a chapter subtitle (`renderPage`).
-- **GitHub:** not pushed. There is no `origin` remote. The owner must create the repo and
-  run `git push` themselves (CLI login needs their browser).
+- **GitHub:** the owner pushed the repo to GitHub (branch `main`). Do not push more, or deploy,
+  without asking. `.github/workflows/keep-alive.yml` pings Supabase every three days (the owner
+  set its two secrets; leave it alone).
+- **Supabase** (the owner's project, `supabase/schema.sql` already run there): table `saves` (one
+  row per anonymous user, RLS: own row only) and `telemetry` (insert-only for `anon`, nobody can
+  read it from the site). `js/cloud.js` uses the **publishable** key only, which is meant to ship to
+  browsers; never put a secret/service_role key in the repo.
 - **Privacy rule the owner set:** nothing personal in the repo or the site. Commits use the
   local identity `Aurora Vale <aurora-vale@users.noreply.github.com>` — keep it. Never put
   real names, emails or machine paths in files. This file, `README.md` and `tools/` are
@@ -32,13 +37,17 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
 
 ## Hard constraints
 
-- 100% static: plain HTML/CSS/ES modules, **no build step, no backend**, deployable as-is.
+- 100% static: plain HTML/CSS/ES modules, **no build step**, deployable as-is. The only server is
+  the owner's Supabase project, and the site must work fully without it (offline-first, below).
 - No image or audio files: everything is procedural (GLSL + geometry + Web Audio). Textures
   are drawn on a canvas or baked into a `DataTexture` when the page loads.
   The owner has been told that true photo-realism would need scanned models/textures and
   that this would mean dropping this rule. They have not asked for that.
-- Only external code: three.js 0.160.0 (minified build via import map from unpkg), and
-  PeerJS from esm.sh, loaded **only** when the visitor opts into "Đi cùng bạn".
+- Only external code: three.js 0.160.0 (minified build via import map from unpkg), PeerJS from
+  esm.sh, loaded **only** when the visitor opts into "Đi cùng bạn", and supabase-js 2.45.4 from
+  esm.sh (import map), loaded by `cloud.js` only when a sync or a telemetry line is due. The owner
+  approved these three and nothing else: ask before adding any library (they named
+  InstancedMesh2 as one not to add).
 - Must stay usable on weak machines. Anything new has to fit the quality tiers below and
   have a fallback on `low`.
 
@@ -73,6 +82,8 @@ js/cabinroom.js       the room inside the cabin (its own render layer), its ligh
 js/corgi.js           Bơ the camp corgi: capsule model, vertex-colour coat, four-beat gait, a small mind of its own
 js/movers.js          the per-frame shadow map for things that move (the corgi, companions)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
+js/cloud.js           a copy of the save on Supabase (anonymous user, RLS), and the opt-in telemetry line
+js/boot.js            the page's entry: a short look at the cloud copy, then imports main.js
 js/layout.js          world coordinates (CABIN, CAMP, GARDEN, BOUNDS) — imports nothing
 js/game.js            constellation game (firefly, stardust, storms, wishes, save)
 js/lore.js            astronomy journal text per constellation
@@ -84,6 +95,7 @@ tools/drive.mjs       drive headless Chrome over the DevTools protocol (real tim
 tools/check.mjs       audio | walk | story (also the clock and the save) | party | fps — see Testing
 tools/audio-probe.html renders every sound layer offline and prints level and spectrum
 tools/syntax.mjs      parses every module; fails if anything but store.js touches localStorage
+supabase/schema.sql   the tables and RLS policies, as run on the owner's project
 package.json          dev scripts only (npm run serve | syntax | check | fps); the site has no dependencies
 ```
 
@@ -173,9 +185,27 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   and slide from blossom to leaf with `uLeaf`; colours per season come from `CROWN` in `main.js`.
 - **The save** (`store.js`): `store.get('table.field')` / `store.set(...)`; the schema at the top
   of the file is the single list of what persists. Adding a field means adding it there.
-  Old separate keys are migrated once. There is no server database: "no backend" still holds,
-  and the owner has been told so. `tools/syntax.mjs` fails if any other module uses
-  `localStorage` directly.
+  Old separate keys are migrated once. `tools/syntax.mjs` fails if any other module uses
+  `localStorage` directly. `doc.t` is when the progress last changed (not `cloud.*`, not the
+  quality tier); `store.onChange`, `syncDoc()` and `adopt()` exist for cloud.js.
+- **The cloud copy** (`cloud.js`, offline-first): the first change after the game starts signs
+  in anonymously (`signInAnonymously`) and uploads `store.syncDoc()` (no session, no quality tier)
+  to `saves`, a few seconds after the *first* change of a burst (walking changes the trek log all
+  the time, so a restarting debounce would never fire), with retries backing off to 5 minutes.
+  supabase-js keeps its session through a storage adapter into `store` (`cloud.auth`, never
+  exported). The newer copy wins by `doc.t`, the edit time inside the save, not by Postgres'
+  `updated_at` (an old offline session uploads late). `boot.js` gives a visitor who has synced
+  before up to 1.5 s, online only, to take a newer cloud copy **before** main.js reads the save;
+  if it arrives later, uploads stop and the dock says "tải lại trang". The dock row "Dữ liệu" shows
+  the state in one small line. Honest limit: an anonymous identity lives in the browser, so
+  clearing site data loses access to the copy and another device is another user; real
+  cross-device sync needs the login the owner plans.
+  `?debug=1` (all the test tools) switches the cloud off unless `&cloud=1`; `?cloud=0` always does.
+- **Telemetry** (`settings.telemetry`, **off by default**, a switch in the dock): after 60 s of
+  measured play, one row: `tier`, `avg_fps` (the windows `adaptQuality()` already measures, after
+  two warm-up windows, hidden-tab gaps skipped), `gpu` (WEBGL_debug_renderer_info), `day_night`,
+  `season`. Sent through a second supabase client with no session, as `anon` (the only role the
+  table lets insert; a signed-in client would be refused by RLS). Once per visit, three tries.
 
 ## How the picture is put together
 
@@ -303,6 +333,17 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   a height `h`. On foothills seen edge-on, ridged noise and tree crowns in that height
   stepped like contour terraces and square scales; they now fade with `px` sooner than the
   rest, and the baked map is read with a cubic B-spline (`mapSmooth`, MTN_Q > 0).
+- **Flower plots** (`plots()` in flora.js): each planting is cut into 12 m plots (close-up
+  models: 5 m), one mesh each with a bounding sphere, `frustumCulled` on, so plots off screen or
+  outside the sun's shadow camera are never sent to the GPU, and close-up plots are shown only
+  within reach of the viewer (`userData.near`, checked in `applySeason`). Measured first: the
+  flowers' cost was nearly all **vertex** work (~10 ms of the garden frame on the 780M, barely
+  less at half resolution; ~23 million flower vertices a frame in spring, half of them close-up
+  models discarded one vertex at a time beyond 7 m). `THREE.BatchedMesh` (in r160) was tried on
+  two plantings in the live scene (gTulip far, gMuscari) with `perObjectFrustumCulled`: it drew
+  a fifth of the plants and was no faster than the instanced mesh (31.9 vs 31.9/31.1 fps for
+  gMuscari; unculled 29.0), and it needs one copy of the model per plant in memory. Not used.
+  Grass and flower vertex shaders use `sunShadowLite` (one tap into the movers' map, not four).
 - **Flower shadows**: each planting's far mesh has `castShadow` and its own depth material
   (`flowerDepthFragment`, same cut-outs, same `uGrow`), so blooms are in the sun shadow map. Flowers sample it at their own vertices, offset toward the sun. `low` has
   no shadow map and keeps the painted row shade instead.
@@ -327,6 +368,14 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
 - Flowers: geometry attributes are `position`, `normal`, `aInfo` (kind, open), `aUv`.
   Outlines are cut per pixel from `aUv`; `aUv.x == 0` means "no cut-out" (stems, discs).
 - `shadowMap.autoUpdate` is false; `applyDay` asks for a redraw when the sun or season moves.
+  The sun's shadow camera is **fitted** at each redraw (`fitSunShadow` in main.js) round
+  `SHADOW_BOXES` (cabin + camp + the beds next to them; the garden and its walk; up to the cherry
+  crowns), seen from the sun: sides from ~26 m (early sun) to ~100 m (noon, the cabin-to-garden
+  diagonal across the view), against the old fixed 104 m square, i.e. 1.6x to 6.7x the texels per
+  square metre. Near/far stay 60/400 (light.js assumes a 340 m depth range); `normalBias`
+  scales with the texel. Anything new that should cast must be inside those boxes. A tighter
+  map was not possible without losing the cabin or the far side of the garden. The PCF tap count
+  was not raised: the frame is fill-bound (half resolution doubles it), so there was no budget.
   If you add shadow casters later, set `renderer.shadowMap.needsUpdate = true`. Meshes with a
   material array only cast if their first material is standard.
 - Anything on a flower that is moved off the stem axis with `g.transform` still bends by its
@@ -334,7 +383,7 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   model axis, so keep `open: 0` on transformed heads.
 - Anything new that walks about must go in `movers.roots` (not `castShadow` for the sun map).
   Anything new inside the cabin must be on `ROOM_LAYER` or it will not be seen there.
-- Grass does **not** cast into the shadow map (flowers do; grass shade is worked out, see above). Outside the map's 104 m square,
+- Grass does **not** cast into the shadow map (flowers do; grass shade is worked out, see above). Outside the fitted map (`SHADOW_BOXES`),
   and on `low`, the shade under tulip rows is painted by the ground shader (`rowShade`).
 - The lens focus ray assumes planting is 0.55 m tall, 1.95 m in the sunflower field
   (hard-coded rectangle in `main.js`); move the field and you must move that too.
@@ -374,6 +423,15 @@ the same afternoon against the previous commit: day high 43.9 → 43.7, medium 6
 companions and the corgi trotting (`hour=10.5&season=summer&ghost=2&dog=run&x=2&z=7&yaw=-15&pitch=-12`)
 high 38.1–39.4 (previous commit, same view, no dog: 40.1), medium 55–59 (60.0); inside the cabin
 at night with the stove and the dog (`hour=22.5&room=1&x=-9.5&z=-10`) high 79, medium 102, low 144.
+
+Eighth round (flower plots, fitted sun shadow, one-tap mover shade in vertex shaders), measured
+interleaved in one session, two rounds, against the commit before the garden was filled (old)
+and the commit with the filled garden (head): garden walk high old 33.3 / head 28.6 / now 35.4;
+garden medium 53.1 / 44.5 / 52.8; bench high 31.7 / 29.2 / 31.5; day high 37.8 / 37.3 / 46.1;
+day medium 55.8 / 54.2 / 64.1; garden low 141.9 / 135.3 / 137.2. Run to run these move by 1 to 2
+fps (the first build loaded in a round tends to score higher), so garden medium and the bench are
+level with the sparser garden, not better. Earlier figures in this file came from other days and
+are not comparable to these.
 
 That is the only hardware ever measured. No phone, no discrete card, no weak desktop.
 Night on `high` is the heaviest case and it is the aurora sky, not the land.
@@ -458,9 +516,10 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 - Grass shade is an estimate from the clump field, not the blades' real shapes; seen straight
   down it reads as soft streaks. Companion and corgi shadows fall on the ground, grass and
   flowers but not on the bench, rocks or cabin; the corgi casts no shadow on itself outdoors.
-  Flower shadows are as sharp as the map allows (4096 on high over 104 m, about 2.5 cm a texel).
+  Flower shadows are as sharp as the map allows (4096 on high, 0.6 to 2.5 cm a texel by the hour).
 - The cabin room: the windows are painted, not a view of the valley; the stove fire is a flat
-  shader quad; by night the stove's shadow leaves the back corner very dark. The corgi's gait
+  shader quad; by night the corner behind the stove is lifted by a weak warm fill light
+  (`stoveFill`, no shadow), measured a little brighter, not tuned against anything real. The corgi's gait
   was checked in frame sequences (walk, trot) from the side only; its sit and lie poses are
   approximations (the hind legs fold by rotation, nothing bends like a real hock), and it can
   walk through a companion. Its AI was watched in test runs, not over a long session.

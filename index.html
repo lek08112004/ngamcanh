@@ -14,7 +14,8 @@
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.min.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.45.4"
     }
   }
   </script>
@@ -152,6 +153,13 @@
           <button id="journalBtn" class="chip" type="button" title="Hành trình và sổ tay thiên văn (J)">Sổ tay</button>
         </div>
       </div>
+      <div class="dock-row">
+        <span class="label">Dữ liệu</span>
+        <div class="chips">
+          <span id="cloudStatus" class="cloud-status" role="status" aria-live="polite"></span>
+          <button id="telemetryBtn" class="chip" type="button" aria-pressed="false" title="Mặc định tắt. Khi bật: sau một phút chơi, gửi một dòng ẩn danh gồm mức chất lượng, số khung hình mỗi giây trung bình, tên card đồ hoạ, ngày hay đêm và mùa. Không có tên, không có mã người dùng.">Gửi ẩn danh thông tin hiệu năng máy để giúp cải thiện web</button>
+        </div>
+      </div>
       <p class="hint">W A S D đi bộ · Shift chạy · kéo để nhìn quanh · cuộn để phóng to · bấm vào đống lửa để thêm củi</p>
     </div>
 
@@ -279,6 +287,6 @@
       if (r) r.style.display = 'none';
     };
   </script>
-  <script type="module" src="js/main.js" onerror="__bootFail('Không tải được thư viện đồ hoạ. Hãy kiểm tra kết nối mạng rồi tải lại trang.')"></script>
+  <script type="module" src="js/boot.js" onerror="__bootFail('Không tải được thư viện đồ hoạ. Hãy kiểm tra kết nối mạng rồi tải lại trang.')"></script>
 </body>
 </html>

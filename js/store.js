@@ -8,6 +8,7 @@
 //   store.set('trek.dist', 1234)               write a value (saved a moment later)
 //   store.export() / store.import(text)        back the whole thing up, or restore it
 //   store.reset()                              forget everything
+//   store.onChange(fn) / store.edited / store.syncDoc() / store.adopt(doc)   for cloud.js (below)
 //
 // Rules it keeps:
 //  - Reading and writing never throw: in private mode, or with storage full, the site simply
@@ -16,6 +17,11 @@
 //  - Anything read back, and anything imported, is cleaned against the schema below: unknown
 //    keys are dropped, wrong types fall back to defaults, lists and strings are capped.
 //  - Older saves (the separate keys the site used before) are folded in once, then removed.
+//  - This is still the one source of truth. cloud.js keeps a copy of the progress on the
+//    owner's Supabase project, but only ever reads and writes through here: `doc.t` is the time
+//    of the last change to the progress (not to `cloud` or the quality setting), which is how
+//    a copy elsewhere is judged newer or older. Supabase's own login session is kept here too
+//    (`cloud.auth`, never exported, never uploaded), so no other module touches localStorage.
 const KEY = 'aurora-vale-db';
 const VERSION = 1;
 const LEGACY = {
@@ -32,7 +38,8 @@ const num = (def, min = 0, max = 1e9) => ['num', def, [min, max]];
 const bool = (def) => ['bool', def];
 const list = (max = 64) => ['list', [], max];
 const SCHEMA = {
-  settings: { quality: str('auto', 8), season: str('spring', 8), flow: bool(true), name: str('', 16) },
+  // telemetry: the visitor agreed to send one anonymous performance line (off unless they turn it on)
+  settings: { quality: str('auto', 8), season: str('spring', 8), flow: bool(true), name: str('', 16), telemetry: bool(false) },
   trek: { dist: num(0), found: list(32) },
   // satchel: flowers picked but not yet pressed at the tent; log: the camp diary (short ids, newest last)
   story: { done: list(40), seen: list(16), flowers: list(24), satchel: list(24), log: list(64), folded: bool(false) },
@@ -40,7 +47,12 @@ const SCHEMA = {
   game: { best: num(0), wishes: num(0), woven: list(16), stage: num(0, 0, 999) },
   // the shelf on the garden bench: the book left open, and the page each book was left at ('id:n')
   read: { book: str('', 16), at: list(12) },
+  // supabase-js's session (its storage adapter, see cloud.js): a JSON map of its keys. Local only.
+  cloud: { auth: str('', 16000) },
 };
+// what stays on this device whatever another copy says: the session, and the quality tier
+// (a phone and a desktop want different ones)
+const LOCAL_ONLY = { cloud: null, settings: ['quality'] };
 
 function cleanValue(rule, v) {
   const [kind, def, lim] = rule;
@@ -52,7 +64,7 @@ function cleanValue(rule, v) {
 }
 /** a complete, well-formed document built from whatever was handed in */
 function clean(raw) {
-  const doc = { v: VERSION };
+  const doc = { v: VERSION, t: raw && Number.isFinite(raw.t) ? raw.t : 0 };
   for (const [table, fields] of Object.entries(SCHEMA)) {
     const src = raw && typeof raw[table] === 'object' && raw[table] ? raw[table] : {};
     doc[table] = {};
@@ -85,6 +97,7 @@ function migrateLegacy() {
 class Store {
   constructor() {
     this.timer = 0;
+    this.listeners = [];
     this.persistent = true;            // false once a write has failed (private mode, quota)
     const saved = parse(disk.read(KEY));
     if (saved && typeof saved === 'object') {
@@ -113,8 +126,36 @@ class Store {
     const [table, field] = path.split('.');
     const rule = SCHEMA[table] && SCHEMA[table][field];
     if (!rule) return;
+    const before = JSON.stringify(this.doc[table][field]);
     this.doc[table][field] = cleanValue(rule, Array.isArray(value) ? value : value instanceof Set ? [...value] : value);
     this.touch();
+    if (table === 'cloud' || (table === 'settings' && field === 'quality')) return;
+    if (JSON.stringify(this.doc[table][field]) === before) return;     // nothing really changed
+    this.doc.t = Date.now();
+    for (const fn of this.listeners) { try { fn(path); } catch (e) { /* a listener must not break a save */ } }
+  }
+
+  /** called after every real change to the progress */
+  onChange(fn) { this.listeners.push(fn); }
+  /** when the progress last changed (ms since 1970; 0 = never) */
+  get edited() { return this.doc.t || 0; }
+  /** the progress as it goes to another copy: without what stays on this device */
+  syncDoc() {
+    const d = JSON.parse(JSON.stringify(this.doc));
+    delete d.cloud;
+    for (const f of LOCAL_ONLY.settings) delete d.settings[f];
+    return d;
+  }
+  /** take another copy's progress as ours, keeping what stays on this device */
+  adopt(raw) {
+    if (!raw || typeof raw !== 'object') return false;
+    const keep = { cloud: this.doc.cloud, quality: this.doc.settings.quality };
+    const doc = clean(raw);
+    doc.cloud = keep.cloud;
+    doc.settings.quality = keep.quality;
+    this.doc = doc;
+    this.flush();
+    return true;
   }
 
   /** several fields of one table at once */
@@ -134,20 +175,28 @@ class Store {
 
   /** the whole save as text, for a backup file */
   export() {
-    return JSON.stringify({ app: 'aurora-vale', exported: new Date().toISOString(), ...this.doc }, null, 2);
+    const { cloud, ...rest } = this.doc;          // the login session never goes into a backup file
+    void cloud;
+    return JSON.stringify({ app: 'aurora-vale', exported: new Date().toISOString(), ...rest }, null, 2);
   }
 
   /** replace the save with a backup; returns false if the text is not one */
   import(text) {
     const raw = parse(String(text).slice(0, 200000));
     if (!raw || typeof raw !== 'object' || raw.app !== 'aurora-vale') return false;
+    const cloud = this.doc.cloud;
     this.doc = clean(raw);
+    this.doc.cloud = cloud;
+    this.doc.t = Date.now();                       // a restored backup is the newest progress
+    for (const fn of this.listeners) { try { fn('*'); } catch (e) { /* ignore */ } }
     return this.flush() || true;
   }
 
   reset() {
     const quality = this.doc.settings.quality;       // a display setting, not progress: keep it
-    this.doc = clean({ settings: { quality } });
+    const cloud = this.doc.cloud;
+    this.doc = clean({ settings: { quality }, cloud, t: Date.now() });
+    for (const fn of this.listeners) { try { fn('*'); } catch (e) { /* ignore */ } }
     this.flush();
   }
 }

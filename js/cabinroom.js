@@ -493,7 +493,13 @@ export function createCabinRoom(cabin, rng, opts = {}) {
   const bounce = new THREE.PointLight(0xff9a5a, 0, 8, 1.2);
   bounce.position.set(STOVE.x - 0.4, 2.0, STOVE.z + 1.4);
   room.add(bounce);
-  const lights = [fireLight, candleLight, fill, bounce, ...windowLights];
+  // the corner behind the stove: the stove body stands between it and the flame, so at night it
+  // fell to black. Iron and the pipe give off a dull warmth, and the fire's light comes down off
+  // the ceiling there: a weak warm lamp up behind the stove, no shadow, short reach.
+  const stoveFill = new THREE.PointLight(0xff9c62, 0, 3.2, 1.6);
+  stoveFill.position.set(STOVE.x + 0.45, 1.45, STOVE.z - 0.75);
+  room.add(stoveFill);
+  const lights = [fireLight, candleLight, fill, bounce, stoveFill, ...windowLights];
 
   // every mesh and light of the room, and nothing else, is on the room's layer
   room.traverse((o) => {
@@ -571,6 +577,7 @@ export function createCabinRoom(cabin, rng, opts = {}) {
     }
     fill.intensity = 0.45 + 1.1 * day;
     bounce.intensity = 3.4 * level * (0.9 + 0.1 * flick);
+    stoveFill.intensity = 1.8 * level * (0.95 + 0.05 * flick);
     void dt; void frames;
   }
 

@@ -89,7 +89,7 @@ void main(){
 #else
   // flowers stand in the shadow map themselves: look from just sunward of this point, so a
   // petal is shaded by its neighbours and by the cabin, not by itself
-  vVis = sunShadow(world + uSunDir * 0.16) * cloudShade(aOffset.xz, uTime);
+  vVis = sunShadowLite(world + uSunDir * 0.16) * cloudShade(aOffset.xz, uTime);
 #endif
   vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);

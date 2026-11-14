@@ -136,7 +136,7 @@ void main(){
   vSeed = aParams.z;
   vAcross = position.x * 2.0;
   vHead = head;
-  vVis = sunShadow(base + vec3(0.0, 0.25, 0.0)) * cloudShade(base.xz, uTime);
+  vVis = sunShadowLite(base + vec3(0.0, 0.25, 0.0)) * cloudShade(base.xz, uTime);
 #ifdef GRASS_SELF
   // the clumps between a blade and the sun shade its lower part (blades are not in the shadow
   // map: this reads the same clump field that sets their heights, a little way toward the sun)
