@@ -995,13 +995,13 @@ export function createRocks(rng) {
 
 /* ---------- grass + wildflowers ---------- */
 // layers: [{ r, count, h: [min, max], w: [min, max], grow, widen, fadeIn }] from near to far
-export function createGrass(shared, rng, layers, cabin, roofCount) {
+export function createGrass(shared, rng, layers, cabin, roofCount, msaa = 0) {
   const blade = new THREE.BufferGeometry();
-  // a strip of four segments; the vertex shader gives it its outline (strap or seed head) and its arc
+  // a card of four segments; the vertex shader arcs it, the fragment shader cuts the blades out of it
   blade.setAttribute('position', new THREE.Float32BufferAttribute([
-    -0.5, 0, 0, 0.5, 0, 0, -0.5, 0.30, 0, 0.5, 0.30, 0, -0.5, 0.58, 0, 0.5, 0.58, 0, -0.5, 0.82, 0, 0.5, 0.82, 0, 0, 1, 0,
+    -0.5, 0, 0, 0.5, 0, 0, -0.5, 0.30, 0, 0.5, 0.30, 0, -0.5, 0.58, 0, 0.5, 0.58, 0, -0.5, 0.82, 0, 0.5, 0.82, 0, -0.5, 1, 0, 0.5, 1, 0,
   ], 3));
-  blade.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6, 5, 7, 6, 6, 7, 8]);
+  blade.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6, 5, 7, 6, 6, 7, 8, 7, 9, 8]);
 
   const uniforms = {
     ...shared.light,
@@ -1018,7 +1018,9 @@ export function createGrass(shared, rng, layers, cabin, roofCount) {
     uFogColor: shared.uFogColor,
     uFogDensity: shared.uFogDensity,
   };
+  const a2c = msaa > 0;       // with multisampling the blade edges are resolved by coverage, not a hard cut
   const build = (offsets, params, n, defines) => {
+    if (a2c) defines.A2C = '';
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = blade.index;
     geo.setAttribute('position', blade.attributes.position);
@@ -1029,6 +1031,8 @@ export function createGrass(shared, rng, layers, cabin, roofCount) {
       vertexShader: grassVertex,
       fragmentShader: grassFragment,
       side: THREE.DoubleSide,
+      alphaToCoverage: a2c,
+      extensions: { derivatives: true },
       defines,
       uniforms,
     }));
@@ -1057,7 +1061,8 @@ export function createGrass(shared, rng, layers, cabin, roofCount) {
       offsets[i * 3 + 2] = tz + Math.sin(a) * rad;
       params[i * 4] = L.h[0] + (0.65 * th + 0.35 * rng()) * (L.h[1] - L.h[0]);
       // blades face away from the middle of their tuft, so they arc outward like a fountain
-      params[i * 4 + 1] = L.tuft ? a + Math.PI / 2 + (rng() - 0.5) * 0.9 : rng() * Math.PI * 2;
+      // (loose layers let every blade fall its own way: a meadow is not a row of fountains)
+      params[i * 4 + 1] = L.tuft && !L.loose ? a + Math.PI / 2 + (rng() - 0.5) * 0.9 : rng() * Math.PI * 2;
       params[i * 4 + 2] = Math.min(0.999, Math.max(0, ts + (rng() - 0.5) * 0.25));
       params[i * 4 + 3] = L.w[0] + rng() * (L.w[1] - L.w[0]);
     }
@@ -1389,7 +1394,7 @@ export function createCamp(shared, rng) {
   g.add(tent);
 
   return {
-    group: g, flame, light, tentLight, doorMat, canvasMat, charred,
+    group: g, flame, embers, light, tentLight, doorMat, canvasMat, charred,
     firePos: new THREE.Vector3(fx, fy + 0.9, fz),
     glows: [[lanternMat, 4.5, 2.6, 0.9]],
   };

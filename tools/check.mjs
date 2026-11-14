@@ -137,8 +137,53 @@ async function story() {
     check((await done()).includes('walk'), 'walking a little turns the first page');
     await b.hold(' ', 80);
     await sleep(500);
-    check((await done()).includes('fire'), 'stoking the fire turns its page');
+    check(!(await done()).includes('fire'), 'the fire cannot be fed from fifty metres away');
+    await open('time=day&x=3&z=-1');
+    const wood0 = await b.eval('__av.fire.wood');
+    await b.hold(' ', 80);
+    await sleep(500);
+    check((await done()).includes('fire'), 'stoking the fire from beside it turns its page');
+    check((await b.eval('__av.fire.wood')) === wood0 - 1, `a stick of wood is used up (${wood0} -> ${await b.eval('__av.fire.wood')})`);
     check((await b.eval('document.getElementById("storyTitle").textContent')) === 'Xuống luống tulip', 'the card moves on to the next open page');
+    // the fire burns out; with no wood it cannot be lit, the woodpile fills your arms, then it can
+    await b.eval('__av.fire.level = 0; __av.fire.wood = 0; __av.fire.cooldown = 0');
+    await sleep(400);
+    await b.hold(' ', 80);
+    await sleep(500);
+    check((await b.eval('__av.fire.level')) < 0.05, 'a dead fire with no wood in hand stays out');
+    await open('time=day&x=7.1&z=-3.6');
+    await sleep(1500);
+    check((await b.eval('__av.fire.wood')) === 4, 'walking past the woodpile picks up an armful of wood');
+    await b.eval('__av.fire.level = 0; __av.fire.cooldown = 0');
+    await sleep(300);
+    await b.hold(' ', 80);
+    await sleep(500);
+    check((await b.eval('__av.fire.level')) > 0.3 && (await done()).includes('kindle'), 'and the fire can be kindled again (its page turns)');
+    // resting in the cabin: the clock moves on to the next part of the day
+    await open('time=day&x=-9.5&z=-10');
+    await sleep(1200);
+    check(!(await b.eval('document.getElementById("actBtn").classList.contains("hidden")')), 'on the cabin porch, "Vào nhà nghỉ" is offered');
+    const hr0 = await b.eval('__av.clock.hour');
+    await b.hold('e', 80);
+    await sleep(2600);
+    const hr1 = await b.eval('__av.clock.hour');
+    check(Math.abs(hr1 - 17.6) < 0.2 && (await done()).includes('rest'), `resting from ${hr0.toFixed(1)} h wakes you at ${hr1.toFixed(1)} h`);
+    await b.hold('e', 80);
+    await sleep(1600);
+    check(!(await b.eval('__av.rest.on')), 'and E steps back out onto the porch');
+    // the garden bench: sit, open the book, turn a page, close it
+    await open('time=day&spot=bench');
+    await sleep(1200);
+    check((await b.eval('document.getElementById("actBtn").textContent')).includes('đọc sách'), 'on the garden bench, "Ngồi đọc sách" is offered');
+    await b.hold('e', 80);
+    await sleep(600);
+    const bk = await b.eval('({ open: __av.book.open, pages: __av.book.pages.length, title: document.getElementById("bookTitle").textContent })');
+    check(bk.open && bk.pages >= 2 && bk.title.length > 0, `E opens the book (${bk.pages} pages, first: "${bk.title}")`);
+    await b.click('#bookNext');
+    check((await b.eval('__av.book.i')) === 1, 'a page can be turned');
+    await b.hold('e', 80);
+    await sleep(400);
+    check(!(await b.eval('__av.book.open')), 'and E closes it again');
     await open('time=day&x=-3.6&z=-5.2&eye=1.2&pitch=-40');
     await sleep(3500);
     check((await done()).includes('bloom'), 'bending to a flower is noticed');
@@ -163,21 +208,62 @@ async function story() {
     check(!(await b.eval('__av.stroll.on')), 'touching a key hands the walk back');
     await open('time=day&season=summer&x=43&z=2');
     await sleep(3500);
-    check((await b.eval('[...__av.story.flowers]')).includes('sunflower'), 'standing among the sunflowers presses one into the flower book');
+    check((await b.eval('[...__av.story.satchel]')).includes('sunflower') && !(await b.eval('[...__av.story.flowers]')).includes('sunflower'), 'standing among the sunflowers picks one into the satchel, not yet the book');
+    await open('time=day&season=summer&x=10&z=-3.8');
+    await sleep(1500);
+    check((await b.eval('[...__av.story.flowers]')).includes('sunflower') && (await b.eval('__av.story.satchel.size')) === 0, 'back at the tent it is pressed into the flower book');
+    check((await b.eval('__av.story.log')).includes('p:sunflower'), 'and the camp diary notes it');
+    // the star game: the difficulty climbs with what has been woven
+    await b.eval('__av.store.set("game.stage", 0)');
+    await open('time=night');
+    const weave = `(() => { const g = __av.game; const c = g.current; g.charge = 9; const order = []; const seen = new Set([0]); order.push(0);
+      while (order.length < c.def.local.length) { for (let k = 0; k < c.def.local.length; k++) if (!seen.has(k) && [...c.def.adj[k]].some((j) => seen.has(j))) { seen.add(k); order.push(k); break; } }
+      for (const k of order) { g.charge = 9; g._lightNode(c, k); } return { id: c.def.id, done: c.done, stage: g.stage }; })()`;
+    await b.click('#segPlay');
+    await sleep(800);
+    const r0 = await b.eval('({ guides: __av.game.rules.guides, id: __av.game.current.def.id })');
+    const w1 = await b.eval(weave);
+    check(r0.id === 'cas' && w1.done && w1.stage === 1, `the first weave is the simplest figure (${r0.id}), with guide lines (${r0.guides})`);
+    await b.eval('__av.store.set("game.stage", 4); __av.store.flush()');
+    await open('time=night');
+    await b.click('#segPlay');
+    await sleep(800);
+    const r4 = await b.eval('({ id: __av.game.current.def.id, guides: __av.game.rules.guides, beckon: __av.game.rules.beckon, slips: __av.game.rules.slips })');
+    check(r4.id === 'sco' && !r4.guides && !r4.beckon && r4.slips === 3, `at stage 4 (${r4.id}): no guide lines, no gold hint, three wrong strokes allowed`);
+    const slip = await b.eval(`(() => { const g = __av.game, c = g.current; g.charge = 9; g._lightNode(c, 0); let n = 0;
+      for (let tries = 0; tries < 4; tries++) {
+        const k = [...Array(c.def.local.length).keys()].find((i) => !c.lit[i] && ![...c.def.adj[i]].some((j) => c.lit[j]));
+        if (k === undefined) break;
+        g.charge = 9; g._lightNode(c, k); n++;
+      }
+      return { lit: c.lit.filter(Boolean).length, slips: g.slips, n }; })()`);
+    check(slip.n === 4 && slip.lit === 0 && slip.slips === 0, `a fourth wrong stroke unravels the weave and it starts again (${slip.n} strokes, ${slip.lit} lit)`);
+    const w2 = await b.eval(weave);
+    check(w2.done && (await b.eval('__av.store.get("game.stage")')) === 5, 'weaving it moves the saved stage on');
+    check((await b.eval('__av.game.keepsakes().length')) >= 2, 'each woven constellation leaves a keepsake star');
+    await b.click('#segView');
     // seasons and time of day: chosen in the dock, eased in, remembered in the save
     await open('x=0&z=6');
-    await b.eval('document.querySelector("#seasonChips [data-season=winter]").click(); document.getElementById("timeDusk").click()');
+    // left alone, the clock runs: a day and night in sixteen minutes
+    const h0 = await b.eval('__av.clock.hour');
+    await sleep(2000);
+    const ran = ((await b.eval('__av.clock.hour')) - h0 + 24) % 24;
+    check(ran > 0.02 && ran < 0.2, `time flows by itself: ${(ran * 60).toFixed(1)} valley minutes in 2 s`);
+    await b.eval('document.querySelector("#seasonChips [data-season=winter]").click(); const sl = document.getElementById("timeSlider"); sl.value = "18.2"; sl.dispatchEvent(new Event("input"))');
     await sleep(7500);
-    const w = await b.eval('({ season: __av.clock.season.id, winter: __av.clock.weights[3], dusk: __av.clock.dusk, phase: __av.clock.phase.id })');
+    const w = await b.eval('({ season: __av.clock.season.id, winter: __av.clock.weights[3], dusk: __av.clock.dusk, phase: __av.clock.phase.id, label: document.getElementById("qTime").textContent })');
     check(w.season === 'winter' && w.winter > 0.99, `choosing winter brings winter in (weight ${w.winter.toFixed(2)})`);
-    check(w.phase === 'dusk' && w.dusk > 0.99, 'choosing sunset brings the sunset in');
+    check(w.phase === 'dusk' && w.dusk > 0.85, `dragging the clock to 18:12 brings the sunset in (the clock reads "${w.label}")`);
+    await b.eval('document.getElementById("qTime").click()');
+    await sleep(4500);
+    check((await b.eval('__av.clock.phase.id')) === 'night', 'the clock button runs time forward to night');
     await b.eval('__av.store.flush()');
     await open('x=0&z=6');
     check((await b.eval('__av.clock.season.id')) === 'winter', 'the season is remembered after a reload');
     const backup = await b.eval('__av.store.export()');
     check(JSON.parse(backup).settings.season === 'winter' && (await b.eval(`__av.store.import(${JSON.stringify(backup)})`)), 'the save exports and imports as a backup');
     check(!(await b.eval('__av.store.import("{\\"not\\": 1}")')), 'a file that is not a backup is refused');
-    await b.eval('__av.clock.setSeason("spring"); __av.story.restart(); __av.story.seen.clear(); __av.story.flowers.clear(); __av.story.save(); __av.store.flush()');
+    await b.eval('__av.clock.setSeason("spring"); __av.story.restart(); __av.story.seen.clear(); __av.story.flowers.clear(); __av.story.satchel.clear(); __av.story.log.length = 0; __av.story.save(); __av.store.set("game.stage", 0); __av.store.set("game.woven", []); __av.store.flush()');
     check(errorsOf(b).length === 0, `no console errors${errorsOf(b).length ? ': ' + errorsOf(b).join(' | ') : ''}`);
   } finally { await b.close(); }
 }

@@ -63,20 +63,27 @@ vec3 meadowColor(vec2 p, float y){
   return c * uSeason.x + summer * uSeason.y + autumn * uSeason.z + winter * uSeason.w;
 }
 // 0..1 where bare rock breaks through the turf (kept away from the camp and the flower beds)
-float rockMask(vec2 p){
+// soft: how much wider the edge is drawn (the ground shader widens it with distance, so a
+// far outcrop has a soft rim and not a staircase of pixels)
+float rockMaskSoft(vec2 p, float soft){
   float keep = max(smoothstep(-64.0, -86.0, p.y), max(smoothstep(38.0, 60.0, p.y), smoothstep(112.0, 134.0, abs(p.x))));
   if (keep <= 0.0) return 0.0;
   float n = cnoise(p * 0.045 + 90.0) * 0.62 + cnoise(p * 0.17 + 40.0) * 0.38;
-  return smoothstep(0.68, 0.74, n) * keep;
+  return smoothstep(0.68 - soft, 0.74 + soft, n) * keep;
 }
-// 0..1 inside the tilled tulip beds (same stripes as createBeds in flora.js)
+float rockMask(vec2 p){ return rockMaskSoft(p, 0.0); }
+// how far a bed has wandered sideways at z (the same curve as bedWarp in seasons.js)
+float bedWarp(float z){
+  return 1.25 * sin(z * 0.093 + 0.6) + 0.55 * sin(z * 0.231 + 2.1);
+}
+// 0..1 inside the tilled flower beds (same ribbons as createBeds in flora.js)
 float tulipBed(vec2 p){
   float d = 8.0 - p.y;
   if (d < 4.5 || d > 50.0) return 0.0;
   float edge = 9.0 + d * 1.55 - abs(p.x);
   if (edge < 0.0) return 0.0;
   if (p.x > 10.5 && p.y > -7.0) return 0.0;
-  float lane = fract((p.x + 1000.0) / 3.6);
+  float lane = fract((p.x + bedWarp(p.y) + 1000.0) / 3.6);
   float bed = smoothstep(0.13, 0.18, lane) * smoothstep(1.0, 0.96, lane);
   bed *= smoothstep(50.0, 16.0, d) * smoothstep(4.5, 6.5, d) * smoothstep(0.0, 3.0, edge);
   bed *= smoothstep(6.0, 8.5, distance(p, vec2(${(CABIN.x + 0.86).toFixed(2)}, ${(CABIN.z + 0.68).toFixed(2)})));
@@ -148,12 +155,16 @@ void main(){
   float fibre = 0.5;
   float lB = 0.0;
   // detail fades out once it is smaller than a pixel: nothing shimmers in the distance
+  // (px is the longer side of a pixel's footprint: on ground seen at a low angle that is its
+  // depth. Every noise below is swapped for its mean, AA(cells per metre), before its cells
+  // shrink to two pixels: that is what stops the far meadow crawling as you walk.)
   float px = max(length(dFdx(xz)), length(dFdy(xz)));
-  float lR = 1.0 - smoothstep(0.35, 1.5, px);
+#define AA(f) (1.0 - smoothstep(0.28, 0.56, px * (f)))
+  float lR = AA(1.5);
 #if TERRAIN_Q > 0
-  float lA = 1.0 - smoothstep(1.2, 5.0, px);
-  lB = 1.0 - smoothstep(0.10, 0.45, px);
-  float lC = 1.0 - smoothstep(0.012, 0.05, px);
+  float lA = 1.0 - smoothstep(0.7, 2.6, px);
+  lB = 1.0 - smoothstep(0.10, 0.34, px);
+  float lC = 1.0 - smoothstep(0.006, 0.014, px);
   float hum = vnoise(xz * 0.16 + 3.0) * 0.65 + vnoise(xz * 0.41 + 8.0) * 0.35;
   clump = mix(0.5, vnoise(xz * 1.7 + 9.0), lB);
   vec2 rq = mat2(0.8, -0.6, 0.6, 0.8) * xz;
@@ -161,33 +172,34 @@ void main(){
   hRel = hum * 0.60 * lA + clump * 0.07 * lB;
 #endif
   // grain you only see when you crouch: crumbs of soil, grit, the specks in a stone
-  float lD = 1.0 - smoothstep(0.002, 0.012, px);
+  float lD = 1.0 - smoothstep(0.0014, 0.0036, px);
   float micro = 0.5;
   if (lD > 0.0) micro = mix(0.5, vnoise(xz * 150.0) * 0.55 + vnoise(mat2(0.6, 0.8, -0.8, 0.6) * xz * 290.0 + 3.0) * 0.45, lD);
   // near you the ground is the dim thatch between the blades; far off it stands for the whole sward
   float near = 1.0 - smoothstep(uGrassFar * 0.30, uGrassFar, dist);
-  vec3 albedo = base * mix(1.04, 0.60, near);
+  vec3 albedo = base * mix(1.04, 0.44, near);
   albedo *= (0.80 + 0.40 * clump) * (0.80 + 0.40 * fibre) * (0.82 + 0.36 * micro);
   float grassAmt = 1.0;
 
   // a dusting of far-off wildflowers by day
-  float speck = step(0.90, vnoise(xz * 1.9 + 7.0)) * smoothstep(120.0, 30.0, dist) * smoothstep(8.0, 30.0, dist);
-  vec3 bloomCol = mix(vec3(0.95, 0.85, 0.30), vec3(0.90, 0.45, 0.70), step(0.5, vnoise(xz * 0.31)));
+  float speck = mix(0.07, smoothstep(0.87, 0.93, vnoise(xz * 1.9 + 7.0)), AA(1.9)) * smoothstep(120.0, 30.0, dist) * smoothstep(8.0, 30.0, dist);
+  vec3 bloomCol = mix(vec3(0.95, 0.85, 0.30), vec3(0.90, 0.45, 0.70), smoothstep(0.44, 0.56, vnoise(xz * 0.31)));
   albedo = mix(albedo, bloomCol * 0.16, speck * 0.55 * uDay);
 
   // thin seams of bare earth where the turf has slipped
   float vn = 1.0 - abs(2.0 * vnoise(xz * 0.05 + 70.0) - 1.0);
-  float vein = smoothstep(0.93, 0.985, vn) * smoothstep(0.45, 0.70, vnoise(xz * 0.03 + 8.0));
+  float veinW = min(px * 0.10, 0.20);            // a seam thinner than a pixel is drawn wider and fainter
+  float vein = smoothstep(0.93 - veinW, 0.985, vn) * (0.055 / (0.055 + veinW)) * smoothstep(0.45, 0.70, vnoise(xz * 0.03 + 8.0));
   albedo = mix(albedo, vec3(0.092, 0.066, 0.042) * (0.7 + 0.6 * clump), vein * 0.8);
   hRel -= vein * 0.14;
   grassAmt *= 1.0 - vein * 0.8;
 
   // bedrock breaking through on the hillsides
-  float rk = rockMask(xz);
+  float rk = rockMaskSoft(xz, min(px * 0.10, 0.30));
   if (rk > 0.0) {
-    float rn = mix(0.5, fbm2(xz * 0.55 + 20.0), lR);
+    float rn = mix(mix(0.5, vnoise(xz * 0.21 + 20.0), AA(0.21)), fbm2(xz * 0.55 + 20.0), lR);
     float ledge = smoothstep(0.35, 0.75, rk + (rn - 0.5) * 0.9 + (clump - 0.5) * 0.3);
-    float crack = pow(1.0 - abs(2.0 * vnoise(xz * 1.4 + rn * 2.0) - 1.0), 6.0) * lR;
+    float crack = pow(1.0 - abs(2.0 * vnoise(xz * 1.4 + rn * 2.0) - 1.0), 6.0) * AA(2.8);
     vec3 rockC = mix(vec3(0.040, 0.039, 0.040), vec3(0.150, 0.138, 0.122), rn);
     rockC = mix(rockC, vec3(0.090, 0.098, 0.044), smoothstep(0.50, 0.8, vnoise(xz * 0.9 + 4.0)) * 0.6 * lR);   // lichen
     rockC = mix(rockC, base * 0.8, mix(0.3, smoothstep(0.50, 0.72, vnoise(xz * 0.63 + 31.0)) * 0.75, lR));   // moss creeping over
@@ -204,22 +216,26 @@ void main(){
     // every row throws a ragged band of shade away from the low sun, and the earth is
     // darker right at the foot of the stems: without it the flowers seem to float
     float reach = uSunDir.x / max(uSunDir.y, 0.2) * 0.50;
-    float toBand = abs(fract((xz.x + reach) / 0.44 + 0.5) - 0.5) * 0.44;
-    rowShade = (1.0 - smoothstep(0.03, 0.12, toBand)) * smoothstep(0.22, 0.60, vnoise(vec2(xz.x * 2.0, xz.y * 5.0 + 3.0))) * bed;
-    float toStem = abs(fract(xz.x / 0.44 + 0.5) - 0.5) * 0.44 / 0.05;
-    albedo *= 1.0 - 0.38 * exp(-toStem * toStem) * bed;
-    float row = 0.5 + 0.5 * cos(xz.x * 14.27997);
-    vec3 soil = vec3(0.060, 0.041, 0.028) * (0.70 + 0.60 * vnoise(xz * 7.0)) * (0.72 + 0.56 * row);
+    float bx = xz.x + bedWarp(xz.y);          // the beds wind a little on their way down the slope
+    float toBand = abs(fract((bx + reach) / 0.44 + 0.5) - 0.5) * 0.44;
+    // rows 44 cm apart: once a row is under three pixels wide its shade and its ridge are averaged
+    float rowAA = 1.0 - smoothstep(0.14, 0.34, fwidth(bx) / 0.44);
+    rowShade = mix(0.30, 1.0 - smoothstep(0.03, 0.12, toBand), rowAA) * smoothstep(0.22, 0.60, mix(0.5, vnoise(vec2(bx * 2.0, xz.y * 5.0 + 3.0)), AA(5.0))) * bed;
+    float toStem = abs(fract(bx / 0.44 + 0.5) - 0.5) * 0.44 / 0.05;
+    albedo *= 1.0 - 0.38 * mix(0.20, exp(-toStem * toStem), rowAA) * bed;
+    float row = mix(0.5, 0.5 + 0.5 * cos(bx * 14.27997), rowAA);
+    vec3 soil = vec3(0.060, 0.041, 0.028) * (0.70 + 0.60 * mix(0.5, vnoise(xz * 7.0), AA(7.0))) * (0.72 + 0.56 * row);
     soil *= 0.60 + 0.80 * micro;
     albedo = mix(albedo, soil, bed * 0.80);
     hRel += row * 0.07 * bed * lB;
     grassAmt *= 1.0 - bed * 0.8;
   }
 
-  float gp = gardenPath(xz) * (0.75 + 0.25 * vnoise(xz * 9.0));
+  float gp = gardenPath(xz) * (0.75 + 0.25 * mix(0.5, vnoise(xz * 9.0), AA(9.0)));
   // gravel: two grids of pebbles laid across each other, so no lattice shows up close
-  float gv = vnoise(mat2(0.8, -0.6, 0.6, 0.8) * xz * 27.0) * 0.55 + vnoise(mat2(0.6, 0.8, -0.8, 0.6) * xz * 41.0 + 7.0) * 0.45;
-  vec3 gravel = mix(vec3(0.13, 0.115, 0.095), vec3(0.34, 0.31, 0.26), gv) * (0.85 + 0.3 * vnoise(xz * 2.3));
+  float gv = 0.5;
+  if (gp > 0.0) gv = mix(0.5, vnoise(mat2(0.8, -0.6, 0.6, 0.8) * xz * 27.0), AA(27.0)) * 0.55 + mix(0.5, vnoise(mat2(0.6, 0.8, -0.8, 0.6) * xz * 41.0 + 7.0), AA(41.0)) * 0.45;
+  vec3 gravel = mix(vec3(0.13, 0.115, 0.095), vec3(0.34, 0.31, 0.26), gv) * (0.85 + 0.3 * mix(0.5, vnoise(xz * 2.3), AA(2.3)));
   gravel *= 0.62 + 0.76 * micro;
   albedo = mix(albedo, gravel, gp * 0.92);
   grassAmt *= 1.0 - gp;
@@ -230,7 +246,7 @@ void main(){
   // faint trail
   float pm = smoothstep(1.5, 0.5, abs(vWorld.x - pathX(vWorld.z)));
   pm *= smoothstep(-34.0, -50.0, vWorld.z) * smoothstep(-330.0, -200.0, vWorld.z);
-  pm *= 0.55 + 0.45 * vnoise(xz * 0.8);
+  pm *= 0.55 + 0.45 * mix(0.5, vnoise(xz * 0.8), AA(0.8));
   albedo = mix(albedo, vec3(0.115, 0.090, 0.060) * (0.75 + 0.5 * clump), pm * 0.85);
   grassAmt *= 1.0 - pm * 0.8;
 
@@ -240,7 +256,7 @@ void main(){
   float zm = smoothstep(-24.0, -36.0, vWorld.z);
   float wm = smoothstep(sw, sw - 0.30, sd) * zm;
   float bank = smoothstep(sw + 1.7, sw + 0.25, sd + (clump - 0.5) * 0.9) * zm;
-  float peb = vnoise(xz * 5.5) * 0.6 + vnoise(xz * 13.0 + 2.0) * 0.4;
+  float peb = mix(0.5, vnoise(xz * 5.5), AA(5.5)) * 0.6 + mix(0.5, vnoise(xz * 13.0 + 2.0), AA(13.0)) * 0.4;
   vec3 pebble = mix(vec3(0.075, 0.068, 0.058), vec3(0.230, 0.210, 0.180), peb);
   pebble *= mix(1.0, 0.55, smoothstep(sw + 0.9, sw, sd));          // wet near the waterline
   pebble *= 0.70 + 0.60 * micro;
@@ -256,8 +272,8 @@ void main(){
       float under = smoothstep(4.6, 1.2, dT);
       if (under > 0.0) {
         vec2 pq = mat2(0.8, -0.6, 0.6, 0.8) * xz;
-        float litter = smoothstep(0.64, 0.74, vnoise(pq * 21.0)) * smoothstep(0.30, 0.65, vnoise(xz * 5.0 + 3.0) + under * 0.45);
-        vec3 litterCol = mix(vec3(0.62, 0.40, 0.46), mix(vec3(0.46, 0.17, 0.035), vec3(0.50, 0.33, 0.05), vnoise(pq * 9.0)), uSeason.z / fall);
+        float litter = mix(0.30, smoothstep(0.64, 0.74, vnoise(pq * 21.0)), AA(21.0)) * smoothstep(0.30, 0.65, mix(0.5, vnoise(xz * 5.0 + 3.0), AA(5.0)) + under * 0.45);
+        vec3 litterCol = mix(vec3(0.62, 0.40, 0.46), mix(vec3(0.46, 0.17, 0.035), vec3(0.50, 0.33, 0.05), mix(0.5, vnoise(pq * 9.0), AA(9.0))), uSeason.z / fall);
         albedo = mix(albedo, litterCol * (0.8 + 0.4 * micro), litter * under * fall * 0.75);
       }
     }
@@ -297,7 +313,8 @@ void main(){
 
   // snow glitters: a few crystals at a time catch the sun, and change as you move
   if (snowCov > 0.0) {
-    float gl = pow(vnoise(xz * 170.0 + viewDir.xz * 9.0), 26.0) * smoothstep(40.0, 3.0, dist);
+    // only where a crystal is bigger than a pixel; further off it would be static
+    float gl = pow(vnoise(xz * 170.0 + viewDir.xz * 9.0), 26.0) * smoothstep(40.0, 3.0, dist) * AA(170.0);
     col += uSunCol * vis * gl * snowCov * 5.0;
   }
 

@@ -12,15 +12,16 @@ import {
   makeRng, terrainH, createTerrain, createMountains, createCabin, createFence,
   createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS,
 } from './world.js';
-import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH } from './flora.js';
+import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH, GARDEN_BENCH, walkFlowerAt, nearBench } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
 import { Party, cleanName, cleanCode } from './net.js';
 import { Soundscape } from './audio.js';
-import { StardustGame, CONSTELLATIONS } from './game.js';
-import { LORE } from './lore.js';
+import { StardustGame, CONSTELLATIONS, WEAVE_ORDER } from './game.js';
+import { LORE, THREADS, SEASON_SKY, starOfFlower } from './lore.js';
+import { glowVertex, glowFragment } from './shaders/post.js';
 import { Story, CHAPTERS, FLOWERS } from './story.js';
 import { store } from './store.js';
-import { WorldClock, SEASONS, PHASES, SEASON_LIGHT } from './seasons.js';
+import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt } from './seasons.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -89,13 +90,16 @@ const camBase = new THREE.Vector3(0, terrainH(0, 8) + 1.8, 8);
 camera.position.copy(camBase);
 
 /* ------------------------------------------------------ calendar and clock */
-// Which season it is and what time of day: chosen in the dock, remembered in the save,
-// or set from the address (?season=autumn&time=dusk). See seasons.js.
+// Which season it is and what time it is. The day starts at the visitor's own time of day
+// and then runs by itself; the season is remembered in the save. Both can be pinned from the
+// address (?season=autumn&time=dusk, or ?hour=17.5), which also stops the clock. See seasons.js.
+const pinned = query.has('time') || query.has('hour') || query.has('season');
 const clock = new WorldClock({
   season: SEASONS.some((x) => x.id === query.get('season')) ? query.get('season') : store.get('settings.season', 'spring'),
-  phase: PHASES.some((x) => x.id === query.get('time')) ? query.get('time')
-    : (() => { const h = new Date().getHours(); return h >= 6 && h < 16 ? 'day' : h >= 16 && h < 19 ? 'dusk' : 'night'; })(),
-  auto: store.get('settings.autoDay', false) && !query.has('time') && !query.has('season'),
+  hour: query.has('hour') ? parseFloat(query.get('hour'))
+    : PHASES.some((x) => x.id === query.get('time')) ? PHASES.find((x) => x.id === query.get('time')).hour
+      : (() => { const now = new Date(); return now.getHours() + now.getMinutes() / 60; })(),
+  auto: store.get('settings.flow', true) && !pinned,
 });
 const SUN_DIR = Object.fromEntries(PHASES.map((ph) => [ph.id, new THREE.Vector3(...ph.sun).normalize()]));
 
@@ -106,7 +110,7 @@ const shared = {
   uDay,
   uAmb: { value: new THREE.Vector3(0.08, 0.13, 0.18) },
   uSunCol: { value: new THREE.Vector3(0, 0, 0) },
-  uSunDir: { value: SUN_DIR[clock.phase.id === 'dusk' ? 'dusk' : 'day'].clone() },
+  uSunDir: { value: new THREE.Vector3(...clock.sun) },
   uSeason: { value: new THREE.Vector4(...clock.weights) },
   uAuroraTint: { value: new THREE.Vector3(0.2, 0.5, 0.34) },
   uCabinLight: { value: new THREE.Vector3() },
@@ -124,6 +128,7 @@ const shared = {
     uShadowMatrix: { value: new THREE.Matrix4() },
     uShadowOn: { value: 0 },
     uShadowTexel: { value: 1 / 2048 },
+    uSunReach: { value: 1 },
   },
   aurora: {
     uDay,
@@ -261,10 +266,10 @@ scene.add(camp.group);
 shared.uFireLight.value.set(camp.firePos.x, camp.firePos.y, camp.firePos.z, 0.5);
 // three nested tiles of blades: fine and dense underfoot, the meadow proper, coarse tufts far out
 const grass = createGrass(shared, rng, [
-  { r: 13, count: Q.grassNear, h: [0.26, 0.74], w: [0.013, 0.026], grow: 0.0, widen: 0.8, tuft: 5, spread: 0.07 },
-  { r: 56, count: Q.grass, h: [0.38, 1.00], w: [0.030, 0.058], grow: 0.5, widen: 2.0, tuft: 4, spread: 0.16 },
-  { r: 110, count: Q.grassFar, h: [0.55, 1.15], w: [0.07, 0.14], grow: 0.6, widen: 1.0, fadeIn: 46 },
-], cabin, Q.roof);
+  { r: 11, count: Q.grassNear, h: [0.26, 0.74], w: [0.011, 0.020], grow: 0.0, widen: 0.8, tuft: 2, spread: 0.16, loose: 1 },
+  { r: 56, count: Q.grass, h: [0.38, 1.00], w: [0.020, 0.036], grow: 0.5, widen: 2.4, tuft: 2, spread: 0.34, loose: 1 },
+  { r: 110, count: Q.grassFar, h: [0.55, 1.15], w: [0.05, 0.10], grow: 0.6, widen: 1.0, fadeIn: 46 },
+], cabin, Q.roof, Q.msaa);
 scene.add(grass);
 
 // Places worth walking to. Reaching one writes it into the trek log.
@@ -313,7 +318,7 @@ if (Q.shadow) {
   sunLight.shadow.bias = -0.0006;
   sunLight.shadow.normalBias = 0.04;
   shared.light.uShadowTexel.value = 1 / Q.shadow;
-  for (const root of [cabin.group, camp.group, fence, rocks, garden, signposts]) {
+  for (const root of [cabin.group, camp.group, fence, rocks, garden, signposts, beds]) {
     root.traverse((o) => {
       const mat = Array.isArray(o.material) ? o.material[0] : o.material;
       if (o.isMesh && mat && mat.isMeshStandardMaterial) {
@@ -361,6 +366,41 @@ const game = new StardustGame({
   lowPower,
 });
 
+// ?debug=1&stage=N: start the star game N constellations in, as if they had been woven (not saved)
+if (query.has('debug') && query.has('stage')) {
+  const n = clamp(Math.floor(Number(query.get('stage')) || 0), 0, 60);
+  game.stage = n; game.cycle = Math.floor(n / WEAVE_ORDER.length); game.index = n % WEAVE_ORDER.length;
+  for (let i = 0; i < Math.min(n, WEAVE_ORDER.length); i++) game.woven.add(WEAVE_ORDER[i]);
+}
+/* ------------------------------------------------------------ keepsake stars */
+// Every constellation woven in the game leaves a star of its own in the night sky, above it,
+// for good. They show whenever it is dark, game or no game.
+const KEEP_MAX = CONSTELLATIONS.length;
+const keepGeo = new THREE.BufferGeometry();
+keepGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(KEEP_MAX * 3), 3));
+keepGeo.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(KEEP_MAX * 3), 3));
+keepGeo.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(KEEP_MAX), 1));
+keepGeo.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(KEEP_MAX), 1));
+const keepStars = new THREE.Points(keepGeo, new THREE.ShaderMaterial({
+  vertexShader: glowVertex, fragmentShader: glowFragment, uniforms: { uPixelRatio: shared.uPixelRatio },
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+}));
+keepStars.frustumCulled = false;
+keepStars.renderOrder = 2;
+scene.add(keepStars);
+function syncKeepsakes() {
+  const ks = game.keepsakes();
+  const pos = keepGeo.attributes.position, col = keepGeo.attributes.aColor, size = keepGeo.attributes.aSize;
+  ks.forEach((k, i) => {
+    pos.setXYZ(i, k.dir.x * 1500, k.dir.y * 1500, k.dir.z * 1500);
+    col.setXYZ(i, 1.0, 0.92, 0.74);
+    size.setX(i, 15);
+  });
+  keepGeo.setDrawRange(0, ks.length);
+  pos.needsUpdate = col.needsUpdate = size.needsUpdate = true;
+}
+syncKeepsakes();
+
 /* --------------------------------------------------------- camera / viewing */
 let baseFov = 50;
 const view = { yaw: 0, pitch: PITCH_DEG, fov: 50, yawT: 0, pitchT: PITCH_DEG, fovT: 50 };
@@ -382,7 +422,7 @@ const SPOTS = [
   { id: 'lie', name: 'Nằm ngắm trời', x: 1.0, z: 3.0, eye: 0.55, yaw: 4, pitch: 60, fov: 1.3 },
   { id: 'tulip', name: 'Giữa luống tulip', x: -3.6, z: -5.2, eye: 0.82, yaw: -3, pitch: 5, fov: 1.05 },
   { id: 'garden', name: 'Cổng vườn hoa', x: GARDEN_ARCH.x - 3.4, z: GARDEN.z, eye: 1.6, yaw: 90, pitch: 4, fov: 1.0 },
-  { id: 'bench', name: 'Ghế dưới anh đào', x: GARDEN.x - 2.3, z: GARDEN.z + 2.4, eye: 1.15, yaw: -55, pitch: 7, fov: 1.1 },
+  { id: 'bench', name: 'Ghế dưới anh đào', x: GARDEN_BENCH.x + Math.sin(GARDEN_BENCH.yaw) * 0.05, z: GARDEN_BENCH.z + Math.cos(GARDEN_BENCH.yaw) * 0.05, eye: 1.12, yaw: Math.atan2(Math.sin(GARDEN_BENCH.yaw), -Math.cos(GARDEN_BENCH.yaw)) / DEG, pitch: 3, fov: 1.15 },
 ];
 const camTarget = camBase.clone();
 let spotIndex = 0;
@@ -553,6 +593,7 @@ function resize() {
   finalPass.uniforms.uTexel.value.set(1 / (w * pixelRatio), 1 / (h * pixelRatio));
   game.baseFov = baseFov;
   game.layout();
+  syncKeepsakes();
 }
 addEventListener('resize', resize);
 addEventListener('orientationchange', () => setTimeout(resize, 250));
@@ -681,7 +722,11 @@ const _hemiDay = new THREE.Color(), _hemiGround = new THREE.Color(), _snowBounce
 const SOD_GREEN = new THREE.Color(0x1a2a10), SOD_SNOW = new THREE.Color().setRGB(0.62, 0.66, 0.72);
 function applySeason(w) {
   for (const group of [beds, garden]) {
-    for (const [name, u] of Object.entries(group.userData.grow)) u.uGrow.value = ease(clock.grow(name));
+    for (const [name, u] of Object.entries(group.userData.grow)) {
+      u.uGrow.value = ease(clock.grow(name));
+      const ms = group.userData.meshes && group.userData.meshes[name];
+      if (ms) for (const m of ms) m.visible = u.uGrow.value > 0.02;
+    }
   }
   garden.userData.grow.ring.uTint.value.set(0.72, 0.035, 0.075, w[3]);          // roses give way to red camellias
   const leafy = w[0] + w[1] + w[2] || 1;
@@ -720,8 +765,9 @@ const _sunWas = new THREE.Vector3(), _seasonWas = new THREE.Vector4(-1, 0, 0, 0)
 let shadowSettle = 0;
 const ease = (t) => t * t * (3 - 2 * t);
 function applyDay(dt) {
+  clock.hold = mode === 'play';             // the star game keeps its night
   clock.update(dt);
-  const d = ease(clock.day), k = ease(clock.dusk), w = clock.weights;
+  const d = clock.day, k = clock.dusk, w = clock.weights;
   uDay.value = d;
   shared.aurora.uDusk.value = k;
   shared.uSeason.value.set(w[0], w[1], w[2], w[3]);
@@ -741,7 +787,11 @@ function applyDay(dt) {
   const sun = [SUN[0] * d, SUN[1] * d * (1 - 0.35 * warm), SUN[2] * d * (1 - 0.6 * warm)];
   for (let ch = 0; ch < 3; ch++) sun[ch] = (sun[ch] + (DUSK_SUN[ch] - sun[ch]) * k) * tint(0, ch);
   shared.uSunCol.value.set(sun[0], sun[1], sun[2]);
-  shared.uSunDir.value.copy(SUN_DIR.day).lerp(SUN_DIR.dusk, k).normalize();
+  shared.uSunDir.value.set(clock.sun[0], clock.sun[1], clock.sun[2]);
+  // below about ten degrees the sun is behind the mountain wall: the valley floor loses its
+  // direct light while the sky and the peaks keep theirs
+  const reach = ease(Math.min(1, Math.max(0, (clock.sun[1] - 0.10) / 0.12)));
+  shared.light.uSunReach.value = reach;
   const fog = mix3([0, 0, 0], NIGHT_FOG, DAY_FOG, DUSK_FOG, -1);
   // winter air is paler, autumn air a little golden
   fogColor.setRGB(fog[0] * (1 + 0.10 * w[3] * d + 0.05 * w[2] * d), fog[1] * (1 + 0.08 * w[3] * d), fog[2] * (1 + 0.04 * w[3] * d - 0.08 * w[2] * d));
@@ -752,16 +802,16 @@ function applyDay(dt) {
   shared.uFogDensity.value = scene.fog.density = lerp(0.0042, 0.0012) * (1 - 0.25 * k + 0.6 * w[3] * d);
   const sunMax = Math.max(sun[0], sun[1], sun[2], 1e-4);
   sunLight.color.setRGB(sun[0] / sunMax, sun[1] / sunMax, sun[2] / sunMax);
-  sunLight.intensity = sunMax * Math.PI;
+  sunLight.intensity = sunMax * Math.PI * reach;
   bloom.threshold = lerp(0.82, 1.08);
   renderer.toneMappingExposure = lerp(1.12, 1.04) * (1 - 0.10 * w[3] * d);       // snow is bright: hold the highlights
   applySeason(w);
 
-  // The shadow map is drawn once and reused. It only goes stale when the sun moves (toward
-  // sunset) or the plantings change height (a new season); then it is redrawn every third
-  // frame until things settle.
+  // The shadow map is drawn and reused. It goes stale when the sun has moved a third of a
+  // degree or the plantings change height (a new season); then it is redrawn, at most every
+  // third frame, until things settle.
   if (Q.shadow) {
-    const moved = _sunWas.distanceToSquared(shared.uSunDir.value) > 1e-8 || !_seasonWas.equals(shared.uSeason.value);
+    const moved = _sunWas.distanceToSquared(shared.uSunDir.value) > 3e-5 || !_seasonWas.equals(shared.uSeason.value);
     if (moved) shadowSettle = 2;
     if (shadowSettle > 0 && frames % 3 === 0) {
       _sunWas.copy(shared.uSunDir.value);
@@ -785,15 +835,41 @@ function applyDay(dt) {
 }
 
 /* ---------------------------------------------------------------- campfire */
-const fire = { level: 0.5, cooldown: 0, told: false, lastAudio: -1 };
+// The fire is not a lamp that burns for ever. It burns down over a few minutes and goes out;
+// feeding it takes wood you carry (up to four sticks, picked up by walking past the woodpile
+// beside the tent), and you have to be near it. Once it is out it has to be kindled again.
+// In the star game the fire is only a source of stardust, so there it never runs out.
+const FIRE_REACH = 12, WOOD_MAX = 4, WOODPILE = { x: 7.1, z: -5.4 };
+const fire = { level: 0.5, cooldown: 0, told: false, lastAudio: -1, wood: 3, label: '' };
 const _fireDir = new THREE.Vector3();
 const _proj = new THREE.Vector3();
 const fireBtn = $('fireBtn');
 function stoke(remote) {
   if (fire.cooldown > 0 || mode === 'intro') return;
-  if (remote !== true) { party.sendEvent('stoke'); if (mode === 'view') story.mark('fire'); }
+  const own = remote !== true, out = fire.level < 0.04;
+  if (own && mode === 'view') {
+    if (Math.hypot(camBase.x - CAMP.fire.x, camBase.z - CAMP.fire.z) > FIRE_REACH) {
+      fire.cooldown = 1.2;
+      toast('Đống lửa ở xa quá. Đi lại gần rồi hãy thêm củi');
+      return;
+    }
+    if (fire.wood <= 0) {
+      fire.cooldown = 1.2;
+      toast('Hết củi trong tay. Đống củi ở ngay cạnh lều: đi ngang qua là ôm được một bó');
+      return;
+    }
+    fire.wood--;
+  }
+  if (own) {
+    party.sendEvent('stoke');
+    if (mode === 'view') {
+      story.mark('fire');
+      if (out) { story.mark('kindle'); story.note(`k:${story.log.filter((x) => x.startsWith('k:')).length + 1}`); }
+    }
+  }
   fire.cooldown = 0.35;
-  fire.level = Math.min(1, fire.level + 0.28);
+  if (out && own && mode === 'view') toast(`Thổi vài hơi vào đám than, lửa bén lại từ một nhúm vỏ cây. Còn ${fire.wood} thanh củi trong tay`);
+  fire.level = out ? 0.42 : Math.min(1, fire.level + 0.28);
   audio.init();
   audio.stoke();
   fireBtn.classList.remove('pop');
@@ -803,9 +879,9 @@ function stoke(remote) {
     _fireDir.copy(camp.firePos).sub(camera.position).normalize();
     game.releaseEmbers(_fireDir, 3);
     if (!fire.told) { fire.told = true; toast('Tàn lửa bay lên hoá thành bụi sao — hãy đón lấy'); }
-  } else if (!fire.told) {
+  } else if (!fire.told && !out) {
     fire.told = true;
-    toast('Lửa bùng lên ấm áp. Củi còn nhiều, cứ thong thả');
+    toast(`Lửa bùng lên ấm áp. Còn ${fire.wood} thanh củi trong tay; lửa sẽ tàn dần nếu không ai trông`);
   }
 }
 fireBtn.addEventListener('click', () => stoke());
@@ -846,11 +922,30 @@ function toast(text) {
 /* the day's thread: a card that suggests one small thing to do next */
 const story = new Story();
 const storyEl = $('story');
+/** the constellation worth looking for tonight: one tied to a flower already pressed, else
+    one the season's evening sky offers, else any not yet picked out */
+function starHint() {
+  for (const f of story.flowers) { const cid = starOfFlower(f); if (cid && !story.seen.has(cid)) return cid; }
+  for (const cid of SEASON_SKY[clock.seasonIndex]) if (!story.seen.has(cid)) return cid;
+  const left = CONSTELLATIONS.find((c) => !story.seen.has(c.id));
+  return left ? left.id : '';
+}
+const consName = (id) => (CONSTELLATIONS.find((c) => c.id === id) || { name: id }).name;
+const flowerName = (id) => (FLOWERS.find((f) => f.id === id) || { name: id }).name;
 function renderStory(turned) {
   const ch = story.current;
   $('storyStep').textContent = ch ? `Một ngày ở trại · ${ch.when} · ${story.count + 1}/${story.total}` : 'Một ngày ở trại · trọn vẹn';
   $('storyTitle').textContent = ch ? ch.title : 'Thung lũng là của bạn';
-  $('storyAsk').textContent = ch ? ch.ask : 'Bạn đã đi hết một ngày ở trại. Cứ ở lại bao lâu tuỳ thích; trong Sổ tay có nút để bắt đầu lại một ngày mới.';
+  let ask = ch ? ch.ask : 'Bạn đã đi hết một ngày ở trại. Cứ ở lại bao lâu tuỳ thích; trong Sổ tay có nút để bắt đầu lại một ngày mới.';
+  if (ch && (ch.id === 'star' || ch.id === 'lie' || ch.id === 'night')) {
+    const cid = starHint();
+    if (cid) {
+      const why = THREADS[cid] && story.flowers.has(THREADS[cid].flower) ? ` (bông ${flowerName(THREADS[cid].flower).toLowerCase()} trong sổ của bạn có một sợi chỉ nối tới nó)` : ' (chòm của mùa này)';
+      ask += ` Đêm nay hãy tìm chòm ${consName(cid)}${why}; la bàn sẽ chỉ hướng.`;
+    }
+  }
+  if (ch && ch.id === 'press' && story.satchel.size) ask = `Bạn đang mang ${story.satchel.size} cành hoa trong túi. Về tới lều là chúng được ép vào sổ.`;
+  $('storyAsk').textContent = ask;
   $('storyBar').style.transform = `scaleX(${(story.count / story.total).toFixed(3)})`;
   storyEl.classList.toggle('folded', story.folded);
   $('storyFold').setAttribute('aria-expanded', String(!story.folded));
@@ -864,9 +959,158 @@ story.onPage = (ch, all) => {
 $('storyFold').addEventListener('click', () => { story.folded = !story.folded; story.save(); renderStory(false); });
 renderStory(false);
 
+/* the camp diary: short ids in the save, written out here */
+function logText(id) {
+  const [k, v] = id.split(':');
+  if (k === 'w') return ['Một đêm dệt sao', `Dệt trọn chòm ${consName(v)}. Một ngôi sao mới sáng lại mãi trên trời trại, ngay phía trên chòm ấy.`];
+  if (k === 'p') return ['Sổ hoa', `Ép một cành ${flowerName(v).toLowerCase()} vào sổ, kẹp giữa hai trang giấy.`];
+  if (k === 'f') return ['Sổ hoa', `Sổ hoa đã có ${v} loài.${v === String(FLOWERS.length) ? ' Đủ cả bốn mùa của thung lũng.' : ''}`];
+  if (k === 't') return ['Sợi chỉ', `Tìm ra sợi chỉ nối ${flowerName(THREADS[v].flower).toLowerCase()} dưới đất với chòm ${consName(v)} trên trời.`];
+  if (k === 'r') return ['Nhà gỗ', v === '1' ? 'Lần đầu vào nghỉ trong nhà gỗ: một ấm trà, một trang sách.' : `Lại vào nghỉ trong nhà gỗ (lần thứ ${v}).`];
+  if (k === 'k') return ['Lửa trại', v === '1' ? 'Lửa tàn, bạn tự tay nhóm lại.' : `Nhóm lại lửa trại lần thứ ${v}.`];
+  if (k === 'd') return ['Trọn một ngày', `Đi hết một ngày ở trại (lần thứ ${v}).`];
+  if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
+  return ['', id];
+}
+/** a flower pressed and its constellation picked out (or woven): the thread between them shows */
+function checkThreads() {
+  for (const [cid, t] of Object.entries(THREADS)) {
+    if (story.flowers.has(t.flower) && (story.seen.has(cid) || game.woven.has(cid)) && story.note(`t:${cid}`)) {
+      setTimeout(() => toast(`Sợi chỉ mới: ${flowerName(t.flower)} ↔ chòm ${consName(cid)}. Đọc trong Sổ tay (J)`), 3800);
+    }
+  }
+}
+function pressAtTent() {
+  const got = story.pressAll();
+  if (!got.length) return;
+  for (const f of got) story.note(`p:${f.id}`);
+  for (const m of [4, 8, FLOWERS.length]) if (story.flowers.size >= m) story.note(`f:${m}`);
+  story.mark('press');
+  audio.node(story.flowers.size + 4);
+  toast(`Về tới lều: ép ${got.map((f) => f.name.toLowerCase()).join(', ')} vào Sổ hoa (${story.flowers.size}/${FLOWERS.length}). Mở Sổ tay (J) để đọc chuyện của chúng`);
+  checkThreads();
+  renderStory(false);
+}
+
+/* resting in the cabin: a fade, a page of the day, and the clock moves on */
+const PORCH = { x: -9.5, z: -10 };
+const rest = { on: false, ready: 0 };
+const veil = $('veil');
+function readingFor() {
+  // something from the book on the table: a tale of a flower you pressed or a sky you wove
+  const pool = [];
+  for (const id of story.flowers) { const f = FLOWERS.find((x) => x.id === id); if (f) for (const t of f.tales) pool.push([f.name, t]); }
+  for (const id of game.woven) if (LORE[id] && LORE[id].deep) pool.push([`chòm ${consName(id)}`, LORE[id].deep]);
+  if (!pool.length) return '';
+  const [who, t] = pool[Math.floor(Math.random() * pool.length)];
+  const cut = t.length > 260 ? `${t.slice(0, t.lastIndexOf(' ', 250))}…` : t;
+  return `Cuốn sổ trên bàn mở ở trang ${who}: “${cut}”`;
+}
+function restInCabin() {
+  if (rest.on || mode !== 'view') return;
+  rest.on = true;
+  setStroll(false);
+  const from = clock.hour;
+  const to = from < 6.5 ? 7.5 : from < 16.5 ? 17.6 : from < 21 ? 22.5 : 31.5;          // the next part of the day worth waking to
+  const [when, text] = to === 7.5 || to === 31.5
+    ? ['Sáng hôm sau', 'Bạn ngủ một giấc dài dưới mái cỏ. Khi mở cửa ra hiên, sương còn đọng trên cỏ và mặt trời vừa lên khỏi dãy núi.']
+    : to === 17.6
+      ? ['Chiều muộn', 'Bạn pha một ấm trà, ngồi bên cửa sổ đọc sách. Ngẩng lên đã thấy nắng ngả vàng trên các luống hoa.']
+      : ['Đêm xuống', 'Bạn ăn tối bên bếp củi. Lúc bước ra hiên, trời đã tối hẳn và những ngôi sao đầu tiên đã lên.'];
+  $('veilWhen').textContent = when;
+  $('veilText').textContent = text;
+  $('veilRead').textContent = readingFor();
+  veil.classList.remove('hidden', 'fading');
+  rest.ready = performance.now() + 2200;
+  setTimeout(() => {
+    const hours = to - from;
+    if (to > 24 && clock.auto) clock.setSeason(SEASONS[(clock.seasonIndex + 1) % SEASONS.length].id, true);
+    clock.quiet = true;
+    clock.setHour(to % 24);
+    clock.quiet = false;
+    syncClockUi();
+    fire.level = Math.max(0, fire.level - hours * 0.4);          // nobody tended the fire meanwhile
+    walker.on = true;
+    walker.x = PORCH.x + 1.2; walker.z = PORCH.z + 1.0;
+    view.yawT = view.yaw = 120; view.pitchT = view.pitch = 4;
+    camTarget.set(walker.x, terrainH(walker.x, walker.z) + walker.eye, walker.z);
+    camBase.copy(camTarget);
+  }, 900);
+  story.mark('rest');
+  story.note(`r:${story.log.filter((x) => x.startsWith('r:')).length + 1}`);
+}
+function leaveCabin() {
+  if (!rest.on || performance.now() < rest.ready) return;
+  veil.classList.add('fading');
+  setTimeout(() => { veil.classList.add('hidden'); rest.on = false; }, 1200);
+}
+veil.addEventListener('click', leaveCabin);
+/* the book on the garden bench: sit down and read what the valley has given you so far */
+const book = { open: false, pages: [], i: 0 };
+const bookEl = $('book');
+function bookPages() {
+  const pages = [];
+  const si = clock.seasonIndex;
+  const inSeason = FLOWERS.filter((f) => f.season.toLowerCase().includes(SEASONS[si].name.replace('Mùa ', '').toLowerCase()));
+  pages.push(['Lời mở đầu', `Cuốn sổ của khu vườn. Mỗi loài hoa bạn ép, mỗi chòm sao bạn nhận ra hay tự tay dệt, đều thêm trang vào đây. ${SEASONS[si].name} này trong vườn có ${inSeason.map((f) => f.name.toLowerCase()).join(', ')}.`]);
+  for (const f of FLOWERS) {
+    if (story.flowers.has(f.id)) f.tales.forEach((t, k) => pages.push([`${f.name} · ${k + 1}/${f.tales.length}`, t]));
+    else if (inSeason.includes(f)) pages.push([`${f.name} (chưa ép)`, `${f.note} Hái một cành rồi mang về lều ép vào sổ, chuyện của nó sẽ hiện ở trang này.`]);
+  }
+  for (const c of CONSTELLATIONS) {
+    const L = LORE[c.id];
+    if (story.seen.has(c.id) || game.woven.has(c.id)) for (const t of L.tale || []) pages.push([`Chòm ${c.name}`, t]);
+    if (THREADS[c.id] && story.flowers.has(THREADS[c.id].flower) && (story.seen.has(c.id) || game.woven.has(c.id))) pages.push([`Sợi chỉ: ${flowerName(THREADS[c.id].flower)} ↔ ${c.name}`, THREADS[c.id].text]);
+    if (game.woven.has(c.id)) pages.push([`Chòm ${c.name} · điều chỉ người dệt mới biết`, L.deep]);
+  }
+  if (pages.length < 3) pages.push(['Trang trắng', 'Những trang sau còn trống. Đi một vòng thung lũng, ép vài loài hoa, đêm xuống tìm vài chòm sao: cuốn sổ sẽ dày dần lên.']);
+  return pages;
+}
+function renderBook() {
+  const [title, text] = book.pages[book.i];
+  $('bookTitle').textContent = title;
+  $('bookText').textContent = text;
+  $('bookPage').textContent = `${book.i + 1} / ${book.pages.length}`;
+}
+function openBook(open) {
+  if (open === book.open) return;
+  book.open = open;
+  bookEl.classList.toggle('hidden', !open);
+  if (!open) return;
+  setStroll(false);
+  goSpot(SPOTS.findIndex((sp) => sp.id === 'bench'));
+  book.pages = bookPages();
+  book.i = Math.min(book.i, book.pages.length - 1);
+  renderBook();
+  story.mark('bench');
+  story.note(`b:${clock.seasonIndex}`);
+}
+$('bookPrev').addEventListener('click', () => { book.i = (book.i - 1 + book.pages.length) % book.pages.length; renderBook(); });
+$('bookNext').addEventListener('click', () => { book.i = (book.i + 1) % book.pages.length; renderBook(); });
+$('bookClose').addEventListener('click', () => openBook(false));
+const actBtn = $('actBtn');
+let actKind = '';
+function updateActions() {
+  // what you can do right where you stand
+  let kind = '';
+  if (mode === 'view' && started && !rest.on) {
+    const x = camBase.x, z = camBase.z;
+    if (Math.hypot(x - PORCH.x, z - PORCH.z) < 3.6) kind = 'rest';
+    else if (nearBench(x, z, 2.2) && !book.open) kind = 'read';
+  }
+  if (book.open && (walker.on || mode !== 'view')) openBook(false);           // standing up closes the book
+  if (kind !== actKind) {
+    actKind = kind;
+    actBtn.classList.toggle('hidden', !kind);
+    if (kind === 'rest') actBtn.textContent = 'Vào nhà nghỉ · E';
+    if (kind === 'read') actBtn.textContent = 'Ngồi đọc sách · E';
+  }
+}
+actBtn.addEventListener('click', () => { if (actKind === 'rest') restInCabin(); else if (actKind === 'read') openBook(true); });
+
 // Pages are turned by what you actually do. Checked a few times a second, never per frame.
 const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map(), flower: '', flowerT: 0 };
-const FLOWER_TINT = { tulip: '#e8433a', rose: '#e0527a', sunflower: '#f2b21c', lavender: '#8e6fd8', daisy: '#f4f1e4', cherry: '#f6bfd0', camellia: '#c81e34' };
+const FLOWER_TINT = { daffodil: '#f5c518', poppy: '#e2321c', cosmos: '#e86aa6', mum: '#f0a818', snowdrop: '#eef2ec', muscari: '#3a46c8', heather: '#d84c8e', tulip: '#e8433a', rose: '#e0527a', sunflower: '#f2b21c', lavender: '#8e6fd8', daisy: '#f4f1e4', cherry: '#f6bfd0', camellia: '#c81e34' };
 function flowerHere(x, z) {
   // what is in bloom where you stand depends on the season (only a settled season counts)
   const si = clock.seasonIndex;
@@ -875,9 +1119,11 @@ function flowerHere(x, z) {
   if (si === 0) for (const [tx, tz] of GARDEN_TREES) if (Math.hypot(x - tx, z - tz) < 3.4 && view.pitch > 12) return 'cherry';
   if (si === 1 && gx > 4 && gx < 19 && gz > -16 && gz < -4) return 'sunflower';
   if (si === 1 && gx > 2.5 && gx < 17.5 && gz > 4.6 && gz < 15.6) return 'lavender';
+  const walk = walkFlowerAt(si, x, z);
+  if (walk) return walk;
   const r = Math.hypot(gx, gz);
   if (r > 3.2 && r < 7.2) return si === 3 ? 'camellia' : 'rose';
-  if (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55 && !(x > 10.5 && z > -7)) return ['tulip', 'lavender', 'daisy', ''][si];
+  if (z < 3 && z > -52 && Math.abs(x) < 9 + (8 - z) * 1.55 && !(x > 10.5 && z > -7)) return bedFlowerAt(si, x, z);
   return '';
 }
 const _cen = new THREE.Vector3();
@@ -900,9 +1146,19 @@ function updateStory(step) {
     storyAcc.flowerT = kind && kind === storyAcc.flower ? storyAcc.flowerT + step : 0;
     storyAcc.flower = kind;
     if (kind && storyAcc.flowerT > 2.0) {
-      const f = story.press(kind);
-      if (f) { audio.node(story.flowers.size + 4); toast(`Sổ hoa: ${f.name} (${story.flowers.size}/${FLOWERS.length}) — đã ép một bông vào Sổ tay`); }
+      const f = story.pick(kind);
+      if (f) {
+        audio.node(story.satchel.size + 4);
+        toast(`Hái một cành ${f.name.toLowerCase()} bỏ vào túi (${story.satchel.size} cành). Mang về lều để ép vào Sổ hoa`);
+        renderStory(false);
+      }
     }
+  }
+  // the tent: what you carry is pressed there; the woodpile beside it fills your arms
+  if (story.satchel.size && Math.hypot(x - CAMP.tent.x, z - CAMP.tent.z) < 3.9) pressAtTent();
+  if (fire.wood < WOOD_MAX && Math.hypot(x - WOODPILE.x, z - WOODPILE.z) < 2.4) {
+    fire.wood = WOOD_MAX;
+    toast(`Ôm một bó củi (${WOOD_MAX} thanh). Space hoặc bấm vào lửa để thêm củi`);
   }
   storyAcc.bench = Math.hypot(x - (GARDEN.x - 1.9), z - (GARDEN.z + 2.0)) < 2.6 && walker.speed < 0.2 ? storyAcc.bench + step : 0;
   if (storyAcc.bench > 2.5) story.mark('bench');
@@ -922,6 +1178,8 @@ function updateStory(step) {
       if (t > 2.2 && story.spot(c.def.id)) {
         audio.node(story.seen.size + 2);
         if (!story.mark('star')) toast(`Bạn vừa nhận ra chòm ${c.def.name} (${story.seen.size}/${game.cons.length}). Chuyện của nó có trong Sổ tay.`);
+        checkThreads();
+        renderStory(false);
       }
     }
   }
@@ -962,13 +1220,19 @@ function renderHud(s) {
   [...ui.conDots.children].forEach((d, i) => d.classList.toggle('on', i < s.lit));
   if (s.done) ui.hint.textContent = 'Chòm sao đã hoàn thành. Ngả lưng ngắm cực quang đổi sắc một lát…';
   else if (s.charge === 0) ui.hint.textContent = 'Lướt đom đóm qua bụi sao đang trôi, hoặc thêm củi để tàn lửa bay lên thành bụi sao.';
-  else if (s.lit === 0) ui.hint.textContent = `Chạm vào một ngôi sao của ${s.name} để bắt đầu dệt.`;
-  else ui.hint.textContent = `Đi tiếp sang ngôi sao ánh vàng liền kề để giữ mạch dệt hoàn hảo (${s.lit}/${s.total}).`;
+  else if (s.lit === 0) ui.hint.textContent = s.stage >= 2 ? `Chạm vào một ngôi sao của ${s.name}. Không còn nét mờ chỉ hình: hãy nhớ dáng chòm sao (Sổ tay có cách tìm).` : `Chạm vào một ngôi sao của ${s.name} để bắt đầu dệt.`;
+  else ui.hint.textContent = s.beckon ? `Đi tiếp sang ngôi sao ánh vàng liền kề để giữ mạch dệt hoàn hảo (${s.lit}/${s.total}).` : `Đi tiếp sang một ngôi sao nối với sao đã sáng: không còn ánh vàng dẫn đường (${s.lit}/${s.total}).`;
 }
 game.onChange = renderHud;
 game.onToast = toast;
-game.onComplete = () => {
+game.onComplete = (c, first) => {
   meteor.wait = Math.min(meteor.wait, 1.2);
+  story.mark('weave');
+  if (story.note(`w:${c.def.id}`)) {
+    syncKeepsakes();
+    setTimeout(() => toast(`Một ngôi sao mới sẽ sáng mãi trên trời trại, ngay phía trên chòm ${c.def.name}. Sổ tay vừa mở thêm một chuyện chỉ người dệt mới biết`), 4200);
+  }
+  checkThreads();
   // every finished constellation turns the sky a new colour
   mood.index = (mood.index + 1) % 4;
   mood.timer = 0;
@@ -982,7 +1246,9 @@ game.onWish = () => {
 function updateStatus() {
   let html = '';
   if (game.storm > 0) html += `Bão cực quang ${Math.ceil(game.storm)}s · điểm ×2 `;
-  if (game.freeze > 0) html += `<span class="ice">Giữ chuỗi ${Math.ceil(game.freeze)}s</span>`;
+  if (game.freeze > 0) html += `<span class="ice">Giữ chuỗi ${Math.ceil(game.freeze)}s</span> `;
+  if (game.dawn > 0 && game.current.lit.some(Boolean) && !game.current.done) html += `Rạng đông sau ${Math.ceil(game.dawn)}s `;
+  if (Number.isFinite(game.rules.slips) && game.slips > 0 && !game.current.done) html += `· nét lạc ${game.slips}/${game.rules.slips}`;
   if (html !== lastStatus) { lastStatus = html; ui.status.innerHTML = html; }
 }
 
@@ -1108,24 +1374,35 @@ $('qTime').addEventListener('click', cyclePhase);
 });
 
 /* time of day and season */
+const timeSlider = $('timeSlider');
+let clockShown = '';
 function syncClockUi() {
-  const ph = clock.phase.id;
-  for (const [id, btn] of [['day', 'timeDay'], ['dusk', 'timeDusk'], ['night', 'timeNight']]) $(btn).setAttribute('aria-pressed', String(ph === id));
-  document.body.classList.toggle('day', ph !== 'night');
-  $('qTime').textContent = `Sang ${PHASES[(clock.phaseIndex + 1) % PHASES.length].name.toLowerCase()}`;
+  document.body.classList.toggle('day', clock.phase.id !== 'night');
   [...$('seasonChips').children].forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.season === clock.season.id)));
   $('autoDay').setAttribute('aria-pressed', String(clock.auto));
+  $('autoDay').textContent = clock.auto ? 'Thời gian đang trôi' : 'Thời gian đứng yên';
+  clockShown = '';
+  syncClockFace();
 }
-clock.onPhase = (ph, byItself) => { syncClockUi(); if (started && !clock.quiet) toast(byItself ? `${ph.name} — ${ph.line}` : ph.line); };
+/** the clock face in the quick bar and the slider in the dock; called every frame, writes only when the minute changes */
+function syncClockFace() {
+  const text = `${clockText(clock.hour)} · ${clock.part.name}`;
+  if (text === clockShown) return;
+  clockShown = text;
+  $('qTime').textContent = text;
+  $('timeLabel').textContent = `${text} · ${clock.season.name}`;
+  if (document.activeElement !== timeSlider) timeSlider.value = clock.hour.toFixed(2);
+}
+clock.onPart = (part, byItself) => { syncClockUi(); if (started && !clock.quiet && clock.target === null) toast(`${part.name} — ${part.line}`); };
 clock.onSeason = (se) => {
   syncClockUi();
   store.set('settings.season', se.id);
   if (started && !clock.quiet) toast(`${se.name} — ${se.line}`);
 };
-function setPhase(id, quiet) { clock.quiet = !!quiet; clock.setPhase(id); clock.quiet = false; }
+function setPhase(id) { clock.setPhase(id); }
 /** kept for the places that only know day from night */
-function setDay(on, quiet) { setPhase(on ? 'day' : 'night', quiet); }
-function cyclePhase() { clock.nextPhase(false); }
+function setDay(on) { setPhase(on ? 'day' : 'night'); }
+function cyclePhase() { clock.nextPhase(); toast(`Tua tới ${PHASES.find((p) => p.hour === clock.target).name.toLowerCase()}`); }
 for (const se of SEASONS) {
   const b = document.createElement('button');
   b.type = 'button';
@@ -1136,15 +1413,12 @@ for (const se of SEASONS) {
   b.addEventListener('click', () => clock.setSeason(se.id));
   $('seasonChips').appendChild(b);
 }
-$('timeDay').addEventListener('click', () => setPhase('day'));
-$('timeDusk').addEventListener('click', () => setPhase('dusk'));
-$('timeNight').addEventListener('click', () => setPhase('night'));
+timeSlider.addEventListener('input', () => { clock.setHour(parseFloat(timeSlider.value)); syncClockFace(); });
 $('autoDay').addEventListener('click', () => {
   clock.auto = !clock.auto;
-  clock.elapsed = 0;
-  store.set('settings.autoDay', clock.auto);
+  store.set('settings.flow', clock.auto);
   syncClockUi();
-  toast(clock.auto ? 'Ngày tự trôi: sáng, hoàng hôn, đêm nối nhau; mỗi sớm mai là một mùa mới' : 'Thời gian đứng yên ở lúc bạn chọn');
+  toast(clock.auto ? 'Thời gian trôi: một ngày đêm dài mười sáu phút, mỗi bình minh là một mùa mới' : 'Thời gian đứng yên ở lúc bạn chọn');
 });
 syncClockUi();
 
@@ -1420,12 +1694,22 @@ function updateCompass() {
   }
   if (trek.dist - trek.saveAt > 60) { trek.saveAt = trek.dist; saveTrek(); }
   let text = 'Bạn đã tới mọi điểm trên bản đồ';
-  if (best) {
+  // by night the guide points at the sky instead: the constellation worth finding tonight
+  const cid = uDay.value < 0.15 && mode === 'view' ? starHint() : '';
+  if (cid) {
+    const c = game.byId(cid);
+    _cen.set(0, 0, 0);
+    for (const d of c.dirs) _cen.add(d);
+    _cen.normalize();
+    const bearing = Math.atan2(_cen.x, -_cen.z) / DEG;
+    guideArrow.style.transform = `rotate(${wrapYaw(bearing - heading).toFixed(0)}deg)`;
+    text = `★ Đêm nay: chòm ${c.def.name} · cao ${Math.round(Math.asin(_cen.y) / DEG)}°`;
+  } else if (best) {
     const bearing = Math.atan2(best.x - camBase.x, -(best.z - camBase.z)) / DEG;
     guideArrow.style.transform = `rotate(${wrapYaw(bearing - heading).toFixed(0)}deg)`;
     text = `${best.name} · ${Math.round(bd)} m`;
   }
-  guideArrow.style.visibility = best ? 'visible' : 'hidden';
+  guideArrow.style.visibility = best || cid ? 'visible' : 'hidden';
   if (text !== lastGuide) { lastGuide = text; guideText.textContent = text; }
 }
 
@@ -1494,7 +1778,21 @@ function openJournal(open, focusId) {
     }
     $('storySum').textContent = story.finished
       ? 'Bạn đã đi trọn một ngày ở trại. Những dòng dưới đây là những gì còn lại trong sổ.'
-      : `Mười lăm việc nhỏ từ sáng tới đêm, làm theo thứ tự nào cũng được, bỏ qua cũng không sao. Đã xong ${story.count}/${story.total}.`;
+      : `${story.total} việc nhỏ từ sáng tới đêm, làm theo thứ tự nào cũng được, bỏ qua cũng không sao. Đã xong ${story.count}/${story.total}.`;
+    // the camp diary, newest first
+    const cl = $('campLog');
+    cl.innerHTML = '';
+    $('campSum').textContent = story.log.length
+      ? 'Những gì đã xảy ra ở trại, mới nhất ở trên.'
+      : 'Còn trống. Nhóm lửa, ép hoa, nghỉ trong nhà gỗ, dệt một chòm sao: mỗi việc sẽ để lại một dòng ở đây.';
+    for (const id of [...story.log].reverse()) {
+      const [head, body] = logText(id);
+      const li = document.createElement('li');
+      const sm = document.createElement('small');
+      sm.textContent = head;
+      li.append(sm, body);
+      cl.appendChild(li);
+    }
     const sl = $('storyList');
     sl.innerHTML = '';
     const nextCh = story.current;
@@ -1523,7 +1821,7 @@ function openJournal(open, focusId) {
       li.appendChild(again);
       sl.appendChild(li);
     }
-    $('flowerSum').textContent = `Mỗi mùa có hoa của nó. Khi còn nắng, đứng yên giữa một loài đang nở (hoặc để “Dạo vườn” đưa bạn tới) là loài đó được ép vào sổ. Đổi mùa trong bảng Tuỳ chỉnh. Đã có ${story.flowers.size}/${FLOWERS.length} loài.`;
+    $('flowerSum').textContent = `Mỗi mùa có hoa của nó. Khi còn nắng, đứng yên giữa một loài đang nở (hoặc để “Dạo vườn” đưa bạn tới) là hái được một cành; mang về lều thì cành ấy được ép vào sổ. Đổi mùa trong bảng Tuỳ chỉnh. Đã ép ${story.flowers.size}/${FLOWERS.length} loài${story.satchel.size ? `, ${story.satchel.size} cành còn trong túi` : ''}.`;
     const fl = $('flowerList');
     fl.innerHTML = '';
     for (const f of FLOWERS) {
@@ -1536,11 +1834,31 @@ function openJournal(open, focusId) {
       lt.textContent = `${f.latin} · ${f.season}`;
       nm.appendChild(lt);
       const nt = document.createElement('span');
-      nt.textContent = found ? f.note : `Chưa gặp. ${f.where}.`;
+      nt.textContent = found ? f.note : story.satchel.has(f.id) ? 'Đang nằm trong túi của bạn. Về lều để ép nó vào sổ, chuyện của nó sẽ hiện ở đây.' : `Chưa gặp. ${f.where}.`;
       li.append(document.createElement('i'), nm, nt);
+      // the stories are the reward for having met the flower
+      if (found) {
+        const det = document.createElement('details');
+        det.className = 'tales';
+        const sum = document.createElement('summary');
+        sum.textContent = 'Chuyện của loài hoa này';
+        det.appendChild(sum);
+        for (const text of f.tales) { const para = document.createElement('p'); para.textContent = text; det.appendChild(para); }
+        const cid = starOfFlower(f.id);
+        if (cid) {
+          const para = document.createElement('p');
+          para.className = 'thread';
+          para.textContent = story.seen.has(cid) || game.woven.has(cid)
+            ? `Sợi chỉ tới chòm ${consName(cid)}: ${THREADS[cid].text}`
+            : `Có một sợi chỉ nối loài hoa này với một chòm sao. Đêm nào trời quang, hãy tìm chòm ${consName(cid)} (la bàn sẽ chỉ hướng), sợi chỉ sẽ hiện ra ở đây.`;
+          det.appendChild(para);
+        }
+        li.appendChild(det);
+      }
       fl.appendChild(li);
     }
     const n = game.woven.size;
+    $('trekSum').textContent += n ? ` Đã dệt ${n} chòm sao; mỗi chòm để lại một ngôi sao riêng trên trời trại.` : '';
     $('journalSum').textContent =
       'Bảy chòm sao của bầu trời đêm nay: chúng từ đâu mà có tên, ngôi sao nào đáng nhìn, và tìm chúng bằng cách nào. Bấm vào từng chòm để mở. '
       + (n > 0 ? `Bạn đã tự tay dệt ${n}/${CONSTELLATIONS.length} chòm (đánh dấu ✦).` : '');
@@ -1591,6 +1909,14 @@ function openJournal(open, focusId) {
       };
       section('Nguồn gốc và truyền thuyết', L.origin);
       section('Những ngôi sao đáng chú ý', L.stars);
+      if (L.tale) section('Chuyện thật dưới chòm sao này', L.tale);
+      if (THREADS[c.id]) {
+        const fl = THREADS[c.id].flower;
+        section('Sợi chỉ dưới mặt đất', [story.flowers.has(fl)
+          ? THREADS[c.id].text
+          : `Chòm sao này có một sợi chỉ nối với một loài hoa trong thung lũng. Ép được loài ấy vào Sổ hoa thì sợi chỉ sẽ hiện ra. (Gợi ý: ${FLOWERS.find((x) => x.id === fl).season.toLowerCase()}.)`]);
+      }
+      section('Điều chỉ người dệt mới biết', [woven ? L.deep : 'Dệt trọn chòm này trong “Trò dệt sao” để mở thêm một chuyện.']);
       section('Cách tìm trên trời', [L.find]);
       li.appendChild(det);
       list.appendChild(li);
@@ -1651,7 +1977,9 @@ addEventListener('keydown', (e) => {
   }
   if (typing && k !== 'escape') return;
   if (k === 'escape') {
-    if (!partyBox.classList.contains('hidden')) openParty(false);
+    if (rest.on) leaveCabin();
+    else if (book.open) openBook(false);
+    else if (!partyBox.classList.contains('hidden')) openParty(false);
     else if (!journal.classList.contains('hidden')) openJournal(false);
     else if (zen) setZen(false);
   } else if (k === 'm') setMode(mode === 'play' ? 'view' : 'play');
@@ -1662,6 +1990,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'g' && party.active) $('partyWave').click();
   else if (k === 'b') $('dockToggle').click();
   else if (k === 'n') cyclePhase();
+  else if (k === 'e') { if (rest.on) leaveCabin(); else if (book.open) openBook(false); else if (actKind === 'rest') restInCabin(); else if (actKind === 'read') openBook(true); }
   else if (k === 'j') openJournal(journal.classList.contains('hidden'));
   else if (k === 't' && mode === 'view') setTour(!tour.on);
   else if (k === 'v' && mode === 'view') setStroll(!stroll.on);
@@ -1699,7 +2028,8 @@ function savePhoto() {
 // ?debug=1 hands the page's state to the developer tools (tools/check.mjs reads it).
 if (query.has('debug')) {
   window.__av = {
-    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rocks: ROCK_SPOTS,
+    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, rocks: ROCK_SPOTS,
+    restInCabin, leaveCabin, openBook, book,
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -1798,6 +2128,7 @@ function frame() {
   camera.updateMatrixWorld();
   sky.position.copy(camera.position);
   starPoints.position.copy(camera.position);
+  keepStars.position.copy(camera.position);
 
   const dayAmt = applyDay(dt);
 
@@ -1813,7 +2144,13 @@ function frame() {
   starPoints.quaternion.copy(_q);
   _m4.makeRotationFromQuaternion(_q.invert());
   skyMat.uniforms.uSkyRot.value.setFromMatrix4(_m4);
-  uStarGain.value = mood.stars * (1 - dayAmt);
+  uStarGain.value = mood.stars * (1 - dayAmt) * (1 - dayAmt);
+  {
+    const al = keepGeo.attributes.aAlpha;
+    for (let i = 0; i < keepGeo.drawRange.count && i < KEEP_MAX; i++) al.setX(i, uStarGain.value * (0.82 + 0.18 * Math.sin(time * 1.3 + i * 2.1)));
+    al.needsUpdate = true;
+  }
+  syncClockFace();
 
   /* ---- game ---- */
   if (mode === 'play') {
@@ -1847,7 +2184,14 @@ function frame() {
 
   /* ---- campfire ---- */
   fire.cooldown -= dt;
-  fire.level = Math.max(0.3, fire.level - dt * 0.0065);
+  // about three minutes from a good blaze to cold ash (the star game keeps its embers)
+  fire.level = Math.max(mode === 'play' ? 0.3 : 0, fire.level - dt * 0.0034);
+  {
+    const f = shared.uFire.value;
+    camp.flame.visible = f > 0.03;
+    camp.flame.scale.setScalar(Math.min(1, f / 0.22));
+    camp.embers.visible = f > 0.06;
+  }
   const flicker = 0.84 + 0.10 * Math.sin(time * 11.3) + 0.06 * Math.sin(time * 23.7 + 1.0) + 0.05 * Math.sin(time * 5.1 + 2.0);
   shared.uFire.value += (fire.level - shared.uFire.value) * (1 - Math.exp(-dt * 3));
   shared.uFireLight.value.w = shared.uFire.value * flicker;
@@ -1880,6 +2224,7 @@ function frame() {
   }
   updateLabels();
   updateCompass();
+  if (frames % 6 === 0) updateActions();
   if (frames % 12 === 0) updateStory(Math.min(0.6, (time - storyClock)));
   if (frames % 12 === 0) storyClock = time;
   updateParty(dt);
@@ -1901,6 +2246,8 @@ function frame() {
     _proj.set(camp.firePos.x, camp.firePos.y + 1.0, camp.firePos.z).project(camera);
     const on = _proj.z < 1 && Math.abs(_proj.x) < 0.96 && _proj.y > -0.9 && _proj.y < 0.9 && journal.classList.contains('hidden');
     fireBtn.classList.toggle('hidden', !on);
+    const label = mode !== 'view' ? '+ củi' : fire.level < 0.04 ? (fire.wood ? 'Nhóm lửa' : 'Lửa đã tắt · cần củi') : fire.wood ? `+ củi · còn ${fire.wood}` : '+ củi · hết củi';
+    if (label !== fire.label) { fire.label = label; fireBtn.textContent = label; }
     if (on) {
       const x = (_proj.x * 0.5 + 0.5) * innerWidth, y = (-_proj.y * 0.5 + 0.5) * innerHeight;
       fireBtn.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;

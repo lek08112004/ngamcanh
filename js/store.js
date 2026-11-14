@@ -32,10 +32,12 @@ const num = (def, min = 0, max = 1e9) => ['num', def, [min, max]];
 const bool = (def) => ['bool', def];
 const list = (max = 64) => ['list', [], max];
 const SCHEMA = {
-  settings: { quality: str('auto', 8), season: str('spring', 8), autoDay: bool(false), name: str('', 16) },
+  settings: { quality: str('auto', 8), season: str('spring', 8), flow: bool(true), name: str('', 16) },
   trek: { dist: num(0), found: list(32) },
-  story: { done: list(40), seen: list(16), flowers: list(16), folded: bool(false) },
-  game: { best: num(0), wishes: num(0), woven: list(16) },
+  // satchel: flowers picked but not yet pressed at the tent; log: the camp diary (short ids, newest last)
+  story: { done: list(40), seen: list(16), flowers: list(24), satchel: list(24), log: list(64), folded: bool(false) },
+  // stage: how far through the constellations the weaving has come (sets the difficulty)
+  game: { best: num(0), wishes: num(0), woven: list(16), stage: num(0, 0, 999) },
 };
 
 function cleanValue(rule, v) {

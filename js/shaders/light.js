@@ -1,6 +1,6 @@
 // Sunlight visibility shared by the ground, the grass and the flowers:
 //  - sunShadow: the static shadow map cast by the cabin, tent, fence, trees…
-//    (rendered once, because the morning sun does not move)
+//    (redrawn only when the sun has moved a little or a season changes the plantings)
 //  - cloudShade: slow cloud shadows drifting across the valley
 // Works in vertex and fragment shaders. Expects `uniform float uTime` from the includer.
 export const lightGLSL = /* glsl */ `
@@ -8,6 +8,7 @@ uniform sampler2D uShadowMap;
 uniform mat4 uShadowMatrix;
 uniform float uShadowOn;
 uniform float uShadowTexel;
+uniform float uSunReach;     // 0 once the sun has gone behind the ridge: the valley floor is in its shade, the peaks are not
 float lhash(vec2 p){
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -28,13 +29,14 @@ vec3 shadowCoord(vec3 w){
   vec4 sc = uShadowMatrix * vec4(w, 1.0);
   return sc.xyz / sc.w;
 }
-float sunShadow(vec3 w){
+float sunShadowMap(vec3 w){
   if (uShadowOn < 0.5) return 1.0;
   vec3 p = shadowCoord(w);
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
   return shadowTap(p.xy, p.z);
 }
-float sunShadowSoft(vec3 w){
+float sunShadow(vec3 w){ return sunShadowMap(w) * uSunReach; }
+float sunShadowSoftMap(vec3 w){
   if (uShadowOn < 0.5) return 1.0;
   vec3 p = shadowCoord(w);
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
@@ -47,6 +49,7 @@ float sunShadowSoft(vec3 w){
       + shadowTap(p.xy + vec2(t, -t) * 1.4, p.z) + shadowTap(p.xy + vec2(-t, -t) * 1.4, p.z)) * 0.75;
   return s / 9.0;
 }
+float sunShadowSoft(vec3 w){ return sunShadowSoftMap(w) * uSunReach; }
 // 1 inside the area the shadow map covers, 0 outside
 float shadowCover(vec3 w){
   if (uShadowOn < 0.5) return 0.0;

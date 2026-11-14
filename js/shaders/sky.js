@@ -118,7 +118,9 @@ void main(){
   }
   vec3 col = vec3(0.0);
   if (uDay < 0.995) col = nightSky(d);
-  if (uDay > 0.005) col = mix(col, daySky(d), uDay);
+  // daylight drowns the stars and the aurora long before the sky is fully bright
+  float lit = 1.0 - (1.0 - uDay) * (1.0 - uDay) * (1.0 - uDay);
+  if (uDay > 0.005) col = mix(col, daySky(d) * mix(0.45, 1.0, uDay), lit);
   // the blush of dawn and dusk while one turns into the other
   float sd = max(dot(normalize(d.xz + vec2(1e-5)), normalize(uSunDir.xz)), 0.0);
   col += vec3(1.0, 0.42, 0.22) * exp(-max(d.y, 0.0) * 5.0) * (0.35 + 0.65 * sd) * uDay * (1.0 - uDay) * 2.2;

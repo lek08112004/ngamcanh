@@ -76,21 +76,21 @@ Góc trên bên trái có một tấm thẻ nhỏ gợi ý việc tiếp theo. M
 - Mọi trang đã lật nằm trong Sổ tay (`J`), kèm một dòng ghi nhớ. Ở đó cũng có nút bắt đầu lại một ngày mới.
 - Thẻ thu gọn được bằng mũi tên ở góc thẻ. Tiến trình lưu trong `localStorage`.
 
-### Bốn mùa và ba thời điểm trong ngày
+### Bốn mùa và một ngày trôi liền mạch
 
-Trong bảng Tuỳ chỉnh có hàng **Mùa** và hàng **Thời điểm** (Buổi sáng · Hoàng hôn · Ban đêm; phím `N` chuyển lần lượt).
+Thời gian tự trôi từ lúc bạn mở trang, bắt đầu ở đúng giờ thật của bạn: bình minh, sáng, trưa, chiều, hoàng hôn rồi đêm, một vòng mười sáu phút, và mỗi bình minh là một mùa mới. Đồng hồ ở thanh nhanh cho biết giờ trong thung lũng; bấm vào nó (hoặc phím `N`) để tua tới buổi sáng, hoàng hôn hay ban đêm kế tiếp. Trong bảng Tuỳ chỉnh có thanh trượt giờ, nút cho thời gian đứng yên, và hàng **Mùa**.
 
 | Mùa | Hoa chủ đạo | Thung lũng |
 | --- | --- | --- |
-| Xuân | **Tulip** thành luống trước trại | Anh đào nở, cỏ non |
-| Hạ | **Hướng dương** cả ruộng trong vườn, oải hương tím trước trại | Lá anh đào xanh, cỏ sẫm |
-| Thu | **Cúc hoạ mi** trắng trước trại | Lá anh đào đỏ cam, cỏ và rừng ngả vàng |
-| Đông | **Hoa trà** đỏ giữa vườn | Tuyết phủ, tuyết rơi, cành trơ trụi |
+| Xuân | **Tulip** và **thuỷ tiên vàng** thành luống trước trại | Anh đào nở, cỏ non |
+| Hạ | **Hướng dương** cả ruộng trong vườn; oải hương tím xen **anh túc đỏ** trước trại | Lá anh đào xanh, cỏ sẫm |
+| Thu | **Cúc hoạ mi**, **hoa cánh bướm** và **cúc vàng** trước trại | Lá anh đào đỏ cam, cỏ và rừng ngả vàng |
+| Đông | **Hoa trà** đỏ giữa vườn, **hoa giọt tuyết** nhú qua tuyết trước trại | Tuyết phủ, tuyết rơi, cành trơ trụi |
 
 - Hoa không rải lung tung: các luống trước trại được trồng lại theo mùa trên cùng những hàng thẳng; trong vườn là vòng hồng quanh cây anh đào, hai dải hồng bên cổng, khối oải hương, ruộng hướng dương, và cúc viền theo lối đi.
-- **Hoàng hôn:** mặt trời xuống sau dãy núi tây bắc, trời cam tím, bóng đổ dài, cửa sổ nhà gỗ bắt đầu sáng.
-- **Ngày tự trôi:** bật lên thì sáng, hoàng hôn, đêm nối nhau (một ngày khoảng mười phút) và mỗi sớm mai là một mùa mới.
-- Mùa đang chọn được ghi nhớ. Thử nhanh bằng địa chỉ: `?season=autumn&time=dusk`.
+- **Hoàng hôn:** mặt trời xuống sau dãy núi tây bắc, trời cam tím, bóng đổ dài; khi mặt trời khuất sau núi, thung lũng chìm vào bóng râm còn đỉnh núi vẫn bắt nắng.
+- **Sổ hoa:** mười hai loài. Gặp loài nào, Sổ tay mở thêm chuyện của loài đó; mỗi chòm sao cũng có chuyện riêng.
+- Mùa đang chọn được ghi nhớ. Thử nhanh bằng địa chỉ: `?season=autumn&time=dusk` hoặc `?hour=17.5` (khi đó đồng hồ đứng yên).
 
 ### Dạo vườn và Sổ hoa
 
@@ -144,7 +144,7 @@ js/world.js             Địa hình, núi và bản đồ ánh sáng nướng s
 js/layout.js            Toạ độ các công trình (nhà, trại, vườn), dùng chung cho JS và shader
 js/flora.js             Luống tulip và vườn bách hoa: hồng, oải hương, hướng dương, cúc, cổng hoa, anh đào
 js/story.js             Mười lăm trang của “Một ngày ở trại”, Sổ hoa
-js/seasons.js           Lịch và đồng hồ: bốn mùa, ba thời điểm, hoa nào mọc mùa nào
+js/seasons.js           Lịch và đồng hồ: bốn mùa, giờ trong ngày, hoa nào mọc mùa nào
 js/store.js             Lưu trữ: một tài liệu có phiên bản trong trình duyệt, sao lưu và khôi phục
 js/net.js               Đi cùng bạn: phòng ngang hàng qua WebRTC (PeerJS), chỉ chạy khi người dùng bật
 js/lore.js              Nội dung sổ tay thiên văn (nguồn gốc, sao đáng chú ý, cách tìm)

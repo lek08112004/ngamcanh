@@ -108,7 +108,7 @@
 
     <!-- quick bar: the few things you reach for most -->
     <div class="glass panel quick" id="quick">
-      <button id="qTime" class="chip" type="button" title="Buổi sáng → hoàng hôn → ban đêm (N)">Ban đêm</button>
+      <button id="qTime" class="chip" type="button" title="Giờ trong thung lũng. Bấm (hoặc phím N) để tua tới buổi sáng, hoàng hôn hay ban đêm kế tiếp">09:00 · Buổi sáng</button>
       <button id="qStroll" class="chip" type="button" aria-pressed="false" title="Thong thả dạo một vòng qua các vườn hoa (V)">Dạo vườn</button>
       <button id="qPhoto" class="chip" type="button" title="Lưu ảnh PNG (P)">Chụp ảnh</button>
       <button id="qJournal" class="chip" type="button" title="Hành trình và sổ tay thiên văn (J)">Sổ tay</button>
@@ -122,10 +122,9 @@
       <div class="dock-row">
         <span class="label">Thời điểm</span>
         <div class="chips tight">
-          <button id="timeDay" class="chip" type="button" title="Buổi sáng trong vườn tulip (N)">Buổi sáng</button>
-          <button id="timeDusk" class="chip" type="button" title="Hoàng hôn sau dãy núi (N)">Hoàng hôn</button>
-          <button id="timeNight" class="chip" type="button" title="Ban đêm ngắm cực quang (N)">Ban đêm</button>
-          <button id="autoDay" class="chip" type="button" aria-pressed="false" title="Để ngày và mùa tự trôi: một ngày khoảng mười phút, mỗi sớm mai sang mùa mới">Ngày tự trôi</button>
+          <input id="timeSlider" class="time-slider" type="range" min="0" max="23.98" step="0.02" value="9" aria-label="Giờ trong ngày" title="Kéo để chọn giờ trong ngày">
+          <span id="timeLabel" class="time-label">09:00 · Buổi sáng</span>
+          <button id="autoDay" class="chip" type="button" aria-pressed="true" title="Bật: ngày đêm tự trôi (một vòng mười sáu phút), mỗi bình minh sang mùa mới. Tắt: thời gian đứng yên">Thời gian đang trôi</button>
         </div>
         <span class="label">Chỗ ngồi</span>
         <div class="chips" id="spots"></div>
@@ -168,6 +167,19 @@
   <div id="stick" aria-label="Cần điều khiển đi bộ"><div id="stickKnob"></div></div>
   <div id="labels" class="hidden"></div>
   <button id="fireBtn" class="glass hidden" type="button" title="Thêm củi vào lửa">+ củi</button>
+  <button id="actBtn" class="glass hidden" type="button"></button>
+  <div id="book" class="glass hidden" role="dialog" aria-labelledby="bookTitle">
+    <p class="eyebrow">Cuốn sổ trên ghế</p>
+    <h3 id="bookTitle"></h3>
+    <p id="bookText"></p>
+    <div class="book-row">
+      <button id="bookPrev" class="chip" type="button" aria-label="Trang trước">‹</button>
+      <span id="bookPage"></span>
+      <button id="bookNext" class="chip" type="button" aria-label="Trang sau">›</button>
+      <button id="bookClose" class="chip" type="button">Gấp sách · E</button>
+    </div>
+  </div>
+  <div id="veil" class="hidden" aria-live="polite"><div class="veil-card"><p class="eyebrow" id="veilWhen"></p><p id="veilText"></p><p class="veil-read" id="veilRead"></p><p class="fineprint" id="veilHint">Bấm để bước ra hiên</p></div></div>
   <button id="zenExit" class="glass" type="button">Hiện giao diện · H</button>
 
   <!-- Journal -->
@@ -185,6 +197,9 @@
       <h3 class="jsec">Một ngày ở trại</h3>
       <p class="journal-sum" id="storySum"></p>
       <ol id="storyList"></ol>
+      <h3 class="jsec">Nhật ký trại</h3>
+      <p class="journal-sum" id="campSum"></p>
+      <ol id="campLog" class="camp-log"></ol>
       <h3 class="jsec">Sổ hoa</h3>
       <p class="journal-sum" id="flowerSum"></p>
       <ul id="flowerList"></ul>

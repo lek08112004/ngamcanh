@@ -7,12 +7,13 @@ import {
   tulipVertex, tulipFragment, cardVertex, cardFragment, flowerDepthFragment, butterflyVertex, butterflyFragment,
   petalVertex, petalFragment,
 } from './shaders/tulip.js';
-import { terrainH, insideCabin, insideCamp } from './world.js';
+import { terrainH, insideCabin, insideCamp, streamX, streamW } from './world.js';
 import { GARDEN, CAMP } from './layout.js';
+import { bedFlowerAt, bedMiddle, bedWarp, patchTone, driftNoise, BED_STRIPE } from './seasons.js';
 
 /* ---------- mesh builder: position, (kind, open), uv; normals are computed smooth ---------- */
 class Geo {
-  constructor() { this.p = []; this.n = []; this.uv = []; this.x = []; }
+  constructor() { this.p = []; this.n = []; this.uv = []; this.x = []; this.petals = 0; }
   get count() { return this.p.length / 3; }
   v(x, y, z, kind, open, u, vv) { this.p.push(x, y, z); this.n.push(kind, open); this.uv.push(u, vv); return this.count - 1; }
   /** a grid over u in [-1,1], v in [0,1] */
@@ -35,6 +36,17 @@ class Geo {
   }
   /** one petal or leaf growing from the stem axis toward azimuth `a` */
   petal({ a, y0, r0 = 0.01, R, rise, W, curl = 0, prof = 'open', droop = 0, open = 0, kind = 1, nu = 3, nv = 4, broad = false, roll = 0 }) {
+    // Nothing on a living plant is evenly spaced or equally long. Every petal and leaf is
+    // set a little off its ideal place and size (the same way each time, so far and close-up
+    // models agree): this is what stops a bloom looking stamped out from its centre.
+    const n = ++this.petals;
+    const j1 = (Math.sin(n * 12.9898) * 43758.5453) % 1, j2 = (Math.sin(n * 78.233) * 24634.6345) % 1, j3 = (Math.sin(n * 39.425) * 13758.2931) % 1;
+    const wild = kind === 0 ? 2.0 : 1.0;
+    a += j1 * 0.085 * wild;
+    R *= 1 + j2 * 0.075 * wild;
+    rise *= 1 + j3 * 0.07;
+    W *= 1 + j1 * j2 * 0.12;
+    droop += Math.abs(R) * j3 * 0.06 * wild;
     const dx = Math.cos(a), dz = Math.sin(a);
     // 'egg' is the closed goblet of a tulip: widest two fifths of the way up, the tips nearly meeting
     const rOf = prof === 'cup'
@@ -54,17 +66,21 @@ class Geo {
       return [dx * r - dz * u * w, y0 + rise * v - droop * v * v - lip * W * 0.5, dz * r + dx * u * w];
     }, nu, nv, kind, open);
   }
-  tube(h, r, sides = 5) {
+  /** a stem: several rings up its length, so the shader can bend it into a curve; it tapers toward the top */
+  tube(h, r, sides = 5, rings = 5) {
     const start = this.count;
-    for (let j = 0; j < 2; j++) {
+    for (let j = 0; j < rings; j++) {
+      const t = j / (rings - 1), rr = r * (1.12 - 0.30 * t);
       for (let s = 0; s < sides; s++) {
         const a = (s / sides) * Math.PI * 2;
-        this.v(Math.cos(a) * r, j * h, Math.sin(a) * r, 0, 0, 0, j * 0.7);
+        this.v(Math.cos(a) * rr, t * h, Math.sin(a) * rr, 0, 0, 0, t * 0.7);
       }
     }
-    for (let s = 0; s < sides; s++) {
-      const a = start + s, b = start + (s + 1) % sides;
-      this.x.push(a, b, b + sides, a, b + sides, a + sides);
+    for (let j = 0; j < rings - 1; j++) {
+      for (let s = 0; s < sides; s++) {
+        const a = start + j * sides + s, b = start + j * sides + (s + 1) % sides;
+        this.x.push(a, b, b + sides, a, b + sides, a + sides);
+      }
     }
   }
   /** the seed disc of a daisy or sunflower: a low dome around +Y. Its UVs are the position on
@@ -210,6 +226,120 @@ function daisyGeo() {
   return g.build();
 }
 
+/** daffodil: six spreading tepals behind a trumpet, the whole head turned to look outward */
+function daffodilGeo() {
+  const g = new Geo();
+  g.tube(0.74, 0.011, 5);
+  for (const [a, R, rise] of [[0.4, 0.10, 0.62], [2.3, 0.08, 0.56], [4.4, 0.12, 0.50]]) g.petal({ kind: 0, a, y0: 0.01, R, rise, W: 0.020, curl: -0.4, droop: 0.05, nv: 5 });
+  const head = g.count;
+  for (let k = 0; k < 6; k++) g.petal({ kind: 4, a: (k / 6) * TAU, y0: 0, r0: 0.018, R: 0.120, rise: 0.018 + 0.012 * (k % 2), W: 0.052, curl: 0.25, nu: 4, nv: 4 });
+  // the corona: a flared, frilled cup
+  for (let k = 0; k < 7; k++) g.petal({ kind: 1, a: (k / 7) * TAU + 0.2, y0: 0.004, r0: 0.020, R: 0.022, rise: 0.105, W: 0.026, curl: -0.5, roll: 0.5, nu: 3, nv: 5 });
+  g.dome(0.01, 0.014, 0.05, 6, 5, 2);
+  g.transform(head, new THREE.Matrix4().makeTranslation(0, 0.745, 0.012).multiply(new THREE.Matrix4().makeRotationX(1.25)));
+  return g.build();
+}
+/** field poppy: four tissue-thin petals in a shallow bowl round a dark heart, on a wiry stem */
+function poppyGeo() {
+  const g = new Geo();
+  g.tube(0.80, 0.007, 4, 6);
+  for (const [a, y] of [[0.8, 0.06], [2.9, 0.12], [5.0, 0.20]]) g.petal({ kind: 0, a, y0: y, R: 0.17, rise: 0.10, W: 0.030, droop: 0.05, nv: 4 });
+  const head = g.count;
+  for (let k = 0; k < 2; k++) g.petal({ kind: 3, broad: true, a: k * Math.PI, y0: 0, r0: 0.010, R: 0.120, rise: 0.070, W: 0.115, curl: -0.22, roll: 0.25, nu: 5, nv: 5 });
+  for (let k = 0; k < 2; k++) g.petal({ kind: 3, broad: true, a: k * Math.PI + Math.PI / 2, y0: 0.006, r0: 0.008, R: 0.100, rise: 0.085, W: 0.100, curl: -0.30, nu: 5, nv: 5 });
+  g.dome(0.004, 0.024, 0.030, 8, 2, 2);
+  g.transform(head, new THREE.Matrix4().makeTranslation(0, 0.80, 0).multiply(new THREE.Matrix4().makeRotationX(0.35)));
+  // a bud still hanging its head on a side shoot
+  const bud = g.count;
+  for (let k = 0; k < 3; k++) g.petal({ kind: 0, a: (k / 3) * TAU, y0: 0, r0: 0.004, R: 0.020, rise: 0.060, W: 0.022, curl: -0.7, prof: 'egg', nv: 4 });
+  g.transform(bud, new THREE.Matrix4().makeTranslation(0.075, 0.60, 0.02).multiply(new THREE.Matrix4().makeRotationZ(-2.5)));
+  return g.build();
+}
+/** cosmos: eight broad rays round a small gold eye, on thin branching stems with thread leaves */
+function cosmosGeo() {
+  const g = new Geo();
+  const bloom = (x, y, z, tilt, yaw, sc) => {
+    const from = g.count;
+    for (let k = 0; k < 8; k++) g.petal({ kind: 4, a: (k / 8) * TAU, y0: 0, r0: 0.020, R: 0.130 * sc, rise: 0.030, W: 0.048 * sc, droop: 0.02, curl: 0.2, open: 0, nu: 3, nv: 4 });
+    g.dome(0.004, 0.024 * sc, 0.016, 7, 5, 2);
+    g.transform(from, new THREE.Matrix4().makeTranslation(x, y, z).multiply(new THREE.Matrix4().makeRotationY(yaw)).multiply(new THREE.Matrix4().makeRotationX(tilt)));
+  };
+  g.tube(0.92, 0.007, 4, 6);
+  for (let k = 0; k < 9; k++) g.petal({ kind: 0, a: k * 2.4, y0: 0.10 + k * 0.07, R: 0.13 - k * 0.006, rise: 0.06, W: 0.006, droop: 0.03, nu: 2, nv: 3 });
+  bloom(0, 0.925, 0, 0.5, 0, 1);
+  // a side shoot carrying a second, smaller flower
+  const shoot = g.count;
+  g.tube(0.34, 0.005, 3, 3);
+  g.transform(shoot, new THREE.Matrix4().makeTranslation(0, 0.50, 0).multiply(new THREE.Matrix4().makeRotationZ(-0.55)));
+  bloom(0.18, 0.80, 0, 0.7, 1.6, 0.8);
+  return g.build();
+}
+/** garden chrysanthemum: a low bush, each stem ending in a pompon of rays laid in tiers */
+function mumGeo() {
+  const g = new Geo();
+  for (let st = 0; st < 4; st++) {
+    const from = g.count, h = 0.62 + 0.10 * (st % 3);
+    g.tube(h, 0.010, 4, 4);
+    for (let k = 0; k < 4; k++) g.petal({ kind: 0, a: k * 2.2 + st, y0: 0.10 + k * 0.12, R: 0.10, rise: 0.04, W: 0.036, droop: 0.03, nv: 3 });
+    for (const [n, R, rise, y] of [[11, 0.085, 0.010, 0], [10, 0.070, 0.036, 0.008], [8, 0.050, 0.058, 0.014], [6, 0.030, 0.066, 0.018]]) {
+      for (let k = 0; k < n; k++) g.petal({ kind: 4, a: (k / n) * TAU + R * 20, y0: h + y, r0: 0.008, R, rise, W: 0.017, curl: -0.4, nu: 2, nv: 3 });
+    }
+    if (st > 0) g.transform(from, new THREE.Matrix4().makeRotationY((st / 3) * TAU + 0.4).multiply(new THREE.Matrix4().makeRotationZ(0.36 + 0.07 * st)));
+  }
+  return g.build();
+}
+/** snowdrops: a clump of short arching stems, each hanging one white bell */
+function snowdropGeo() {
+  const g = new Geo();
+  for (let st = 0; st < 3; st++) {
+    const from = g.count;
+    g.tube(0.72, 0.010, 4, 4);
+    g.petal({ kind: 0, a: 0.6, y0: 0.0, R: 0.07, rise: 0.56, W: 0.026, curl: -0.3, droop: 0.04, nv: 4 });
+    g.petal({ kind: 0, a: 3.5, y0: 0.0, R: 0.09, rise: 0.48, W: 0.024, curl: -0.3, droop: 0.06, nv: 4 });
+    const bell = g.count;
+    for (let k = 0; k < 3; k++) g.petal({ kind: 1, a: (k / 3) * TAU, y0: 0.02, r0: 0.012, R: 0.052, rise: 0.210, W: 0.062, curl: -0.5, prof: 'egg', nu: 4, nv: 5 });
+    for (let k = 0; k < 3; k++) g.petal({ kind: 1, a: (k / 3) * TAU + TAU / 6, y0: 0.02, r0: 0.008, R: 0.024, rise: 0.110, W: 0.034, curl: -0.6, prof: 'egg', nv: 4 });
+    // the bell hangs from the crook at the top of the stem
+    g.transform(bell, new THREE.Matrix4().makeTranslation(0.05, 0.735, 0).multiply(new THREE.Matrix4().makeRotationZ(-2.55)));
+    if (st > 0) g.transform(from, new THREE.Matrix4().makeRotationY(st * 2.3).multiply(new THREE.Matrix4().makeRotationZ(0.22 + 0.10 * st)).multiply(new THREE.Matrix4().makeScale(1, 0.82 + 0.1 * st, 1)));
+  }
+  return g.build();
+}
+
+/** grape hyacinth: a clump of short spikes, each packed with tiny closed bells, among strap leaves */
+function muscariGeo() {
+  const g = new Geo();
+  for (let st = 0; st < 4; st++) {
+    const from = g.count, h = 0.15 + 0.03 * (st % 3);
+    g.tube(h, 0.006, 4, 3);
+    g.petal({ kind: 0, a: 0.9 + st * 1.7, y0: 0.0, R: 0.09, rise: 0.10, W: 0.010, droop: 0.05, nu: 2, nv: 4 });
+    // bells crowd the top of the stalk, the largest at the bottom
+    for (let k = 0; k < 7; k++) {
+      const y = h * 0.52 + k * h * 0.075, R = 0.014 * (1 - k * 0.09);
+      for (let j = 0; j < 3; j++) g.petal({ kind: 1, a: k * 1.3 + (j / 3) * TAU, y0: y, r0: 0.004, R, rise: 0.020, W: 0.016, curl: -0.6, prof: 'egg', nu: 2, nv: 3 });
+    }
+    if (st > 0) g.transform(from, new THREE.Matrix4().makeRotationY(st * 2.1).multiply(new THREE.Matrix4().makeTranslation(0.035 * st, 0, 0)).multiply(new THREE.Matrix4().makeRotationZ(0.10 * st)));
+  }
+  return g.build();
+}
+/** winter heath: a low dense mound of wiry shoots, dark needle leaves all along them and the
+    top third crowded with small urn flowers */
+function heatherGeo() {
+  const g = new Geo();
+  for (let st = 0; st < 9; st++) {
+    const from = g.count;
+    g.tube(0.55, 0.008, 3, 4);
+    for (let k = 0; k < 7; k++) g.petal({ kind: 0, a: k * 2.3 + st, y0: 0.04 + k * 0.05, R: 0.045, rise: 0.035, W: 0.012, nu: 2, nv: 2 });
+    for (let k = 0; k < 9; k++) {
+      const y = 0.26 + k * 0.034, R = 0.040 * (1 - k * 0.05);
+      for (let j = 0; j < 3; j++) g.petal({ a: k * 1.1 + (j / 3) * TAU, y0: y, r0: 0.008, R, rise: 0.022, W: 0.034, curl: -0.5, prof: 'egg', nu: 2, nv: 3 });
+    }
+    const yaw = (st / 9) * TAU + 0.3, tilt = st === 0 ? 0.08 : 0.45 + 0.35 * ((st * 7) % 4) / 3;
+    g.transform(from, new THREE.Matrix4().makeRotationY(yaw).multiply(new THREE.Matrix4().makeRotationZ(tilt)).multiply(new THREE.Matrix4().makeScale(1, 0.70 + 0.12 * (st % 3), 1)));
+  }
+  return g.build();
+}
+
 /* ---------- instancing ---------- */
 // Flowers within LOD_NEAR metres of the camera swap to their close-up model. Both models
 // share the same instance buffers; each one's vertex shader drops the flowers that belong
@@ -300,14 +430,30 @@ function plant(shared, makeGeo, list, lod) {
 }
 
 /* ---------- cherry trees ---------- */
-/** thousands of small blossom (or leaf) cards; `u` holds the season's scale, shape and colours */
-function cards(shared, list, u) {
+/**
+ * Thousands of small blossom (or leaf) cards; `u` holds the season's scale, shape and colours.
+ * Each entry is [x, y, z, size, shade, nx, ny, nz]: shade 0 deep in the crown .. 1 in the light,
+ * n the way the spray faces (optional). With `cross` every spray gets a second card standing
+ * across the first, so it has body seen from the side too.
+ */
+function cards(shared, list, u, cross = false) {
+  if (cross) {
+    const more = [];
+    for (const c of list) {
+      const nx = c[5] || 0, nz = c[7] || 0, l = Math.hypot(nx, nz);
+      // across the first card: turned a quarter round the vertical, and tipped up a little
+      more.push([c[0] + (Math.random() - 0.5) * 0.06, c[1] + (Math.random() - 0.5) * 0.06, c[2] + (Math.random() - 0.5) * 0.06, c[3] * 0.88, c[4],
+        l > 1e-3 ? -nz / l * 0.8 : 0, 0.35, l > 1e-3 ? nx / l * 0.8 : 0]);
+    }
+    list = list.concat(more);
+  }
   const n = list.length;
-  const off = new Float32Array(n * 3), seed = new Float32Array(n * 4), shade = new Float32Array(n);
+  const off = new Float32Array(n * 3), seed = new Float32Array(n * 4), shade = new Float32Array(n), nrm = new Float32Array(n * 3);
   list.forEach((c, i) => {
     off[i * 3] = c[0]; off[i * 3 + 1] = c[1]; off[i * 3 + 2] = c[2];
     seed[i * 4] = Math.random(); seed[i * 4 + 1] = c[3]; seed[i * 4 + 2] = Math.random(); seed[i * 4 + 3] = Math.random();
     shade[i] = c[4] === undefined ? 1 : c[4];
+    nrm[i * 3] = c[5] || 0; nrm[i * 3 + 1] = c[6] || 0; nrm[i * 3 + 2] = c[7] || 0;
   });
   const quad = new THREE.PlaneGeometry(1, 1);
   const geo = new THREE.InstancedBufferGeometry();
@@ -316,6 +462,7 @@ function cards(shared, list, u) {
   geo.setAttribute('aOffset', new THREE.InstancedBufferAttribute(off, 3));
   geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seed, 4));
   geo.setAttribute('aShade', new THREE.InstancedBufferAttribute(shade, 1));
+  geo.setAttribute('aNrm', new THREE.InstancedBufferAttribute(nrm, 3));
   geo.instanceCount = n;
   const mesh = new THREE.Mesh(geo, new THREE.ShaderMaterial({
     vertexShader: cardVertex,
@@ -434,46 +581,194 @@ const TULIPS = [
 const ROSES = [[0.78, 0.03, 0.07], [0.92, 0.22, 0.38], [0.96, 0.88, 0.74], [0.98, 0.74, 0.16], [0.98, 0.46, 0.32], [0.50, 0.015, 0.08]];
 const LAVENDERS = [[0.44, 0.28, 0.86], [0.36, 0.26, 0.80], [0.56, 0.36, 0.88], [0.40, 0.22, 0.70]];
 // cúc hoạ mi is white with a yellow eye; a bed here and there is planted pink or gold
+const DAFFODILS = [[1.00, 0.80, 0.06], [1.00, 0.86, 0.22], [0.99, 0.93, 0.62], [1.00, 0.70, 0.04]];
+const POPPIES = [[0.90, 0.07, 0.03], [0.95, 0.16, 0.04], [0.84, 0.04, 0.05], [0.98, 0.36, 0.10]];
+const COSMOS = [[0.94, 0.42, 0.66], [0.80, 0.14, 0.46], [0.97, 0.94, 0.95], [0.96, 0.62, 0.80]];
+const MUMS = [[0.99, 0.74, 0.05], [0.86, 0.36, 0.06], [0.97, 0.92, 0.70], [0.74, 0.30, 0.52], [0.99, 0.82, 0.16]];
+const SNOWDROP = [0.93, 0.95, 0.92];
+// grape hyacinth: cobalt to violet-blue, now and then white; winter heath: rose, magenta, white
+const MUSCARI = [[0.16, 0.20, 0.78], [0.22, 0.24, 0.86], [0.30, 0.22, 0.80], [0.14, 0.16, 0.66], [0.90, 0.92, 0.95]];
+const HEATHERS = [[0.86, 0.30, 0.56], [0.74, 0.16, 0.46], [0.92, 0.52, 0.70], [0.95, 0.92, 0.94]];
 const DAISIES = [[0.96, 0.96, 0.92], [0.96, 0.96, 0.92], [0.96, 0.96, 0.92], [0.96, 0.62, 0.76], [0.98, 0.88, 0.40]];
 
 export const GARDEN_TREES = [[GARDEN.x, GARDEN.z], [GARDEN.x - 5.5, GARDEN.z + 9.5], [GARDEN.x + 10, GARDEN.z - 1.5]];
 export const GARDEN_ARCH = { x: GARDEN.x - 8.5, z: GARDEN.z };
+export const GARDEN_BENCH = { x: GARDEN.x - 1.6, z: GARDEN.z + 1.7, yaw: -1.75 };   // its back to the cherry trunk, looking west down the walk to the arch
 
-/* ---------- the beds in front of the camp: colour stripes running down toward the valley ---------- */
-// The same rows are replanted through the year: tulips in spring, lavender in summer,
-// cúc hoạ mi in autumn, and bare under the snow in winter. Returns the group; its
-// `userData.grow` maps planting names (see GROW in seasons.js) to their uniforms.
+/* ---------- the flower walk: the approach to the arch, the arch itself, the foot of the trees ---------- */
+// The way into the garden is the part everyone sees first, so it is planted to overflow in
+// every season: deep borders both sides of the walk from the camp to the rose arch, a
+// crescent of flowers in front of the arch, and a carpet round the foot of each cherry tree.
+// Every place carries a plant in all four seasons. Low kinds edge the walk, taller ones
+// stand behind them in drifts.
+const WALK_A = [3.0, 9.5];
+const WALK_B = [GARDEN.x - 7.0, GARDEN.z];
+function segDist(x, z, a, b) {
+  const bx = b[0] - a[0], bz = b[1] - a[1], px = x - a[0], pz = z - a[1];
+  const t = Math.max(0, Math.min(1, (px * bx + pz * bz) / (bx * bx + bz * bz)));
+  return [Math.hypot(px - bx * t, pz - bz * t), t];
+}
+/** on a gravel walk of the garden (the same shapes the ground shader draws) */
+function onWalk(x, z, margin = 0) {
+  const gx = x - GARDEN.x, gz = z - GARDEN.z, r = Math.hypot(gx, gz);
+  if (Math.abs(r - 2.75) < 0.85 + margin || Math.abs(r - 7.0) < 0.9 + margin) return true;
+  if (r < 7.4 + margin && Math.min(Math.abs(gx), Math.abs(gz)) < 0.85 + margin) return true;
+  return segDist(x, z, WALK_A, WALK_B)[0] < 1.0 + margin;
+}
+/** where the flower walk is planted: 0 outside, else how close to its edge (1 = right by the walk) */
+function walkBed(x, z) {
+  if (onWalk(x, z)) return 0;
+  const ax = GARDEN_ARCH.x, cz = GARDEN.z;
+  if (Math.hypot(x - GARDEN_BENCH.x, z - GARDEN_BENCH.z) < 1.3) return 0;
+  // borders along the walk to the arch
+  const [d, t] = segDist(x, z, WALK_A, WALK_B);
+  if (t > 0.12 && d < 4.6 && x < ax - 0.7) return 1 - (d - 1.0) / 3.6;
+  // the crescent in front of the arch and the run of the rose borders
+  if (x > ax - 4.6 && x < ax - 0.7 && Math.abs(z - cz) < 10.5) return 1 - Math.min(1, (ax - 0.7 - x) / 3.9);
+  // a carpet round the foot of each cherry tree
+  for (const [tx, tz] of GARDEN_TREES) {
+    const r = Math.hypot(x - tx, z - tz);
+    if (r > 0.75 && r < (tx === GARDEN.x ? 2.05 : 2.6)) return 0.9;
+  }
+  return 0;
+}
+// season by season: the edging kind, then the kinds of the drifts behind it
+const WALK_PLAN = [
+  { edge: ['muscari'], body: ['tulip', 'tulip', 'daffodil'] },
+  { edge: ['lavender'], body: ['poppy', 'cosmos', 'cosmos'] },
+  { edge: ['mum'], body: ['cosmos', 'daisy', 'mum'] },
+  { edge: ['heather'], body: ['snowdrop', 'heather', 'snowdrop'] },
+];
+function walkKind(season, x, z, near) {
+  const plan = WALK_PLAN[season];
+  if (near > 0.72 - 0.2 * driftNoise(x * 0.4, z * 0.4 + 9)) return plan.edge[0];
+  const n = driftNoise(x * 0.22 + season * 13, z * 0.22 + 5);
+  return plan.body[Math.min(plan.body.length - 1, Math.floor(n * plan.body.length * 1.05))];
+}
+/** the kind in flower on the flower walk at a point in season 0..3, or '' (the flower book asks) */
+export function walkFlowerAt(season, x, z) {
+  const near = walkBed(x, z);
+  return near > 0 ? walkKind(season, x, z, near) : '';
+}
+/** the garden bench: within reach of it */
+export const nearBench = (x, z, r = 1.6) => Math.hypot(x - GARDEN_BENCH.x, z - GARDEN_BENCH.z) < r;
+
+/* ---------- the beds in front of the camp: winding ribbons planted in drifts ---------- */
+// The same ground is replanted through the year. Where each kind grows is decided by
+// bedFlowerAt() in seasons.js (the flower book asks the same function): a low kind edges
+// each bed in broken runs, the middle carries long drifts of taller kinds, damp-loving ones
+// down toward the stream and sun-lovers up by the camp. Clipped evergreens and a few mossy
+// stones sit among the beds, so from the hill the slope reads as a planted garden and not
+// as ruled stripes. Returns the group; its userData.grow maps planting names (see GROW in
+// seasons.js) to their uniforms.
 export function createBeds(shared, rng, count, lod) {
-  const ROW = 0.44, STRIPE = 3.6;
-  const tulips = [], lavender = [], daisies = [];
-  let guard = 0;
-  while (tulips.length < count && guard++ < count * 8) {
+  const ROW = 0.44;
+  const P = { tulip: [], daffodil: [], muscari: [], lavender: [], poppy: [], cosmos: [], daisy: [], mum: [], snowdrop: [], heather: [] };
+  let guard = 0, placed = 0;
+  while (placed < count && guard++ < count * 8) {
     const dist = 4.5 + 60 * Math.pow(rng(), 1.2);
-    const z = 8 - dist;
-    let x = (rng() - 0.5) * 2 * (9 + dist * 1.55);
-    x = Math.round(x / ROW) * ROW + (rng() - 0.5) * 0.10;
-    const sx = (x + 1000) / STRIPE;
-    if (sx - Math.floor(sx) < 0.13) continue;                    // grassy aisle between beds
+    const z = 8 - dist + (rng() - 0.5) * 0.30;
+    // rows follow the winding bed, a little irregular as hand planting is
+    const w = bedWarp(z);
+    let xw = (rng() - 0.5) * 2 * (9 + dist * 1.55);
+    xw = Math.round(xw / ROW) * ROW + (rng() - 0.5) * 0.14;
+    const x = xw - w;
+    if (bedMiddle(x, z) < 0) continue;                           // grassy aisle between beds
     if (insideCabin(x, z, 1.4) || insideCamp(x, z)) continue;
     if (Math.hypot(x - CAMP.fire.x, z - CAMP.fire.z) < 3.6) continue;
     if (Math.hypot(x, z - 8) < 3.2) continue;                    // where you stand
     if (x > 10.5 && z > -7) continue;                            // the flower garden begins here
-    const bed = Math.floor(sx);
-    const pick = (bed * 5 + Math.floor(bed / 3) * 3 + 1000);
+    if (z < -26 && Math.abs(x - streamX(z)) < streamW(z) + 1.4) continue;   // nothing in the stream or on its pebbles
     const far = 1 + Math.min(1, dist / 62) * 0.8;
-    const tone = 0.82 + rng() * 0.36;
-    const at = (h, c) => ({ x, y: terrainH(x, z) - 0.02, z: z + (rng() - 0.5) * 0.12, h: h * far, yaw: rng() * TAU, seed: rng(), c: [c[0] * tone, c[1] * tone, c[2] * tone] });
-    tulips.push(at(0.44 + rng() * 0.20, TULIPS[pick % TULIPS.length]));
-    // the other seasons reuse the same places, more sparsely: these plants are broader
-    if (tulips.length % 3 === 0) lavender.push(at(0.62 + rng() * 0.22, LAVENDERS[pick % LAVENDERS.length]));
-    else if (tulips.length % 3 === 1) daisies.push(at(0.58 + rng() * 0.22, DAISIES[pick % DAISIES.length]));
+    const tone = 0.84 + rng() * 0.32;
+    const pt = patchTone(x, z);                                  // one colour to a drift, mostly
+    const pickC = (list) => list[Math.floor((rng() < 0.82 ? pt : rng()) * list.length * 0.999)];
+    const at = (h, c) => ({ x, y: terrainH(x, z) - 0.02, z, h: h * far, yaw: rng() * TAU, seed: rng(), c: [c[0] * tone, c[1] * tone, c[2] * tone] });
+    const i = placed++;
+    // spring: every place has its bulb
+    const sp = bedFlowerAt(0, x, z);
+    if (sp === 'tulip') P.tulip.push(at(0.46 + rng() * 0.20, pickC(TULIPS)));
+    else if (sp === 'daffodil') P.daffodil.push(at(0.40 + rng() * 0.16, pickC(DAFFODILS)));
+    else P.muscari.push(at(0.85 + rng() * 0.35, pickC(MUSCARI)));
+    // the other seasons use the same places; bushy kinds take more room, so fewer of them
+    const su = bedFlowerAt(1, x, z);
+    if (su === 'lavender' && i % 2 === 0) P.lavender.push(at(0.50 + rng() * 0.16, pickC(LAVENDERS)));
+    if (su === 'poppy' && i % 3 !== 2) P.poppy.push(at(0.50 + rng() * 0.26, POPPIES[Math.floor(rng() * POPPIES.length)]));
+    if (su === 'cosmos' && i % 3 !== 1) P.cosmos.push(at(0.72 + rng() * 0.32, pickC(COSMOS)));
+    const au = bedFlowerAt(2, x, z);
+    if (au === 'daisy' && i % 2 === 0) P.daisy.push(at(0.56 + rng() * 0.22, DAISIES[rng() < 0.85 ? 0 : 3 + Math.floor(rng() * 2)]));
+    if (au === 'cosmos' && i % 3 === 0) P.cosmos.push(at(0.70 + rng() * 0.30, pickC(COSMOS)));
+    if (au === 'mum' && i % 2 === 1) P.mum.push(at(0.42 + rng() * 0.14, pickC(MUMS)));
+    const wi = bedFlowerAt(3, x, z);
+    // snowdrops come up in drifts, not rows
+    if (wi === 'snowdrop') P.snowdrop.push({ ...at(0.24 + rng() * 0.08, SNOWDROP), x: x + (rng() - 0.5) * 0.5 });
+    if (wi === 'heather' && i % 3 !== 2) P.heather.push(at(0.55 + rng() * 0.20, pickC(HEATHERS)));
   }
   const group = new THREE.Group();
   group.userData.grow = {};
-  const add = (name, p) => { group.add(...p.meshes); group.userData.grow[name] = p.u; };
-  add('bedTulip', plant(shared, tulipGeo, tulips, lod));
-  add('bedLavender', plant(shared, () => lavenderGeo(5), lavender, false));
-  add('bedDaisy', plant(shared, daisyGeo, daisies, false));
+  group.userData.meshes = {};
+  const add = (name, p) => { group.add(...p.meshes); group.userData.grow[name] = p.u; group.userData.meshes[name] = p.meshes; };
+  add('bedTulip', plant(shared, tulipGeo, P.tulip, lod));
+  add('bedDaffodil', plant(shared, daffodilGeo, P.daffodil, false));
+  add('bedMuscari', plant(shared, muscariGeo, P.muscari, false));
+  add('bedLavender', plant(shared, () => lavenderGeo(5), P.lavender, false));
+  add('bedPoppy', plant(shared, poppyGeo, P.poppy, false));
+  add('bedDaisy', plant(shared, daisyGeo, P.daisy, false));
+  add('bedCosmos', plant(shared, cosmosGeo, P.cosmos, false));
+  add('bedMum', plant(shared, mumGeo, P.mum, false));
+  add('bedSnowdrop', plant(shared, snowdropGeo, P.snowdrop, false));
+  add('bedHeather', plant(shared, heatherGeo, P.heather, false));
+
+  // clipped evergreens (box and juniper) standing in the middle of a bed now and then, and
+  // mossy stones at the ends of runs: they break the long view down the slope
+  const scale = Math.min(1, count / 20000);
+  const shrubCards = [], stones = [];
+  const base = Math.ceil(1000 / BED_STRIPE) * BED_STRIPE - 1000;
+  for (let z = 2; z > -50; z -= 0.9) {
+    for (let b = -14; b <= 14; b++) {
+      const x = (b + 0.565) * BED_STRIPE + base - bedWarp(z);
+      const edge = 9 + (8 - z) * 1.55;
+      if (Math.abs(x) > edge - 1 || (x > 10.5 && z > -7) || insideCabin(x, z, 1.6) || insideCamp(x, z)) continue;
+      if (Math.hypot(x - CAMP.fire.x, z - CAMP.fire.z) < 4.5 || Math.hypot(x, z - 8) < 4) continue;
+      const n = driftNoise(x * 0.31 + 5, z * 0.37 + b * 2.3);
+      if (n > 0.78 && rng() < 0.6 * Math.max(scale, 0.35)) {
+        const r = 0.34 + rng() * 0.26, cy = terrainH(x, z) + r * 0.72;
+        for (let k = 0, m = Math.round(70 * r / 0.45); k < m; k++) {
+          const v = new THREE.Vector3(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize();
+          const depth = Math.pow(rng(), 0.5);
+          shrubCards.push([x + v.x * r * depth, cy + v.y * r * 0.8 * depth, z + v.z * r * depth, 0.16 + rng() * 0.10, 0.25 + 0.75 * depth * (0.6 + 0.4 * Math.max(v.y, 0)), v.x * depth, v.y * depth, v.z * depth]);
+        }
+      } else if (n < 0.06 && rng() < 0.25) {
+        stones.push([x + (rng() - 0.5) * 1.2, z, 0.22 + rng() * 0.26]);
+      }
+    }
+  }
+  const evergreen = crownUniforms(1);
+  evergreen.uColA.value.set(0.016, 0.050, 0.020);
+  evergreen.uColB.value.set(0.050, 0.105, 0.040);
+  if (shrubCards.length) {
+    group.add(cards(shared, shrubCards, evergreen));
+    group.userData.grow.bedShrub = { uGrow: evergreen.uScale, uTint: { value: new THREE.Vector4() } };
+  }
+  if (stones.length) {
+    const sg = new THREE.IcosahedronGeometry(1, 3), spos = sg.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < spos.count; i++) {
+      v.fromBufferAttribute(spos, i);
+      const r = 1 + 0.16 * Math.sin(v.x * 4.1 + v.z * 2.3) + 0.10 * Math.sin(v.y * 6.7 - v.x * 3.1) + 0.05 * Math.sin(v.z * 11 + v.y * 7);
+      v.multiplyScalar(r); v.y *= 0.62;
+      if (v.y < -0.2) v.y = -0.2;
+      spos.setXYZ(i, v.x, v.y, v.z);
+    }
+    sg.computeVertexNormals();
+    const sm = new THREE.MeshStandardMaterial({ color: 0x6a6d68, roughness: 0.95 });
+    for (const [x, z, r] of stones) {
+      const m = new THREE.Mesh(sg, sm);
+      m.position.set(x, terrainH(x, z) + r * 0.05, z);
+      m.scale.set(r * (0.9 + rng() * 0.5), r, r * (0.8 + rng() * 0.5));
+      m.rotation.y = rng() * TAU;
+      group.add(m);
+    }
+  }
   return group;
 }
 
@@ -488,7 +783,8 @@ export function createGarden(shared, rng, scale, lod) {
   const grow = (group.userData.grow = {});
   const tone = (c) => { const t = 0.82 + rng() * 0.36; return [c[0] * t, c[1] * t, c[2] * t]; };
   const place = (x, z, h, c, yaw) => ({ x, y: terrainH(x, z) - 0.02, z, h, yaw: yaw === undefined ? rng() * TAU : yaw, seed: rng(), c: tone(c) });
-  const add = (name, p) => { group.add(...p.meshes); grow[name] = p.u; };
+  const meshes = (group.userData.meshes = {});
+  const add = (name, p) => { group.add(...p.meshes); grow[name] = p.u; meshes[name] = p.meshes; };
 
   /* --- roses: bushes in a ring bed round the central tree, cut by four paths --- */
   // A handful of canes from one root, one variety to a bush, blooms at different heights and
@@ -522,7 +818,7 @@ export function createGarden(shared, rng, scale, lod) {
     const t = rng() * Math.PI;
     return [cz + Math.cos(t) * 1.4, 1.45 + Math.sin(t) * 1.3];
   };
-  for (let i = 0, n = Math.floor(300 * scale); i < n; i++) {               // climbing roses
+  for (let i = 0, n = Math.floor(520 * scale); i < n; i++) {               // climbing roses
     const [z, y] = archPoint();
     const h = 0.18 + rng() * 0.12;
     roses.push({
@@ -573,6 +869,46 @@ export function createGarden(shared, rng, scale, lod) {
   frame(cx + 4.3, cz - 15.7, cx + 18.7, cz - 4.4, DAISIES[4]);               // round the sunflowers
   add('border', plant(shared, daisyGeo, dz, false));
 
+  /* --- the flower walk, full in every season --- */
+  {
+    const P = { tulip: [], daffodil: [], muscari: [], lavender: [], poppy: [], cosmos: [], daisy: [], mum: [], snowdrop: [], heather: [] };
+    const H = { tulip: [0.46, 0.20], daffodil: [0.40, 0.16], muscari: [0.95, 0.35], lavender: [0.50, 0.16], poppy: [0.52, 0.24], cosmos: [0.78, 0.34], daisy: [0.56, 0.22], mum: [0.42, 0.14], snowdrop: [0.26, 0.08], heather: [0.55, 0.20] };
+    const COL = { tulip: TULIPS, daffodil: DAFFODILS, muscari: MUSCARI, lavender: LAVENDERS, poppy: POPPIES, cosmos: COSMOS, daisy: DAISIES.slice(0, 3).concat([DAISIES[3]]), mum: MUMS, snowdrop: [SNOWDROP], heather: HEATHERS };
+    // bushy kinds take more ground than a single stem: keep only some of their places
+    const SPARE = { lavender: 2, mum: 2, heather: 2 };
+    const want = Math.round(9000 * scale);
+    const bx0 = Math.min(WALK_A[0], GARDEN_ARCH.x - 5) - 5, bx1 = GARDEN.x + 13, bz0 = GARDEN.z - 12, bz1 = GARDEN.z + 15;
+    let got = 0, tries = 0;
+    while (got < want && tries++ < want * 30) {
+      const x = bx0 + rng() * (bx1 - bx0), z = Math.min(WALK_A[1], GARDEN.z) - 5 + rng() * (bz1 - Math.min(WALK_A[1], GARDEN.z) + 5);
+      if (z < bz0 && x > GARDEN_ARCH.x) continue;
+      const near = walkBed(x, z);
+      if (near <= 0) continue;
+      const i = got++;
+      const pt = patchTone(x * 1.3, z * 1.3);
+      for (let se = 0; se < 4; se++) {
+        const kind = walkKind(se, x, z, near);
+        if (SPARE[kind] && i % SPARE[kind]) continue;
+        const [h0, hv] = H[kind];
+        // the taller kinds stand back from the walk, the short ones lean out over its edge
+        const back = 0.85 + 0.30 * (1 - near);
+        const list = COL[kind];
+        const c = list[Math.floor((rng() < 0.8 ? pt : rng()) * list.length * 0.999)];
+        P[kind].push(place(x + (rng() - 0.5) * 0.12, z + (rng() - 0.5) * 0.12, (h0 + rng() * hv) * back, c));
+      }
+    }
+    add('gTulip', plant(shared, tulipGeo, P.tulip, lod));
+    add('gDaffodil', plant(shared, daffodilGeo, P.daffodil, false));
+    add('gMuscari', plant(shared, muscariGeo, P.muscari, false));
+    add('gLavender', plant(shared, () => lavenderGeo(5), P.lavender, false));
+    add('gPoppy', plant(shared, poppyGeo, P.poppy, false));
+    add('gCosmos', plant(shared, cosmosGeo, P.cosmos, false));
+    add('gDaisy', plant(shared, daisyGeo, P.daisy, false));
+    add('gMum', plant(shared, mumGeo, P.mum, false));
+    add('gSnowdrop', plant(shared, snowdropGeo, P.snowdrop, false));
+    add('gHeather', plant(shared, heatherGeo, P.heather, false));
+  }
+
   /* --- rose arch, leafed over --- */
   const wood = new THREE.MeshStandardMaterial({ color: 0x6a5138, roughness: 1 });
   for (const ox of [0.0, 0.6]) {
@@ -622,7 +958,9 @@ export function createGarden(shared, rng, scale, lod) {
         v.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize().multiplyScalar(rad).add(q);
         const out = v.distanceTo(mid) / reach;
         const light = Math.min(1, 0.55 * smooth01((out - 0.35) / 0.6) + 0.45 * smooth01((v.y - mid.y + reach * 0.5) / reach));
-        blossom.push([v.x, v.y, v.z, 0.20 + rng() * 0.24, light]);
+        // sprays face out from the crown, the outer ones more so
+        const o = v.clone().sub(mid).normalize().multiplyScalar(0.3 + 0.7 * Math.min(1, out));
+        blossom.push([v.x, v.y, v.z, 0.20 + rng() * 0.24, light, o.x, o.y + 0.25, o.z]);
       }
     }
     // the crown's shadow: an unseen shape standing in for all those sprays
@@ -638,7 +976,7 @@ export function createGarden(shared, rng, scale, lod) {
       petalSeed.push(rng(), rng(), rng(), rng());
     }
   }
-  group.add(cards(shared, blossom, crown));
+  group.add(cards(shared, blossom, crown, true));
   const drift = { uAmount: { value: 1 }, uColA: { value: new THREE.Vector3(0.70, 0.42, 0.50) }, uColB: { value: new THREE.Vector3(0.84, 0.70, 0.74) } };
   const pg = new THREE.BufferGeometry();
   pg.setAttribute('position', new THREE.Float32BufferAttribute(petalPos, 3));
@@ -700,8 +1038,18 @@ export function createGarden(shared, rng, scale, lod) {
     plank(0.06, 0.05, 0.50, sx, 0.42, -0.02);
     plank(0.06, 0.04, 0.50, sx, 0.66, -0.02);                                // arm rest
   }
-  bench.position.set(cx - 1.6, terrainH(cx - 1.6, cz + 1.7), cz + 1.7);
-  bench.rotation.y = 2.2;
+  bench.position.set(GARDEN_BENCH.x, terrainH(GARDEN_BENCH.x, GARDEN_BENCH.z), GARDEN_BENCH.z);
+  bench.rotation.y = GARDEN_BENCH.yaw;
+  // a book left on the seat
+  {
+    const cover = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.035, 0.23), new THREE.MeshStandardMaterial({ color: 0x5a2a22, roughness: 0.8 }));
+    cover.position.set(0.48, 0.495, 0.0);
+    cover.rotation.y = 0.3;
+    const pages = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.028, 0.215), new THREE.MeshStandardMaterial({ color: 0xe8dfc8, roughness: 0.9 }));
+    pages.position.set(0.485, 0.497, 0.0);
+    pages.rotation.y = 0.3;
+    bench.add(cover, pages);
+  }
   group.add(bench);
 
   return group;

@@ -833,3 +833,95 @@ body.zen:not(.idle) #zenExit { opacity: 1; visibility: visible; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- the clock: one slider for the whole day ---------- */
+.time-slider {
+  -webkit-appearance: none; appearance: none;
+  width: min(260px, 46vw); height: 8px; border-radius: 6px; margin: 0 4px; cursor: pointer;
+  /* night, dawn, day, sunset, night: the track is a picture of the day it scrubs through */
+  background: linear-gradient(90deg, #0b1a33 0%, #0b1a33 19%, #e58a5c 24%, #8fc2f2 31%, #6fb0ee 62%, #f0b46a 71%, #e0633f 76%, #2a2350 81%, #0b1a33 85%, #0b1a33 100%);
+  outline-offset: 4px;
+}
+.time-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff6dc; border: 2px solid rgba(255, 208, 138, 0.9); box-shadow: 0 0 12px rgba(255, 208, 138, 0.7);
+}
+.time-slider::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff6dc; border: 2px solid rgba(255, 208, 138, 0.9); box-shadow: 0 0 12px rgba(255, 208, 138, 0.7);
+}
+.time-label { font-variant-numeric: tabular-nums; color: var(--ink); font-size: 0.82rem; white-space: nowrap; min-width: 15ch; }
+#qTime { font-variant-numeric: tabular-nums; }
+
+/* ---------- stories in the flower book ---------- */
+#flowerList .tales { margin-top: 4px; }
+#flowerList .tales summary { cursor: pointer; font-size: 12px; color: var(--ink); opacity: 0.85; list-style: none; }
+#flowerList .tales summary::before { content: "+ "; color: var(--c, #ffd08a); }
+#flowerList .tales[open] summary::before { content: "– "; }
+#flowerList .tales p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-dim); }
+
+/* ---------- things to do at the camp: the action chip, resting in the cabin, the diary ---------- */
+#actBtn {
+  position: fixed;
+  z-index: 11;
+  left: 50%;
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 118px);
+  transform: translateX(-50%);
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border-color: rgba(255, 214, 150, 0.5);
+  color: #fff1d6;
+  font: 600 13px/1 var(--sans);
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  animation: actIn 0.5s var(--ease);
+}
+#actBtn:hover { box-shadow: 0 0 26px rgba(255, 200, 120, 0.4); }
+@keyframes actIn { from { opacity: 0; transform: translate(-50%, 8px); } }
+body.zen #actBtn { opacity: 0; pointer-events: none; }
+#veil {
+  position: fixed;
+  inset: 0;
+  z-index: 38;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.94);
+  opacity: 1;
+  transition: opacity 1.2s ease;
+  cursor: pointer;
+}
+#veil.fading { opacity: 0; }
+#veil.hidden { display: none; }
+.veil-card { max-width: min(560px, 100%); color: #efe6d6; text-align: center; animation: actIn 1.4s var(--ease); }
+.veil-card #veilText { font-size: 17px; line-height: 1.6; margin: 10px 0 16px; }
+.veil-card .veil-read { font-size: 14px; line-height: 1.65; color: #cbbfa9; font-style: italic; margin: 0 0 18px; }
+.camp-log { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.camp-log li { padding: 7px 12px; border-left: 2px solid rgba(255, 200, 120, 0.45); font-size: 13px; line-height: 1.5; color: #e6dccb; }
+.camp-log li small { display: block; color: #9a9182; font-size: 11px; letter-spacing: 0.04em; }
+.tales .thread { border-left: 2px solid rgba(150, 190, 255, 0.5); padding-left: 10px; }
+
+/* ---------- the book on the garden bench ---------- */
+#book {
+  position: fixed;
+  z-index: 12;
+  right: max(18px, env(safe-area-inset-right));
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(380px, calc(100vw - 36px));
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 18px 20px 14px;
+  border-radius: 18px;
+  color: #f1e8d8;
+  background: rgba(30, 22, 16, 0.62);
+  animation: actIn 0.6s var(--ease);
+}
+#book h3 { margin: 4px 0 10px; font: 600 17px/1.3 Georgia, "Times New Roman", serif; color: #fff4df; }
+#book #bookText { margin: 0 0 14px; font: 15px/1.7 Georgia, "Times New Roman", serif; }
+#book .book-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#book #bookPage { font-size: 12px; color: #c8b9a0; min-width: 52px; text-align: center; }
+#book #bookClose { margin-left: auto; }
+body.zen #book { opacity: 0.25; }
+@media (max-width: 640px) { #book { top: auto; bottom: 120px; transform: none; max-height: 46vh; } }

@@ -56,8 +56,8 @@ js/main.js            renderer, quality tiers, camera/walking, day-night, moods,
 js/world.js           terrainH(), terrain, mountain ring + baked light map, cabin, fence, boulders,
                       grass layers, camp and tent, canvas-drawn textures
 js/flora.js           flower geometry builder (Geo), species (far + close-up models), garden, trees
-js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (seven kinds), saved progress
-js/seasons.js         the calendar and clock: SEASONS, PHASES, GROW tables, WorldClock (no renderer code)
+js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (twelve kinds, with their stories), saved progress
+js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sunAt/partAt, WorldClock (no renderer code)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
 js/layout.js          world coordinates (CABIN, CAMP, GARDEN, BOUNDS) — imports nothing
 js/game.js            constellation game (firefly, stardust, storms, wishes, save)
@@ -67,7 +67,7 @@ js/audio.js           synthesised wind, fire, pad, chimes, birdsong, footsteps, 
 js/shaders/*.js       GLSL as JS template strings (see below)
 tools/shot.sh         screenshot through headless Chrome (virtual time)
 tools/drive.mjs       drive headless Chrome over the DevTools protocol (real time, real keys)
-tools/check.mjs       audio | walk | story | party | fps — see Testing
+tools/check.mjs       audio | walk | story (also the clock and the save) | party | fps — see Testing
 tools/audio-probe.html renders every sound layer offline and prints level and spectrum
 tools/syntax.mjs      parses every module; fails if anything but store.js touches localStorage
 package.json          dev scripts only (npm run serve | syntax | check | fps); the site has no dependencies
@@ -80,24 +80,47 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
 
 ## Seasons, time of day, and the save
 
-- `WorldClock` (`seasons.js`) holds the chosen season and phase (`day` | `dusk` | `night`) and
-  eases what is shown toward them: `weights` (season blend, sums to 1), `day`, `dusk`.
-  `applyDay()` in `main.js` turns those into every light, fog and sky value each frame, then
-  calls `applySeason()`. With "Ngày tự trôi" on, phases follow `PHASE_SECONDS` and each new
-  morning is the next season.
+- **Time is one number**: `WorldClock.hour` (0..24) in `seasons.js`. `skyAt(hour)` gives `day`
+  and `dusk` from the `SKY_KEYS` table, `sunAt(hour)` gives the sun direction (up in the east,
+  over the south, down in the north-west), `partAt(hour)` the named part of the day (Bình minh,
+  Buổi sáng, Buổi trưa, Buổi chiều, Hoàng hôn, Ban đêm). By default the clock **runs by itself**
+  from the visitor's own time of day: a day and night take `DAY_SECONDS` (16 minutes) and each
+  dawn is the next season. The owner asked for this instead of buttons: the dock has one
+  slider (`#timeSlider`), a run/stop chip (`#autoDay`, saved as `settings.flow`), and the
+  clock chip in the quick bar (`#qTime`, also the N key) runs time forward to the next of
+  morning / sunset / night (`PHASES`, `clock.setPhase`). `?time=`, `?hour=` or `?season=` in
+  the address pin the clock (it does not run). The star game holds the clock (`clock.hold`).
+  `applyDay()` in `main.js` turns the clock into every light, fog and sky value each frame,
+  then calls `applySeason()`. `clock.weights` is the season blend (sums to 1).
+- `uSunReach` (in the `shared.light` group, applied inside `sunShadow`/`sunShadowSoft`) fades
+  the direct sun on the valley floor once the sun is below about ten degrees, i.e. behind the
+  mountain wall; the peaks and the sky keep their light. The three.js sun lamp gets the same factor.
 - Shaders see the season as `uniform vec4 uSeason` (declared in `curvesGLSL`, so terrain and
   grass get it together; mountains and the grass fragment declare it themselves) and sunset
   as `uDusk` (declared in `auroraGLSL`, part of the `shared.aurora` group). A material that
   includes `curvesGLSL` **must** be given `uSeason` or its meadow goes black.
-- **One signature flower per season**, and nothing scattered: `GROW` in `seasons.js` says how
-  far up each planting is in each season. The stripes in front of the camp are replanted
-  (tulips, then lavender, then cúc hoạ mi, then bare under snow); the garden has sunflowers
+- **Several flowers per season** (the owner asked for many kinds, and for the beds not to look
+  like ruled stripes): `GROW` in `seasons.js` says how far up each planting is in each season.
+  The beds in front of the camp are ribbons that wind (`bedWarp`, mirrored in GLSL in
+  `terrain.js`), planted in drifts: `BED_PLAN` + `bedFlowerAt(season, x, z)` give a low edging
+  kind in broken runs and taller kinds in patches chosen by damp (`bedWet`: down toward the
+  stream) or dry ground (up by the camp). Spring tulip/daffodil/muscari, summer
+  lavender/poppy/cosmos, autumn mum/daisy/cosmos, winter heather/snowdrop. `patchTone` gives one
+  colour to a drift. Clipped evergreens (leaf cards) and small stones sit among the beds.
+  `flowerHere()` in `main.js` uses the same functions, so the flower book agrees with what is planted.
+- **The flower walk** (`walkBed`/`walkFlowerAt` in `flora.js`): deep borders both sides of the
+  walk from the camp to the rose arch, a crescent in front of the arch and a carpet round each
+  cherry tree, planted with a flower for **every** season at every place (plantings `g*` in
+  `GROW`). The owner asked for that corner to overflow with flowers all year.
+- Off-season plantings are switched off whole (`mesh.visible`, in `applySeason`); that is what
+  pays for the extra flowers. `group.userData.meshes[name]` lists each planting's meshes. The garden has sunflowers
   in summer only, and the rose ring is tinted into red camellias in winter (`uTint`).
   Each planting is made by `plant()` in `flora.js` and exposes `{uGrow, uTint}` through
   `group.userData.grow[name]`; names must match the keys of `GROW`.
-- The sun now moves (morning position, sunset position). The shadow map is redrawn every
-  third frame only while the sun or the season is changing (`shadowSettle` in `applyDay`).
-  The mountains carry two baked visibility maps, one per sun (`uMtnMap.a`, `uMtnDusk.r`).
+- The sun moves all day. The shadow map is redrawn when the sun has moved a third of a degree
+  or the season is changing (`shadowSettle` in `applyDay`), about twice a second while time runs.
+  The mountains carry two baked visibility maps (`uMtnMap.a` for the 9:00 sun, `uMtnDusk.r` for
+  the 17:36 sun) blended by `uDusk`; at dawn that blend is wrong (it uses the evening map).
 - Cherry trees: `growCherry()` builds real forking limbs; blossom cards hang along the twigs
   and slide from blossom to leaf with `uLeaf`; colours per season come from `CROWN` in `main.js`.
 - **The save** (`store.js`): `store.get('table.field')` / `store.set(...)`; the schema at the top
@@ -115,8 +138,11 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
 - **Meadow**: `meadowColor()`, `rockMask()` and `tulipBed()` live in `curvesGLSL` and are used
   by **both** the ground shader and the grass vertex shader, so blades and ground agree.
   Grass is three nested wrap-around tiles (fine near, main, coarse far) built by
-  `createGrass(shared, rng, layers, cabin, roofCount)`; `shared.uGrassFar` tells the ground
-  how far out real blades reach.
+  `createGrass(shared, rng, layers, cabin, roofCount, msaa)`; `shared.uGrassFar` tells the ground
+  how far out real blades reach. Each instance is a **card four blade-widths wide**, and the
+  fragment shader cuts three slender blades (or two and a seed stalk) out of it per pixel, with
+  alpha-to-coverage when there is MSAA (`A2C`) and a hard cut otherwise. Three times the blades
+  for the same vertices; frame rate did not move.
 - **Built things** (cabin, tent, boulders, fence, companions) are `MeshStandardMaterial`, lit
   by three.js lights. `applyDay` matches those lights to the shader uniforms by day
   (three divides by π: `sunLight.intensity = 9.1`, `hemi.intensity = π`). If you change
@@ -127,6 +153,33 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   2 seed disc, 3 rose petal, 4 ray petal (sunflower, daisy), 5 yellow disc. Seed discs carry
   radial UVs and the shader draws the florets as 21 + 34 crossing spirals. Roses are planted
   as bushes (several canes per root). Butterflies are points drawn in `butterflyFragment`.
+- **Stems curve** (the owner called the flowers stiff and "straight from the centre"): `Geo.tube`
+  has several rings, the vertex shader bends every plant by `bend * y²` (wind + its own lean)
+  and tilts whatever grows on the stem by the slope at that height, so a bloom on a leaning stem
+  faces the way it leans. `Geo.petal` also sets every petal and leaf slightly off its ideal
+  angle and size. New species (`daffodilGeo`, `poppyGeo`, `cosmosGeo`, `mumGeo`, `snowdropGeo`)
+  have one model each, no close-up model.
+- **Things to do at camp** (all saved through `store.js`):
+  the fire burns down in about three minutes and goes out (`fire.level`); feeding it takes wood
+  (`fire.wood`, up to 4, filled by walking past the woodpile beside the tent) and being within
+  12 m. Flowers met by day go into a satchel (`story.satchel`) and are pressed into the book
+  only back at the tent. The cabin porch offers "Vào nhà nghỉ" (E): a fade, a page of text and a
+  reading from the book, and the clock moves to the next part of the day (overnight = next
+  season if the clock runs). The garden bench (`GARDEN_BENCH`: back to the cherry trunk, looking
+  west through the arch) offers "Ngồi đọc sách" (E): a book of the tales you have unlocked.
+  Everything leaves a line in the camp diary (`story.log`, short ids rendered by `logText`).
+- **Sky and ground are tied**: `THREADS` in `lore.js` link each constellation to a flower (same
+  season or a shared name); the thread shows once the flower is pressed and the constellation
+  picked out or woven. At night the compass and the story card suggest a constellation
+  (`starHint`). `LORE[id].deep` opens only when the figure is woven.
+- **Star game difficulty** (`weaveRules(stage)` in `game.js`): `game.stage` is saved; guide lines
+  go at 2, the gold hint at 4, wrong strokes unravel the weave from 3, a dawn bonus clock from 5,
+  hidden stars from 7. `WEAVE_ORDER` runs simplest first. Each woven figure leaves a keepsake
+  star above it for good. `?debug=1&stage=N` starts N figures in.
+- **Stories**: every flower in `FLOWERS` (`story.js`) has `tales`, shown in the journal once the
+  flower has been pressed; every constellation has `tale` (`TALES` at the end of `lore.js`). The owner
+  wants these true and gripping. They were written from general knowledge and not checked
+  against sources: check before adding to them, and say so if asked.
 - **Flower shadows**: each planting's far mesh has `castShadow` and its own depth material
   (`flowerDepthFragment`, same cut-outs, same `uGrow`), so blooms are in the sun shadow map. Flowers sample it at their own vertices, offset toward the sun. `low` has
   no shadow map and keeps the painted row shade instead.
@@ -136,7 +189,11 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
 ## Things that will bite you
 
 - **`terrainH` exists twice** — JS in `world.js`, GLSL in `shaders/terrain.js`. Change both.
-  Same for `streamX`/`streamW`. `tulipBed()` in GLSL mirrors the stripes in `createTulips`.
+  Same for `streamX`/`streamW` and `bedWarp`. `tulipBed()` in GLSL mirrors the beds in `createBeds`.
+- GLSL ES 3.00 reserves more words than you think: `patch`, `sample`, `filter`, `input`… (a
+  grass variable named `patch` broke the shader once).
+- Noise in shaders is faded to its mean before its cells shrink under ~2 pixels (`AA(f)` in
+  the ground shader, `wpx` in water, `px` in mountains). Keep doing that for anything new.
 - Shaders are template literals: **no backticks inside GLSL comments**. Avoid GLSL reserved
   words as identifiers (`flat`, `sample`, `input`, `output`, `smooth`…).
 - `shared` uniforms in `main.js` are shared *objects*; materials spread `...shared.aurora`
@@ -146,10 +203,12 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   mountain gullies): 8-bit normals times world positions in the hundreds gives blocky static.
 - Flowers: geometry attributes are `position`, `normal`, `aInfo` (kind, open), `aUv`.
   Outlines are cut per pixel from `aUv`; `aUv.x == 0` means "no cut-out" (stems, discs).
-- The sun never moves, so the shadow map renders **once** (`shadowMap.autoUpdate = false`).
-  If you move the sun or add shadow casters later, set `renderer.shadowMap.needsUpdate = true`
-  — and the mountain map is baked for that sun direction too. Meshes with a material array
-  only cast if their first material is standard.
+- `shadowMap.autoUpdate` is false; `applyDay` asks for a redraw when the sun or season moves.
+  If you add shadow casters later, set `renderer.shadowMap.needsUpdate = true`. Meshes with a
+  material array only cast if their first material is standard.
+- Anything on a flower that is moved off the stem axis with `g.transform` still bends by its
+  model height (`position.y`), which is what you want; but `aInfo.y` (opening) scales about the
+  model axis, so keep `open: 0` on transformed heads.
 - Grass does **not** cast into the shadow map (flowers do). Outside the map's 104 m square,
   and on `low`, the shade under tulip rows is painted by the ground shader (`rowShade`).
 - The lens focus ray assumes planting is 0.55 m tall, 1.95 m in the sunflower field
@@ -174,9 +233,13 @@ Measured once, on one integrated laptop GPU at about 1900×980, with `tools/chec
 
 | tier | day | night |
 | --- | --- | --- |
-| high | 52–58 → 46 fps | 39–41 → not re-measured |
-| medium | 87–94 → 71 fps (winter 74, summer sunset 50) | 60–62 → 51 fps |
-| low | 144 → 144 fps (winter 144) | 116 → not re-measured |
+| high | 52–58 → 46 → 45 → 41.5 fps | 39–41 → 33 fps |
+| medium | 87–94 → 71 → 68 → 65 fps | 60–62 → 51 → 50 fps (not re-measured) |
+| low | 144 → 144 → 144 fps (not re-measured) | 116 → not re-measured |
+
+(third figure: after the grass cards, the running clock and the five new species; fourth:
+after the drift beds, the flower walk, crossed cherry cards, with off-season plantings
+switched off. Sitting on the garden bench, high: 34.5 fps. Measured on an AMD Radeon 780M.)
 
 That is the only hardware ever measured. No phone, no discrete card, no weak desktop.
 Night on `high` is the heaviest case and it is the aurora sky, not the land.
@@ -207,7 +270,7 @@ node tools/check.mjs fps "auto=view&time=night&q=high"   # frame rate on the gra
   not for whether the birds sound like birds.
 
 Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|summer|autumn|winter`, `q=low|medium|high`,
-`mood=emerald|rose|ice|storm|still`, `spot=hill|fire|lie|tulip|garden|bench`,
+`hour=0..24`, `mood=emerald|rose|ice|storm|still`, `spot=hill|fire|lie|tulip|garden|bench`,
 `x`, `z`, `eye` (stand anywhere, eye height in metres), `yaw`, `pitch`, `fov`,
 `t` (aurora time), `sky` (star rotation, degrees), `cons=1`, `open=journal`,
 `focus=<constellation id>`, `lens=0`, `ghost=N` (N make-believe companions, no network),
@@ -215,13 +278,20 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 
 ## Known weak spots (honest list)
 
-- Grass: tufted, arcing blades with seed heads now, but still coarse ribbons; the ground
-  shows between tufts, most on `low`. The owner asked twice for better grass.
+- Grass: now slender blades cut from cards, much denser, but underfoot (looking straight
+  down within two metres) the ground still shows between plants, most on `low`. The owner asked
+  three times for better grass and has not yet seen this version.
 - Winter is the least finished season: snow is a ground colour, not depth (nothing is
   buried; rocks, tent and bench carry no snow), the stream does not freeze, the fire and
   smoke are unchanged. Summer and autumn mostly recolour; spring got the most attention.
-- At sunset the sun sets behind the mountains but the valley floor is still lit by it
-  (terrain is not in the mountains' shadow bake). Stars and aurora show through the sunset.
+- Sunset: the valley floor now falls into shade when the sun is low (`uSunReach`), all at
+  once rather than as a shadow edge creeping across it. Stars and aurora no longer show
+  through the sunset. Dawn reuses the sunset colours and the evening mountain bake.
+- A full unattended day-and-year cycle (64 minutes) has not been watched; the clock was checked
+  at single hours, for two seconds of running, and for the jump-to-night button.
+- The new flowers were looked at in one screenshot per season. Snowdrops are white on snow and
+  hard to see; some cosmos petals shade brown; the tales in the journal were not looked at
+  rendered (the code path ran without errors in `check.mjs story`).
 - Cherry blossom reads as near-white with pink hearts; from a few metres the flowers on a
   card are soft. Bare winter twigs are few.
 - Camellias are the rose model tinted red, not a camellia model. "Cúc hoạ mi" is the daisy model.
@@ -234,7 +304,12 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
   by the owner for now (the no-image-files rule stands). Daisies and lavender have no close-up model. Cherry trees are
   clouds of cards and read as such from nearby.
 - Far grass tufts look saw-toothed when zoomed in; some blades stand on bare rock.
-- Mountain strata are a bit regular; the forest is grain, not trees, when zoomed right in.
+- Mountain strata now vary by massif (three dips, blended by a slow noise) and fade where a face
+  is not bedded; the forest is still grain, not trees, when zoomed right in.
+- Soft blocky light/dark patches show on the meadow floor in some views (seen before this
+  round too; cause not found: suspect the shadow map sampling).
+- Muscari and winter heath (added this round) have one model each; the heath reads a little
+  spiky up close. Their tales were written from general knowledge, not checked.
 - Rock outcrops in the meadow are flat patches with painted relief, not geometry.
 - Cabin and tent are much richer than before but still simple shapes; the signposts, the
   bench and the fence rails are plain boxes.

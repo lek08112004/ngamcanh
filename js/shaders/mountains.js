@@ -37,6 +37,17 @@ varying float vRise;
 ${commonGLSL}
 ${lightGLSL}
 float ridged(vec2 p){ return 1.0 - abs(2.0 * vnoise(p) - 1.0); }
+// Two lattices laid across each other. A single value noise, thresholded and seen at a few
+// pixels to the cell, shows its square grid as blocks; two at an angle do not.
+float rnoise(vec2 p){
+  return 0.5 + (vnoise(p) + vnoise(mat2(0.80, -0.60, 0.60, 0.80) * p * 1.19 + 23.7) - 1.0) * 0.72;
+}
+// Beds of rock along one dip: thick and thin in no order (a one-dimensional noise, not a
+// wave, so nothing repeats). fineK fades the thin beds once they are smaller than a pixel.
+float beds(float b, float fineK){
+  float n = vnoise(vec2(b * 1.9, 0.5)) * 0.62 + mix(0.5, vnoise(vec2(b * 4.7 + 9.0, 3.5)), fineK) * 0.38;
+  return smoothstep(0.34, 0.66, n);
+}
 void main(){
   vec2 xz = vWorld.xz;
   vec4 m = texture2D(uMtnMap, (xz - uMtnRect.xy) * uMtnRect.zw);
@@ -55,15 +66,17 @@ void main(){
 
   // size of a pixel on the mountainside, in metres: detail finer than this is averaged out
   float px = max(length(dFdx(vWorld)), length(dFdy(vWorld)));
-  float lT = 1.0 - smoothstep(0.30, 1.3, px);
 
   // ---- what grows where
   float treeN = vnoise(xz * 0.021 + 3.0) * 0.62 + vnoise(xz * 0.055 + 9.0) * 0.38;
-  float crowns = vnoise(xz * 0.17) * 0.6 + vnoise(xz * 0.41 + 5.0) * 0.4;
+  // every octave is dropped to its mean before its cells shrink to a couple of pixels
+  float crowns = mix(0.5, rnoise(xz * 0.17), 1.0 - smoothstep(0.30, 0.60, px * 0.17)) * 0.6
+    + mix(0.5, rnoise(xz * 0.41 + 5.0), 1.0 - smoothstep(0.30, 0.60, px * 0.41)) * 0.4;
   float treeline = 104.0 + 80.0 * treeN - 30.0 * (1.0 - ao);
   float forest = (1.0 - smoothstep(treeline - 40.0, treeline + 14.0, vRise)) * (1.0 - smoothstep(0.36, 0.72, slope + (mid - 0.5) * 0.3));
   forest *= smoothstep(2.0, 20.0, vRise - 16.0 * treeN + 8.0);
-  float fine = mix(0.5, vnoise(xz * 0.9 + 11.0) * 0.55 + vnoise(xz * 2.1 + 3.0) * 0.45, lT);   // single trees
+  float fine = mix(0.5, rnoise(xz * 0.9 + 11.0), 1.0 - smoothstep(0.30, 0.60, px * 0.9)) * 0.55
+    + mix(0.5, rnoise(xz * 2.1 + 3.0), 1.0 - smoothstep(0.30, 0.60, px * 2.1)) * 0.45;   // single trees
   forest = smoothstep(0.20, 0.70, forest + (crowns - 0.5) * 0.34 + (fine - 0.5) * 0.30);
   float snowLine = 218.0 + (big - 0.5) * 90.0 + 34.0 * uSeason.y - 60.0 * uSeason.z - 150.0 * uSeason.w;
   float snow = smoothstep(snowLine - 22.0, snowLine + 34.0, vRise + (mid - 0.5) * 46.0) * (1.0 - smoothstep(0.40, 0.62, slope));
@@ -85,11 +98,21 @@ void main(){
   float l1 = 1.0 - smoothstep(0.8, 3.2, px);
   float l2 = 1.0 - smoothstep(0.12, 0.55, px);
   float d1 = ridged(xz * 0.11 + mid * 1.5);
-  // tilted beds of rock, not level contours
-  float bedY = dot(vWorld, vec3(0.045, 0.085, 0.030)) + mid * 1.6 + big * 3.0;
-  float strata = smoothstep(0.2, 0.8, 0.5 + 0.5 * sin(bedY * 6.2831853));
-  h = mid * 7.0 + gully * 5.0 * cliff + d1 * 2.4 * l1 + strata * 1.6 * cliff * l1;
-  rockTone = mid * 0.34 + gully * 0.40 * cliff + d1 * 0.20 * l1 + strata * 0.22 * cliff - 0.06;
+  // Tilted beds of rock. Each massif dips its own way: three fixed dips, and a slow noise
+  // says which one a mountain has. (The results are blended, never the planes themselves:
+  // turning a plane by a noise swirls the bands.) Some faces show their bedding plainly,
+  // others hardly at all.
+  float fineK = 1.0 - smoothstep(0.45, 1.1, px);
+  float warp = mid * 1.6 + big * 2.2;
+  float massif = vnoise(xz * 0.0042 + 40.0);
+  float strata = mix(
+    mix(beds(dot(vWorld, vec3(0.045, 0.085, 0.030)) + warp, fineK),
+        beds(dot(vWorld, vec3(-0.062, 0.072, 0.016)) + warp * 0.7 + 31.0, fineK), smoothstep(0.34, 0.46, massif)),
+    beds(dot(vWorld, vec3(0.012, 0.104, -0.050)) - warp * 0.8 + 67.0, fineK), smoothstep(0.54, 0.66, massif));
+  float bedded = smoothstep(0.22, 0.62, vnoise(xz * 0.013 + 80.0) * 0.7 + gully * 0.3);
+  strata = mix(0.5, strata, bedded);
+  h = mid * 7.0 + gully * 5.0 * cliff + d1 * 2.4 * l1 + strata * 1.3 * cliff * l1;
+  rockTone = mid * 0.34 + gully * 0.40 * cliff + d1 * 0.20 * l1 + (strata - 0.5) * 0.20 * cliff + 0.05;
 #if MTN_Q > 1
   float d2 = vnoise(vec2(xz.x * 0.83 + xz.y * 0.31, vWorld.y * 1.25 + xz.y * 0.47));
   crack = pow(ridged(xz * 0.31 + vec2(mid * 2.2, vWorld.y * 0.13)), 7.0) * l2;

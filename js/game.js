@@ -58,6 +58,30 @@ export const CONSTELLATIONS = [
   },
 ];
 
+// The order the sky is woven in, simplest first: a five-star chain, then the shapes with a
+// loop, then the big ones with many branches. CONSTELLATIONS keeps its own order (the labels
+// and the journal use it); only the game walks this list.
+export const WEAVE_ORDER = ['cas', 'cyg', 'lyr', 'uma', 'sco', 'ori', 'leo'];
+// What each step up takes away. `stage` counts every constellation woven in the game, across
+// visits (saved), so the difficulty climbs with you and not with the session:
+//   0-1  faint guide lines show the whole figure, the next good star glows gold
+//   2-3  no guide lines: you must know the shape (the gold hint stays)
+//   3+   a weave tolerates a few wrong strokes (a star not joined to one already lit); one
+//        too many and the threads come loose and the figure must be begun again
+//   4+   no gold hint
+//   5+   dawn is coming: finish before the sky pales for the full bonus
+//   7+   (second round of the sky) unlit stars only show near the firefly; fewer slips allowed
+export function weaveRules(stage) {
+  return {
+    guides: stage < 2,
+    beckon: stage < 4,
+    slips: stage < 3 ? Infinity : stage < 7 ? 3 : 2,
+    dawn: stage < 5 ? 0 : Math.max(55, 100 - 6 * (stage - 5)),
+    hidden: stage >= 7,
+    dust: Math.max(0, Math.min(4, Math.floor(stage / 2))),
+  };
+}
+
 // Project each constellation onto a local tangent plane, normalised to a unit box.
 for (const c of CONSTELLATIONS) {
   const ra0 = c.stars.reduce((s, p) => s + p[0], 0) / c.stars.length;
@@ -95,13 +119,17 @@ export class StardustGame {
     this.best = 0;
     this.woven = new Set();         // ids woven at least once, ever
     this.wishes = 0;
+    this.stage = 0;                 // constellations woven in the game so far (sets the difficulty)
     this._load();
 
     this.combo = 0;
     this.comboTimer = 0;
     this.charge = 0;
-    this.cycle = 0;
-    this.index = 0;
+    this.slips = 0;                 // wrong strokes in the current weave
+    this.dawn = 0;                  // seconds left before the sky pales (0 = no clock)
+    this.dawnLate = false;
+    this.cycle = Math.floor(this.stage / WEAVE_ORDER.length);
+    this.index = this.stage % WEAVE_ORDER.length;
     this.completed = 0;
     this.surge = 0;
     this.storm = 0;                 // seconds of aurora storm left
@@ -120,7 +148,8 @@ export class StardustGame {
     this.firefly = this.pointerDir.clone();
     this.trail = Array.from({ length: 22 }, () => this.firefly.clone());
 
-    this.dustTarget = lowPower ? 10 : 15;
+    this.dustBase = lowPower ? 10 : 15;
+    this.dustTarget = this.dustBase;
     this.dust = [];
     this.spawnTimer = 0.4;
     this.sparks = [];
@@ -190,12 +219,13 @@ export class StardustGame {
   /* ---------- persistence ---------- */
   _load() {
     this.best = store.get('game.best', 0) | 0;
+    this.stage = store.get('game.stage', 0) | 0;
     this.wishes = store.get('game.wishes', 0) | 0;
     for (const id of store.get('game.woven', [])) this.woven.add(id);
   }
 
   _save() {
-    store.patch('game', { best: this.best, wishes: this.wishes, woven: this.woven });
+    store.patch('game', { best: this.best, wishes: this.wishes, woven: this.woven, stage: this.stage });
   }
 
   /* ---------- public API ---------- */
@@ -203,7 +233,23 @@ export class StardustGame {
   get multiplier() { return Math.min(5, 1 + 0.5 * Math.floor(this.combo / 4)); }
   get comboFraction() { return this.combo > 0 ? Math.max(0, this.comboTimer / COMBO_WINDOW) : 0; }
   get auroraTarget() { return 1.0 + 0.07 * Math.min(this.completed, 7) + this.surge + (this.storm > 0 ? 0.35 : 0); }
-  get current() { return this.cons[this.index]; }
+  get current() { return this.byId(WEAVE_ORDER[this.index]); }
+  byId(id) { return this.cons.find((c) => c.def.id === id); }
+  get rules() { return weaveRules(this.stage); }
+  /** where the stars woven so far hang: one new star sits just above each woven figure */
+  keepsakes() {
+    const out = [];
+    for (const c of this.cons) {
+      if (!this.woven.has(c.def.id)) continue;
+      const v = new THREE.Vector3();
+      let top = -1;
+      for (const d of c.dirs) { v.add(d); top = Math.max(top, d.y); }
+      v.normalize();
+      v.y = top + 0.035;
+      out.push({ id: c.def.id, dir: v.normalize() });
+    }
+    return out;
+  }
 
   state() {
     const c = this.current;
@@ -222,6 +268,11 @@ export class StardustGame {
       cycle: this.cycle,
       woven: this.woven.size,
       wishes: this.wishes,
+      stage: this.stage,
+      slips: this.slips,
+      maxSlips: this.rules.slips,
+      dawn: this.dawn,
+      beckon: this.rules.beckon,
     };
   }
 
@@ -230,9 +281,18 @@ export class StardustGame {
     this.mode = mode;
     this.group.visible = mode !== 'off';
     if (mode === 'play') {
-      this.current.shown = true;
+      this._begin();
       this.onChange(this.state());
     }
+  }
+
+  /** set up the weave of the current constellation for the present stage */
+  _begin() {
+    const c = this.current;
+    c.shown = true;
+    const r = this.rules;
+    this.dustTarget = this.dustBase - r.dust;
+    if (!c.done && !c.lit.some(Boolean)) { this.slips = 0; this.dawn = r.dawn; this.dawnLate = false; }
   }
 
   setPointer(ndcX, ndcY, isTouch) {
@@ -369,12 +429,19 @@ export class StardustGame {
   }
 
   _lightNode(c, k) {
-    // a weave stays "perfect" while every new star touches one already lit
+    // a weave stays "perfect" while every new star touches one already lit; a star that
+    // touches none is a wrong stroke, and past a few of those the weave comes loose
     const anyLit = c.lit.some(Boolean);
     if (anyLit) {
       let adjacent = false;
       for (const j of c.def.adj[k]) if (c.lit[j]) { adjacent = true; break; }
-      if (!adjacent) c.perfect = false;
+      if (!adjacent) {
+        c.perfect = false;
+        this.slips++;
+        const max = this.rules.slips;
+        if (this.slips > max) { this._unravel(c); return; }
+        if (Number.isFinite(max)) this.onToast(`Nét lạc: ngôi sao này không nối với sao nào đã sáng (${this.slips}/${max})`);
+      }
     }
     c.lit[k] = true;
     c.litT[k] = 0;
@@ -387,19 +454,38 @@ export class StardustGame {
     this.onChange(this.state());
   }
 
+  /** too many wrong strokes: the threads of this figure come loose and it must be begun again */
+  _unravel(c) {
+    const lit = c.lit.filter(Boolean).length;
+    c.lit.fill(false);
+    c.edgeP.fill(0);
+    c.perfect = true;
+    this.slips = 0;
+    this.charge = Math.min(MAX_CHARGE, this.charge + Math.floor(lit / 2));       // half the dust comes back
+    this.combo = 0;
+    c.dirs.forEach((d) => this._burst(d, 10, 50, [[0.6, 0.7, 0.9], [0.4, 0.5, 0.7]]));
+    this.audio.storm();
+    this.onToast('Mạch dệt bung ra. Bắt đầu lại, lần này theo đúng đường nối giữa các sao');
+    this.onChange(this.state());
+  }
+
   _finish(c) {
     c.done = true;
     this.completed++;
+    this.stage++;
     const first = !this.woven.has(c.def.id);
     this.woven.add(c.def.id);
     this.surge = Math.min(0.9, this.surge + 0.6);
-    this._addScore(500 * (1 + this.cycle * 0.5) * (c.perfect ? 1.5 : 1), false);
+    const beforeDawn = this.dawn > 0 && !this.dawnLate;
+    this._addScore(500 * (1 + this.cycle * 0.5) * (c.perfect ? 1.5 : 1) * (beforeDawn ? 1.3 : 1), false);
     this._save();
     const pal = [[0.35, 1.0, 0.6], [1.0, 0.45, 0.75], [1.0, 0.9, 0.55], [0.6, 0.8, 1.0]];
     c.dirs.forEach((d) => this._burst(d, c.perfect ? 40 : 28, 110, pal));
     this.audio.complete();
     let msg = `✦ ${c.def.name} đã bừng sáng`;
     if (c.perfect) msg += ' · mạch dệt hoàn hảo ×1.5';
+    if (beforeDawn) msg += ' · kịp trước rạng đông ×1.3';
+    this.dawn = 0;
     if (first) msg += ' · đã ghi vào sổ tay';
     this.onToast(msg);
     this.onComplete(c, first);
@@ -432,9 +518,9 @@ export class StardustGame {
         c.perfect = true;
         c.appear = 0;
       }
-      this.onToast(`Vòng trời thứ ${this.cycle + 1} — các chòm sao trở lại, thưởng nhiều hơn`);
+      this.onToast(`Vòng trời thứ ${this.cycle + 1}: các chòm sao trở lại, khó hơn và thưởng nhiều hơn. Sao chưa dệt chỉ hiện khi đom đóm tới gần`);
     }
-    this.current.shown = true;
+    this._begin();
     this.onChange(this.state());
   }
 
@@ -516,6 +602,11 @@ export class StardustGame {
       if (this.comboTimer <= 0) { this.combo = 0; this.onChange(this.state()); }
     }
     if (this.storm > 0) this.storm -= dt;
+    // the dawn clock of the harder weaves: it never ends the game, it only takes the bonus
+    if (this.dawn > 0 && !this.current.done && this.current.lit.some(Boolean)) {
+      this.dawn -= dt;
+      if (this.dawn <= 0) { this.dawn = 0; this.dawnLate = true; this.onToast('Trời đã rạng: vẫn dệt tiếp được, nhưng không còn thưởng rạng đông'); }
+    }
     this.surge *= Math.exp(-dt * 0.22);
     this.hintCooldown -= dt;
     const storming = this.storm > 0;
@@ -571,6 +662,7 @@ export class StardustGame {
     const nodeCos = Math.cos((this.touch ? 2.6 : 1.9) * DEG);
     const lineLit = [0.60, 0.85, 1.0];
     const cur = this.current;
+    const rules = this.rules;
     for (const c of this.cons) {
       const past = !c.shown && this.woven.has(c.def.id);      // woven in an earlier visit
       if (!c.shown && !past) continue;
@@ -598,9 +690,11 @@ export class StardustGame {
           let next = !c.lit.some(Boolean);
           if (!next) for (const j of c.def.adj[k]) if (c.lit[j]) { next = true; break; }
           const pulse = 0.5 + 0.5 * Math.sin(time * 2.6 + k * 0.9);
-          const col = next && c.perfect ? [1.0, 0.88, 0.60] : [0.70, 0.86, 1.0];
-          this._point(nd, R, col, 17 + 5 * pulse, c.appear * (0.45 + 0.35 * pulse));
-          this._point(nd, R, col, 44 + 12 * pulse, c.appear * 0.10);
+          const col = next && c.perfect && rules.beckon ? [1.0, 0.88, 0.60] : [0.70, 0.86, 1.0];
+          // in the later rounds a star still to weave is only a glimmer until the firefly comes near
+          const seen = rules.hidden ? 0.12 + 0.88 * Math.max(0, Math.min(1, (nd.dot(ff) - Math.cos(16 * DEG)) / (Math.cos(7 * DEG) - Math.cos(16 * DEG)))) : 1;
+          this._point(nd, R, col, (17 + 5 * pulse) * (0.6 + 0.4 * seen), c.appear * (0.45 + 0.35 * pulse) * seen);
+          this._point(nd, R, col, 44 + 12 * pulse, c.appear * 0.10 * seen);
           if (!c.done && nd.dot(ff) > nodeCos) {
             if (this.charge > 0) {
               this._lightNode(c, k);
@@ -614,7 +708,7 @@ export class StardustGame {
       c.def.edges.forEach(([a, b], e) => {
         const both = c.lit[a] && c.lit[b];
         if (both) c.edgeP[e] = Math.min(1, c.edgeP[e] + dt * 1.8);
-        if (isCur && !c.done) this._line(c.dirs[a], c.dirs[b], 1, lineLit, 0.10 * c.appear);
+        if (isCur && !c.done && rules.guides) this._line(c.dirs[a], c.dirs[b], 1, lineLit, 0.10 * c.appear);
         if (c.edgeP[e] > 0) this._line(c.dirs[a], c.dirs[b], c.edgeP[e], lineLit, dim * 0.85);
       });
       // weaving thread from the nearest lit star to the firefly
