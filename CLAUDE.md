@@ -10,9 +10,19 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
 - **Live site:** https://ngamcanh.pages.dev (Cloudflare Pages project `ngamcanh`, direct upload).
   The live copy is **behind the local repo** (the realism rework, the story thread and the
   dev tools have not been deployed). Check `git log` against what is deployed before
-  assuming anything. Deploying is outward-facing: **ask the owner first**, then:
-  `npx wrangler pages deploy . --project-name ngamcanh --branch main`
+  assuming anything. Deploying is outward-facing: **ask the owner first**, then deploy **a
+  clean export of the last commit, never the working folder** (the folder holds `private/`,
+  see below, and `wrangler pages deploy .` would upload it whatever `.gitignore` says):
+  `rm -rf ../ngamcanh-deploy && mkdir ../ngamcanh-deploy && git archive HEAD | tar -x -C ../ngamcanh-deploy && npx wrangler pages deploy ../ngamcanh-deploy --project-name ngamcanh --branch main`
   (needs a one-time `npx wrangler login`, which opens the owner's browser).
+- **`private/`** (git-ignored, on the owner's machine only): the owner's own full books. Now
+  `private/money/` = *Tâm Lý Học Về Tiền* (Morgan Housel, bản dịch Hoàng Thị Minh Phúc), full
+  text and its 62 pictures, converted from the owner's .mobi. The owner says the author has
+  licensed it to them and that the site will get a login so only they can read it; until that
+  login exists it must not reach any public copy. `main.js` imports `../private/money/book.js`
+  if it is there and adds it to the bench shelf (kind `licensed`, `imgBase` for its pictures);
+  without it the shelf has its usual six books. In the text, `[[img:NN]]` is a picture,
+  `[[q]]` a quoted passage, `[[sub:…]]` a chapter subtitle (`renderPage`).
 - **GitHub:** not pushed. There is no `origin` remote. The owner must create the repo and
   run `git push` themselves (CLI login needs their browser).
 - **Privacy rule the owner set:** nothing personal in the repo or the site. Commits use the
