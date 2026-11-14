@@ -112,6 +112,7 @@ uniform vec3 uSunCol;
 uniform vec3 uSunDir;
 uniform vec3 uCabinLight;
 uniform vec4 uFireLight;    // xyz: campfire position, w: flickering level
+uniform vec4 uLampLight;    // xyz: the bench lantern, w: its level (0 by day)
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uGrassFar;   // how far out real blades are drawn
@@ -165,7 +166,11 @@ void main(){
   float lA = 1.0 - smoothstep(0.7, 2.6, px);
   lB = 1.0 - smoothstep(0.10, 0.34, px);
   float lC = 1.0 - smoothstep(0.006, 0.014, px);
-  float hum = vnoise(xz * 0.16 + 3.0) * 0.65 + vnoise(xz * 0.41 + 8.0) * 0.35;
+  // hummocks: each octave is two lattices at an angle, averaged. Lit by the bump below, one
+  // square lattice shows its cells as soft light and dark squares on far slopes; two do not.
+  vec2 hq = mat2(0.80, -0.60, 0.60, 0.80) * xz;
+  float hum = 0.5 + ((vnoise(xz * 0.16 + 3.0) + vnoise(hq * 0.181 + 17.0) - 1.0) * 0.65
+                   + (vnoise(xz * 0.41 + 8.0) + vnoise(hq * 0.467 + 29.0) - 1.0) * 0.35) * 0.70;
   clump = mix(0.5, vnoise(xz * 1.7 + 9.0), lB);
   vec2 rq = mat2(0.8, -0.6, 0.6, 0.8) * xz;
   fibre = mix(0.5, vnoise(rq * vec2(46.0, 11.0)) * 0.6 + vnoise(xz * vec2(9.0, 41.0) + 3.0) * 0.4, lC);
@@ -179,6 +184,17 @@ void main(){
   float near = 1.0 - smoothstep(uGrassFar * 0.30, uGrassFar, dist);
   vec3 albedo = base * mix(1.04, 0.44, near);
   albedo *= (0.80 + 0.40 * clump) * (0.80 + 0.40 * fibre) * (0.82 + 0.36 * micro);
+  // the meadow is never one even green: a broad swell of tone over tens of metres (every tier)
+  albedo *= 0.88 + 0.24 * mix(0.5, vnoise(xz * 0.12 + 66.0) * 0.7 + vnoise(xz * 0.031 + 12.0) * 0.3, AA(0.12));
+#if TERRAIN_Q > 0
+  // and underfoot, between the blades: drifts of last year's thatch, now and then a scrap of bare soil
+  {
+    float th = mix(0.5, vnoise(xz * 0.33 + 17.0) * 0.6 + vnoise(xz * 0.9 + 5.0) * 0.4, AA(0.9));
+    albedo = mix(albedo, vec3(0.100, 0.084, 0.046) * (0.7 + 0.6 * clump), smoothstep(0.55, 0.80, th) * 0.42 * near * (1.0 - uSeason.w));
+    float bare = smoothstep(0.72, 0.88, mix(0.5, vnoise(xz * 2.2 + 41.0), AA(2.2)));
+    albedo = mix(albedo, vec3(0.066, 0.050, 0.033) * (0.6 + 0.8 * micro), bare * 0.32 * near);
+  }
+#endif
   float grassAmt = 1.0;
 
   // a dusting of far-off wildflowers by day
@@ -272,7 +288,23 @@ void main(){
       float under = smoothstep(4.6, 1.2, dT);
       if (under > 0.0) {
         vec2 pq = mat2(0.8, -0.6, 0.6, 0.8) * xz;
-        float litter = mix(0.30, smoothstep(0.64, 0.74, vnoise(pq * 21.0)), AA(21.0)) * smoothstep(0.30, 0.65, mix(0.5, vnoise(xz * 5.0 + 3.0), AA(5.0)) + under * 0.45);
+        // single petals, each an oval at its own place and angle in a cell of 7 cm, two layers
+        // offset: a thresholded value noise here drew square blocks of pink on the gravel
+        float drift = smoothstep(0.30, 0.65, mix(0.5, vnoise(xz * 5.0 + 3.0), AA(5.0)) + under * 0.45);
+        float pet = 0.0;
+        for (int L = 0; L < 2; L++) {
+          vec2 cc = pq * (L == 0 ? 14.0 : 19.0) + float(L) * 17.3;
+          vec2 id = floor(cc), f = fract(cc) - 0.5;
+          float keep = step(0.45, hash21(id + 5.1));
+          vec2 o = (vec2(hash21(id), hash21(id + 7.3)) - 0.5) * 0.45;
+          float an = hash21(id + 3.1) * 6.2832;
+          vec2 q = mat2(cos(an), sin(an), -sin(an), cos(an)) * (f - o);
+          float e = length(q * vec2(1.0, 1.45)) - 0.20 + 0.03 * q.y / max(length(q), 0.01);   // a notch at the tip
+          float ew = max(fwidth(e), 0.01);
+          pet = max(pet, keep * (1.0 - smoothstep(-ew, ew, e)));
+        }
+        pet = mix(0.11, pet, AA(19.0));               // smaller than a pixel: their mean cover
+        float litter = pet * drift;
         vec3 litterCol = mix(vec3(0.62, 0.40, 0.46), mix(vec3(0.46, 0.17, 0.035), vec3(0.50, 0.33, 0.05), mix(0.5, vnoise(pq * 9.0), AA(9.0))), uSeason.z / fall);
         albedo = mix(albedo, litterCol * (0.8 + 0.4 * micro), litter * under * fall * 0.75);
       }
@@ -305,7 +337,10 @@ void main(){
   float diff = max(dot(nb, L), 0.0);
   float vis = sunShadowSoft(vWorld) * cloudShade(xz, uTime) * (1.0 - 0.60 * rowShade * (1.0 - uRealFlowerShade * shadowCover(vWorld)));
   float ndl = max(dot(nb, uSunDir), 0.0);
-  vec3 light = uAmb * (0.5 + 0.5 * nb.y) + uAuroraTint * (0.30 + 1.2 * diff) + uSunCol * (0.05 + 0.95 * ndl) * vis;
+  // in shade only the sky lights the ground: a touch bluer, and a little less of it under a
+  // caster that also hides part of the sky (flat grey shade is what makes a scene look pasted on)
+  vec3 shadeSky = mix(vec3(1.0), vec3(0.84, 0.91, 1.06), (1.0 - vis) * uDay);
+  vec3 light = uAmb * (0.5 + 0.5 * nb.y) * shadeSky + uAuroraTint * (0.30 + 1.2 * diff) + uSunCol * (0.05 + 0.95 * ndl) * vis;
   vec3 col = albedo * light;
   // looking toward the sun the sward glows: light passes through the blades
   float back = pow(max(dot(viewDir, uSunDir), 0.0), 2.0);
@@ -326,6 +361,8 @@ void main(){
   // campfire
   vec3 lf = uFireLight.xyz - vWorld;
   col += albedo * vec3(1.0, 0.44, 0.12) * uFireLight.w * (1.0 - 0.6 * uDay) * 9.0 / (1.0 + dot(lf, lf) * 0.45);
+  vec3 ll = uLampLight.xyz - vWorld;                                     // the bench lantern: a small warm pool
+  col += albedo * vec3(1.0, 0.62, 0.26) * uLampLight.w * 3.2 / (1.0 + dot(ll, ll) * 1.6);
   // trampled, scorched earth around the fire ring
   col *= mix(0.45, 1.0, smoothstep(0.5, 1.7, length(lf.xz)));
 

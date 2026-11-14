@@ -285,6 +285,27 @@ export class Soundscape {
     thud.start(t, Math.random() * 6, 0.1);
   }
 
+  /** A page turned: a dry papery swish that rises and falls, with a faint flick at the end. */
+  page() {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.01;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 0.6;
+    f.frequency.setValueAtTime(2400, t);
+    f.frequency.linearRampToValueAtTime(4200 + Math.random() * 800, t + 0.22);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.012, t + 0.24);
+    g.gain.exponentialRampToValueAtTime(0.035, t + 0.29);        // the edge flicks over
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    this._place(g, 0.1, 0);
+    src.connect(f).connect(g);
+    src.start(t, Math.random() * 6, 0.42);
+  }
+
   /** 0..1 — how close the stream is. */
   setStream(level) {
     if (!this.ctx) return;

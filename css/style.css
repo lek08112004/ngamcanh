@@ -902,26 +902,171 @@ body.zen #actBtn { opacity: 0; pointer-events: none; }
 .camp-log li small { display: block; color: #9a9182; font-size: 11px; letter-spacing: 0.04em; }
 .tales .thread { border-left: 2px solid rgba(150, 190, 255, 0.5); padding-left: 10px; }
 
-/* ---------- the book on the garden bench ---------- */
+/* ---------- the shelf and the book on the garden bench ---------- */
 #book {
+  --read: Constantia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
   position: fixed;
   z-index: 12;
-  right: max(18px, env(safe-area-inset-right));
+  right: max(22px, env(safe-area-inset-right));
   top: 50%;
   transform: translateY(-50%);
-  width: min(380px, calc(100vw - 36px));
-  max-height: 70vh;
-  overflow-y: auto;
+  width: min(540px, calc(100vw - 36px));
+  perspective: 1400px;
+  animation: bookIn 0.9s var(--ease);
+}
+@keyframes bookIn { from { opacity: 0; transform: translateY(calc(-50% + 18px)); } to { opacity: 1; transform: translateY(-50%); } }
+body.reading #story, body.reading #quick { opacity: 0.18; transition: opacity 0.9s var(--ease); }
+
+/* the shelf: spines standing side by side on a board */
+#shelfView {
   padding: 18px 20px 14px;
   border-radius: 18px;
-  color: #f1e8d8;
-  background: rgba(30, 22, 16, 0.62);
-  animation: actIn 0.6s var(--ease);
+  background: linear-gradient(180deg, rgba(34, 24, 17, 0.70), rgba(22, 15, 10, 0.80));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 230, 190, 0.08);
+  backdrop-filter: blur(6px);
 }
-#book h3 { margin: 4px 0 10px; font: 600 17px/1.3 Georgia, "Times New Roman", serif; color: #fff4df; }
-#book #bookText { margin: 0 0 14px; font: 15px/1.7 Georgia, "Times New Roman", serif; }
-#book .book-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-#book #bookPage { font-size: 12px; color: #c8b9a0; min-width: 52px; text-align: center; }
+.shelf-head { margin: 0 0 14px; font: italic 15px/1.3 var(--read); color: #e9d9bd; letter-spacing: 0.02em; }
+.shelf {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 270px;
+  padding: 0 10px;
+  overflow-x: auto;
+}
+.spine {
+  appearance: none;
+  flex: 0 0 auto;
+  position: relative;
+  width: 58px;
+  height: calc(250px * var(--h));
+  padding: 16px 0 12px;
+  border: 0;
+  border-radius: 4px 4px 2px 2px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  /* a rounded back: darker at both edges, a soft highlight off-centre */
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.38), rgba(255, 255, 255, 0.10) 28%, rgba(255, 255, 255, 0.02) 46%, rgba(0, 0, 0, 0.10) 72%, rgba(0, 0, 0, 0.42)),
+    var(--c);
+  box-shadow: 2px 0 3px rgba(0, 0, 0, 0.35);
+  transform: rotate(var(--tilt));
+  transform-origin: bottom center;
+  transition: transform 0.5s var(--ease), filter 0.5s;
+}
+.spine:hover, .spine:focus-visible { transform: rotate(var(--tilt)) translateY(-12px); filter: brightness(1.12); outline: none; }
+.spine-notes { width: 46px; border-radius: 3px; }
+.spine-vale { width: 52px; }
+.spine-classic { width: 62px; }
+.spine-band {
+  width: 100%;
+  height: 9px;
+  border-top: 1px solid rgba(255, 225, 160, 0.55);
+  border-bottom: 1px solid rgba(255, 225, 160, 0.55);
+  opacity: 0.8;
+}
+.spine-notes .spine-band { border-color: rgba(255, 255, 255, 0.3); }
+.spine-title, .spine-author {
+  writing-mode: vertical-rl;
+  overflow: hidden;
+  min-height: 0;
+}
+/* a long title runs on into a second column, as on a real spine */
+.spine-title { flex: 1 1 auto; max-width: 92%; font: 600 13.5px/1.18 var(--read); letter-spacing: 0.03em; text-align: center; }
+.spine-author { flex: 0 1 auto; max-height: 38%; max-width: 92%; font: italic 10.5px/1.15 var(--read); opacity: 0.78; text-align: center; }
+.spine-mark {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font: 600 9.5px/1 var(--sans);
+  letter-spacing: 0.02em;
+  opacity: 0.8;
+}
+.shelf-board {
+  height: 14px;
+  margin: 0 -6px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #8a6440, #5c3f26 60%, #3b2817);
+  box-shadow: 0 8px 14px rgba(0, 0, 0, 0.45);
+}
+.shelf-hint { margin: 14px 0 0; font: 12px/1.4 var(--sans); color: #bfae92; text-align: center; }
+
+/* the open page: ivory paper, a reading face, the page number in the corner */
+#bookSheet {
+  position: relative;
+  max-height: min(68vh, 640px);
+  overflow-y: auto;
+  padding: 26px 34px 20px 40px;
+  border-radius: 3px 8px 8px 3px;
+  color: #3b3023;
+  background-color: #f1e7d0;
+  background-image:
+    linear-gradient(90deg, rgba(90, 60, 30, 0.22), rgba(90, 60, 30, 0.04) 7%, rgba(0, 0, 0, 0) 14%),
+    radial-gradient(120% 90% at 55% 45%, rgba(255, 252, 240, 0.55), rgba(196, 168, 120, 0.18) 100%),
+    var(--paper, none);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), inset -1px 0 0 rgba(120, 90, 50, 0.25), -6px 0 0 -2px color-mix(in srgb, var(--c, #6b3a2c) 85%, black);
+  transform-origin: left center;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 90, 50, 0.4) transparent;
+}
+.sheet-run {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 7px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(120, 90, 50, 0.25);
+  font: 11px/1.3 var(--read);
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  color: #8a7458;
+}
+#bookTitle { margin: 2px 0 14px; font: 600 20px/1.3 var(--read); color: #2f2418; }
+#bookQuote {
+  margin: 0 0 6px;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid rgba(140, 100, 50, 0.45);
+  font: italic 15.5px/1.65 var(--read);
+  color: #4a3a28;
+}
+.sheet-ref { margin: 4px 0 12px; font: 12px/1.4 var(--read); font-variant: small-caps; letter-spacing: 0.05em; color: #8a7458; }
+#bookText p { margin: 0 0 0.9em; font: 16.5px/1.78 var(--read); text-align: justify; hyphens: auto; }
+#bookText p:first-child::first-letter { font-size: 1.15em; font-weight: 600; }
+.sheet-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: 16px;
+  font: 11.5px/1.4 var(--read);
+  color: #8a7458;
+}
+#bookSrc { font-style: italic; }
+#bookPage { flex: 0 0 auto; font-variant: small-caps; letter-spacing: 0.06em; }
+
+/* turning: the page lifts away toward the spine, the next settles in, unhurried */
+#bookSheet.turn-out[data-dir="next"] { animation: pageOutNext 0.3s ease-in forwards; }
+#bookSheet.turn-out[data-dir="prev"] { animation: pageOutPrev 0.3s ease-in forwards; }
+#bookSheet.turn-in-next { animation: pageInNext 0.62s var(--ease); }
+#bookSheet.turn-in-prev { animation: pageInPrev 0.62s var(--ease); }
+@keyframes pageOutNext { to { opacity: 0; transform: rotateY(-16deg) translateX(-14px); filter: brightness(0.92); } }
+@keyframes pageOutPrev { to { opacity: 0; transform: rotateY(10deg) translateX(14px); filter: brightness(0.92); } }
+@keyframes pageInNext { from { opacity: 0; transform: rotateY(8deg) translateX(18px); } }
+@keyframes pageInPrev { from { opacity: 0; transform: rotateY(-8deg) translateX(-18px); } }
+@media (prefers-reduced-motion: reduce) { #bookSheet { animation: none !important; } }
+
+#book .book-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+#book .book-row .chip { background: rgba(28, 20, 14, 0.62); color: #e9dcc4; border-color: rgba(255, 225, 180, 0.22); }
+#book .book-row .chip:disabled { opacity: 0.35; cursor: default; transform: none; }
 #book #bookClose { margin-left: auto; }
 body.zen #book { opacity: 0.25; }
-@media (max-width: 640px) { #book { top: auto; bottom: 120px; transform: none; max-height: 46vh; } }
+@media (max-width: 640px) {
+  #book { top: auto; bottom: 96px; transform: none; animation: none; }
+  .shelf { height: 210px; }
+  .spine { height: calc(196px * var(--h)); width: 46px; }
+  #bookSheet { max-height: 52vh; padding: 18px 20px 14px 26px; }
+  #bookText p { font-size: 15.5px; }
+}

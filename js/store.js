@@ -38,6 +38,8 @@ const SCHEMA = {
   story: { done: list(40), seen: list(16), flowers: list(24), satchel: list(24), log: list(64), folded: bool(false) },
   // stage: how far through the constellations the weaving has come (sets the difficulty)
   game: { best: num(0), wishes: num(0), woven: list(16), stage: num(0, 0, 999) },
+  // the shelf on the garden bench: the book left open, and the page each book was left at ('id:n')
+  read: { book: str('', 16), at: list(12) },
 };
 
 function cleanValue(rule, v) {

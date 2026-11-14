@@ -148,6 +148,7 @@ uniform float uDay;
 uniform vec4 uSeason;
 uniform vec3 uCabinLight;
 uniform vec4 uFireLight;
+uniform vec4 uLampLight;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 varying float vH;
@@ -211,7 +212,7 @@ void main(){
   float nl = dot(N, uSunDir);
   float wrap = clamp(nl * 0.5 + 0.5, 0.0, 1.0);
   float through = pow(clamp(-nl, 0.0, 1.0), 1.5);          // sun shining through the blade from behind
-  vec3 light = uAmb * 0.88 * (0.3 + 0.7 * vH) + uAuroraTint * (0.12 + 0.85 * vH * vH)
+  vec3 light = uAmb * 0.88 * (0.3 + 0.7 * vH) * mix(vec3(1.0), vec3(0.84, 0.91, 1.06), (1.0 - vVis) * uDay) + uAuroraTint * (0.12 + 0.85 * vH * vH)
     + uSunCol * (0.16 + 0.84 * vH) * (0.25 + 0.75 * wrap) * vVis;
   // a blade is a shallow V: darker along the midrib, brighter at one edge
   float rib = 1.0 - 0.30 * exp(-bAcross * bAcross * 7.0) * (1.0 - bHead);
@@ -228,6 +229,8 @@ void main(){
   col += albedo * vec3(1.0, 0.52, 0.16) * below * (1.0 - 0.9 * uDay) * 30.0 / (1.0 + dot(lc, lc) * 0.55);
   vec3 lf = uFireLight.xyz - vWorld;
   col += albedo * vec3(1.0, 0.44, 0.12) * uFireLight.w * (1.0 - 0.6 * uDay) * (0.4 + 0.6 * vH) * 12.0 / (1.0 + dot(lf, lf) * 0.45);
+  vec3 ll = uLampLight.xyz - vWorld;                                     // the bench lantern: a small warm pool
+  col += albedo * vec3(1.0, 0.62, 0.26) * uLampLight.w * (0.5 + 0.5 * vH) * 4.0 / (1.0 + dot(ll, ll) * 1.6);
   float fog = 1.0 - exp(-dist * dist * uFogDensity * uFogDensity);
   col = mix(col, uFogColor, fog);
   gl_FragColor = vec4(col, cover);

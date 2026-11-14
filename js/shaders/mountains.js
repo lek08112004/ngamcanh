@@ -48,15 +48,35 @@ float beds(float b, float fineK){
   float n = vnoise(vec2(b * 1.9, 0.5)) * 0.62 + mix(0.5, vnoise(vec2(b * 4.7 + 9.0, 3.5)), fineK) * 0.38;
   return smoothstep(0.34, 0.66, n);
 }
+// A cubic B-spline read of the baked map, from four bilinear taps. Read plainly (bilinear),
+// the normals bend at every texel edge and gentle slopes show it as terraces of light and
+// dark stepping down the hill. MTN_Q 0 keeps the single tap.
+vec4 mapSmooth(sampler2D tex, vec2 uv){
+#if MTN_Q > 0
+  vec2 size = vec2(textureSize(tex, 0));
+  vec2 st = uv * size - 0.5;
+  vec2 i = floor(st), f = st - i;
+  vec2 w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0;
+  vec2 w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+  vec2 w2 = (1.0 + 3.0 * f + 3.0 * f * f - 3.0 * f * f * f) / 6.0;
+  vec2 w3 = f * f * f / 6.0;
+  vec2 g0 = w0 + w1, g1 = w2 + w3;
+  vec2 h0 = (i - 0.5 + w1 / g0) / size, h1 = (i + 1.5 + w3 / g1) / size;
+  return (texture2D(tex, vec2(h0.x, h0.y)) * g0.x + texture2D(tex, vec2(h1.x, h0.y)) * g1.x) * g0.y
+       + (texture2D(tex, vec2(h0.x, h1.y)) * g0.x + texture2D(tex, vec2(h1.x, h1.y)) * g1.x) * g1.y;
+#else
+  return texture2D(tex, uv);
+#endif
+}
 void main(){
   vec2 xz = vWorld.xz;
-  vec4 m = texture2D(uMtnMap, (xz - uMtnRect.xy) * uMtnRect.zw);
+  vec4 m = mapSmooth(uMtnMap, (xz - uMtnRect.xy) * uMtnRect.zw);
   vec3 n = vec3(m.x * 2.0 - 1.0, 0.0, m.y * 2.0 - 1.0);
   n.y = sqrt(max(1.0 - dot(n.xz, n.xz), 0.03));
   n = normalize(n);
   float ao = m.z;
   vec2 muv = (xz - uMtnRect.xy) * uMtnRect.zw;
-  float lit = mix(m.w, texture2D(uMtnDusk, muv).r, uDusk);
+  float lit = mix(m.w, uDusk > 0.001 ? mapSmooth(uMtnDusk, muv).r : 0.0, uDusk);
   vec3 toCam = cameraPosition - vWorld;
   float dist = length(toCam);
   float slope = 1.0 - n.y;
@@ -111,7 +131,10 @@ void main(){
     beds(dot(vWorld, vec3(0.012, 0.104, -0.050)) - warp * 0.8 + 67.0, fineK), smoothstep(0.54, 0.66, massif));
   float bedded = smoothstep(0.22, 0.62, vnoise(xz * 0.013 + 80.0) * 0.7 + gully * 0.3);
   strata = mix(0.5, strata, bedded);
-  h = mid * 7.0 + gully * 5.0 * cliff + d1 * 2.4 * l1 + strata * 1.3 * cliff * l1;
+  // ridged relief has sharp creases: on a gentle grassy slope, seen at a slant, they read as
+  // jagged contour steps, so it is kept for rock faces and let go sooner than the rest
+  float lRidge = 1.0 - smoothstep(0.35, 1.4, px);
+  h = mid * 7.0 + gully * 5.0 * cliff + d1 * 2.4 * lRidge * (0.25 + 0.75 * cliff) + strata * 1.3 * cliff * l1;
   rockTone = mid * 0.34 + gully * 0.40 * cliff + d1 * 0.20 * l1 + (strata - 0.5) * 0.20 * cliff + 0.05;
 #if MTN_Q > 1
   float d2 = vnoise(vec2(xz.x * 0.83 + xz.y * 0.31, vWorld.y * 1.25 + xz.y * 0.47));
@@ -119,7 +142,9 @@ void main(){
   h += d2 * 0.30 * l2;
   rockTone += (d2 - 0.5) * 0.20 * l2;
 #endif
-  h += (crowns * 1.5 + fine * 3.5 * l1) * forest;
+  // tree crowns in relief only while a crown is several pixels across; beyond that they are
+  // colour alone (in relief, cells a pixel or two wide shade as little square scales)
+  h += (crowns * 1.5 * (1.0 - smoothstep(0.30, 0.95, px)) + fine * 3.5 * (1.0 - smoothstep(0.12, 0.40, px))) * forest;
 #else
   rockTone = mid * 0.5 + gully * 0.3 * cliff;
 #endif
@@ -149,6 +174,9 @@ void main(){
     float det = dot(dpx, r1);
     vec3 grad = sign(det) * (hx * r1 + hy * r2);
     float amt = (1.0 - 0.85 * snow) * (1.0 - 0.5 * meadow * (1.0 - forest));
+    // a slope seen edge-on packs metres of relief into each pixel, and a derivative read off a
+    // two-by-two block of pixels then steps like a staircase: let the relief go before that
+    amt *= 1.0 - smoothstep(1.4, 4.5, px);
     nb = normalize(abs(det) * n - grad * 1.0 * amt);
   }
 #endif

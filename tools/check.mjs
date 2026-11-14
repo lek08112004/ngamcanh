@@ -175,12 +175,59 @@ async function story() {
     await open('time=day&spot=bench');
     await sleep(1200);
     check((await b.eval('document.getElementById("actBtn").textContent')).includes('đọc sách'), 'on the garden bench, "Ngồi đọc sách" is offered');
+    await b.eval('__av.store.set("read.at", []); __av.store.set("read.book", "")');
     await b.hold('e', 80);
-    await sleep(600);
-    const bk = await b.eval('({ open: __av.book.open, pages: __av.book.pages.length, title: document.getElementById("bookTitle").textContent })');
-    check(bk.open && bk.pages >= 2 && bk.title.length > 0, `E opens the book (${bk.pages} pages, first: "${bk.title}")`);
-    await b.click('#bookNext');
-    check((await b.eval('__av.book.i')) === 1, 'a page can be turned');
+    await sleep(700);
+    const shelf = await b.eval('({ open: __av.book.open, shelf: !document.getElementById("shelfView").classList.contains("hidden"), spines: [...document.querySelectorAll("#shelf .spine")].map((s) => s.dataset.book) })');
+    check(shelf.open && shelf.shelf && shelf.spines.length >= 5 && shelf.spines.length <= 6, `E opens the shelf first (${shelf.spines.length} books: ${shelf.spines.join(', ')})`);
+    // every book, every page, read on screen: none blank, none broken
+    const bad = [];
+    let total = 0;
+    for (const id of shelf.spines) {
+      await b.click(`#shelf [data-book="${id}"]`);
+      await sleep(250);
+      const n = await b.eval('__av.book.pages.length');
+      for (let i = 0; i < n; i++) {
+        if (i > 0) { await b.eval('__av.book.turning = 0; __av.turnPage(1)'); await sleep(330); }
+        const pg = await b.eval('({ i: __av.book.i, h: document.getElementById("bookTitle").textContent, t: document.getElementById("bookText").textContent, q: document.getElementById("bookQuote").textContent, run: document.getElementById("bookRun").textContent })');
+        total++;
+        if (pg.i !== i || pg.h.trim().length < 2 || pg.t.trim().length < 20 || /undefined|null|NaN|\[object/.test(pg.h + pg.t + pg.q + pg.run)) bad.push(`${id} p${i + 1}: "${pg.h}" (${pg.t.length} chars)`);
+      }
+      await b.click('#bookShelf');
+      await sleep(200);
+    }
+    check(bad.length === 0 && total >= 25, `all ${shelf.spines.length} books turned page by page, ${total} pages, none blank or broken${bad.length ? `: ${bad.slice(0, 4).join('; ')}` : ''}`);
+    // a classic carries its source and a verbatim quotation; the modern books only a note
+    const cl = await b.eval('(() => { const r = {}; for (const bk of __av.shelf) { const ps = __av.pagesOf(bk.id); r[bk.id] = { kind: bk.kind, src: bk.src || "", quotes: ps.filter((p) => p.q).length, refs: ps.filter((p) => p.q && p.ref).length }; } return r; })()');
+    const classics = Object.values(cl).filter((x) => x.kind === 'classic'), notes = Object.values(cl).filter((x) => x.kind === 'notes');
+    check(classics.length >= 1 && classics.every((x) => x.quotes >= 3 && x.quotes === x.refs && /Gutenberg/.test(x.src)) && notes.length >= 1 && notes.every((x) => x.quotes === 0) && Object.values(cl).filter((x) => x.kind === 'vale').length >= 2,
+      `classics quote with chapter and source (${classics.map((x) => x.quotes).join('/')} quotes), the modern book quotes nothing, the rest are the valley's own books`);
+    // with everything found, the valley's books grow and still have no blank page
+    const full = await b.eval(`(() => {
+      const s = __av.story, g = __av.game, keep = { f: [...s.flowers], seen: [...s.seen], woven: [...g.woven], log: [...s.log] };
+      for (const f of ['tulip','muscari','daffodil','lavender','poppy','cosmos','sunflower','rose','daisy','mum','snowdrop','heather','cherry','camellia']) s.flowers.add(f);
+      for (const c of ['uma','cas','ori','cyg','lyr','leo','sco']) { s.seen.add(c); g.woven.add(c); }
+      s.log.push('w:cas', 'p:tulip', 't:uma', 'r:1', 'k:1', 'd:1', 'b:0', 'l:walden', 'f:4');
+      const out = {};
+      for (const bk of __av.shelf) { const ps = __av.pagesOf(bk.id); out[bk.id] = { n: ps.length, bad: ps.filter((p) => !p.h || !p.t || p.t.length < 20 || /undefined|null|NaN/.test(p.h + p.t)).map((p) => p.h) }; }
+      s.flowers.clear(); keep.f.forEach((x) => s.flowers.add(x)); s.seen.clear(); keep.seen.forEach((x) => s.seen.add(x));
+      g.woven.clear(); keep.woven.forEach((x) => g.woven.add(x)); s.log.length = 0; s.log.push(...keep.log);
+      return out; })()`);
+    check(Object.values(full).every((x) => x.bad.length === 0) && full.flowers.n > 30 && full.sky.n > 20 && full.diary.n >= 3,
+      `with every flower pressed and every figure woven: ${Object.entries(full).map(([k, v]) => `${k} ${v.n}`).join(', ')} pages, none blank${Object.values(full).some((x) => x.bad.length) ? ` (bad: ${JSON.stringify(full)})` : ''}`);
+    // where you left off is saved through the store, and the shelf shows it
+    check((await b.eval('__av.store.get("read.at")')).includes('walden:7'), 'leaving a book at its last page is remembered (walden:7)');
+    await b.eval('__av.store.set("read.at", [])');
+    await b.click('#shelf [data-book="walden"]');
+    await sleep(250);
+    for (let k = 0; k < 3; k++) { await b.eval('__av.book.turning = 0'); await b.hold('ArrowRight', 60); await sleep(380); }
+    await b.click('#bookShelf');
+    await sleep(250);
+    const saved = await b.eval('({ at: __av.store.get("read.at"), book: __av.store.get("read.book"), mark: document.querySelector(\'#shelf [data-book="walden"] .spine-mark\').textContent, walked: __av.walker.on })');
+    check(saved.at.includes('walden:3') && saved.book === 'walden' && saved.mark.startsWith('tr. 4') && !saved.walked, `the arrow keys turn pages (not walk); the place is saved (${saved.at.join(', ')}; spine says "${saved.mark}")`);
+    await b.click('#shelf [data-book="walden"]');
+    await sleep(250);
+    check((await b.eval('__av.book.i')) === 3, 'and the book opens again at that page');
     await b.hold('e', 80);
     await sleep(400);
     check(!(await b.eval('__av.book.open')), 'and E closes it again');

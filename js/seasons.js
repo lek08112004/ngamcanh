@@ -35,6 +35,8 @@ export const GROW = {
   gMum:              [0.00, 0.00, 1.00, 0.00],
   gSnowdrop:         [0.00, 0.00, 0.00, 1.00],
   gHeather:          [0.00, 0.00, 0.00, 1.00],
+  gShrub:            [1.00, 1.00, 1.00, 1.00],   // clipped box at the ends of the garden bench
+  gFallen:           [1.00, 0.00, 0.00, 0.00],   // cherry petals lying on the ground, spring only
   ring:              [0.80, 1.00, 0.72, 0.86],   // roses round the middle tree; camellias in winter
   lavender:          [0.50, 1.00, 0.55, 0.00],   // the lavender block in the garden
   sunflower:         [0.00, 1.00, 0.00, 0.00],

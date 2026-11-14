@@ -105,6 +105,7 @@ uniform vec3 uSunDir;
 uniform vec3 uAuroraTint;
 uniform vec3 uCabinLight;
 uniform vec4 uFireLight;
+uniform vec4 uLampLight;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 varying vec3 vCol;
@@ -170,6 +171,7 @@ void main(){
 
   vec3 albedo;
   float thin = 0.0;                       // how much light passes through
+  float gloss = 0.5;                      // how smooth the surface is here: 0 matte .. 1 waxy (varies, or it reads as plastic)
   if (ray) {
     // warm and deep at the base, clear toward the tip, with the two long folds every ray has
     albedo = vCol * vec3(0.25, 0.23, 0.25) * mix(vec3(0.86, 0.60, 0.40), vec3(1.0), smoothstep(0.0, 0.6, v));
@@ -178,6 +180,7 @@ void main(){
     albedo *= 0.94 + 0.10 * fnoise(vec2(u * 3.0 + vSeed * 30.0, v * 4.0));
     vBump = sign(u) * (fold * 0.30 - exp(-u * u * 30.0) * 0.12);
     thin = 0.40;
+    gloss = 0.30 + 0.25 * fold;
   } else if (rose) {
     // velvet: deep colour in the heart, paling toward the lip, hardly any veining
     float grad = mix(0.42, 1.10, smoothstep(0.0, 0.95, v));
@@ -192,6 +195,7 @@ void main(){
     albedo = mix(albedo * vec3(1.06, 0.94, 0.86), albedo, smoothstep(0.0, 0.7, v));
     vBump = -sin(u * 11.0 + sin(v * 5.0 + vSeed * 20.0) * 0.9) * 0.04 * smoothstep(0.2, 0.8, v);
     thin = 0.55;
+    gloss = 0.12;
   } else if (petal) {
     // a tulip tepal: satin, deepest in colour low down, a pale blotch at the very base,
     // fine parallel veins running to the tip, the rim thin enough to glow
@@ -212,6 +216,9 @@ void main(){
     vBump = -sin(vp) * 0.07 * closeUp * smoothstep(0.1, 0.5, v);
     vBump += exp(-u * u * 60.0) * sign(u) * 0.22 * (1.0 - v * 0.6);
     thin = 0.70 + 0.25 * smoothstep(0.6, 1.0, au);
+    // the satin is uneven: glossier on the swell between veins and where the wax is thick,
+    // dull in the vein grooves, at the thin rim and in the base blotch
+    gloss = (0.40 + 0.55 * mott) * (0.78 + 0.22 * fineVeins * closeUp) * (1.0 - 0.55 * smoothstep(0.80, 1.0, max(au, v))) * smoothstep(0.02, 0.22, v);
   } else if (disc) {
     // the seed head: hundreds of florets on two families of spirals crossing each other
     // (21 one way, 34 the other), dark and tight at the centre, open and dusted with
@@ -232,6 +239,7 @@ void main(){
       albedo = mix(albedo, ring, smoothstep(0.55, 0.78, r) * (1.0 - smoothstep(0.92, 1.0, r)));
     }
     vBump = (floret - 0.5) * 0.5 * closeUp;
+    gloss = 0.10;
   } else {
     // glaucous green, with the faint grey bloom such leaves carry
     albedo = mix(vec3(0.018, 0.050, 0.024), vec3(0.058, 0.128, 0.058), clamp(v * 0.8 + vSeed * 0.25, 0.0, 1.0));
@@ -241,6 +249,7 @@ void main(){
     albedo *= 1.0 - 0.11 * lv * closeUp * step(0.001, au) * (1.0 - smoothstep(0.5, 1.2, fwidth(au * 30.0 - v * 22.0)));
     vBump = lv * 0.12 * closeUp * sign(u) * step(0.001, au);
     thin = 0.45;
+    gloss = 0.22 + 0.25 * fnoise(vec2(u * 5.0 + vSeed * 11.0, v * 7.0));                    // a leaf is mostly matte, waxier in patches
   }
 
   // tilt the normal sideways along the veins (cheap bump)
@@ -248,19 +257,28 @@ void main(){
   float nl = dot(N, L);
   float diff = clamp(nl * 0.72 + 0.28, 0.0, 1.0);
   float through = pow(clamp(-nl, 0.0, 1.0), 1.4) * thin;
+  // looking toward the sun through a petal the glow is strongest, and light that has passed
+  // through tissue comes out deeper and more saturated than light bounced off it
+  through *= 0.75 + 0.9 * pow(max(dot(-V, L), 0.0), 3.0);
+  vec3 transCol = albedo * (1.0 + 1.6 * clamp(albedo - dot(albedo, vec3(0.333)), 0.0, 1.0) / max(dot(albedo, vec3(0.333)), 0.01));
   float sky = 0.55 + 0.45 * N.y;
   float ao = mix(0.42, 1.0, smoothstep(0.0, 0.55, vY));           // darker down among the stems
   if (rose) ao *= mix(0.45, 1.0, smoothstep(0.0, 0.6, v));        // and deep between the petals
   else if (petal) ao *= mix(0.62, 1.0, smoothstep(0.0, 0.55, v)); // the shaded well of the cup
-  vec3 light = uAmb * sky * ao
-    + uSunCol * (diff * 0.95 + through * 0.85) * ao * vVis
+  vec3 light = uAmb * sky * ao * mix(vec3(1.0), vec3(0.86, 0.92, 1.05), (1.0 - vVis) * uDay)
+    + uSunCol * diff * 0.95 * ao * vVis
     + uAuroraTint * (0.25 + 0.65 * max(N.y, 0.0));
-  vec3 col = albedo * light;
+  vec3 col = albedo * light + transCol * uSunCol * through * 0.85 * ao * vVis;
   // soft sheen where the waxy surface catches the sun; a rose is velvet and glows at grazing angles instead
   vec3 H = normalize(L + V);
   float nh = max(dot(N, H), 0.0);
   // satin: a broad soft sheen with a tighter glint inside it
-  col += uSunCol * (pow(nh, 9.0) * 0.030 + pow(nh, 48.0) * 0.050) * (rose ? 0.25 : 1.0) * (petal ? 1.0 : 0.7) * vVis;
+  // the lobe widens and dims where the surface is rough, so one petal is never one even shine
+  float specPow = mix(5.0, 44.0, gloss);
+  col += uSunCol * (pow(nh, specPow * 0.25) * 0.022 + pow(nh, specPow) * 0.060 * gloss) * (rose ? 0.25 : 1.0) * vVis;
+  // fresnel: at grazing angles every leaf and petal mirrors a little sky (a thin cuticle, not a coat of varnish)
+  float fres = pow(1.0 - abs(dot(N, V)), 4.0);
+  col += uAmb * sky * fres * (0.05 + 0.10 * gloss) * ao;
   if (rose) col += albedo * (uAmb + uSunCol * 0.5 * vVis) * pow(1.0 - abs(dot(N, V)), 2.5) * 0.9;
 
   // morning dew: a few beads sitting on petals and leaves, each a tiny lens with one glint
@@ -289,6 +307,8 @@ void main(){
   col += albedo * vec3(1.0, 0.52, 0.16) * (1.0 - 0.9 * uDay) * 26.0 / (1.0 + dot(lc, lc) * 0.55);
   vec3 lf = uFireLight.xyz - vWorld;
   col += albedo * vec3(1.0, 0.44, 0.12) * uFireLight.w * (1.0 - 0.6 * uDay) * 11.0 / (1.0 + dot(lf, lf) * 0.45);
+  vec3 ll = uLampLight.xyz - vWorld;                                     // the bench lantern: a small warm pool
+  col += albedo * vec3(1.0, 0.62, 0.26) * uLampLight.w * 4.5 / (1.0 + dot(ll, ll) * 1.6);
 
   float fog = 1.0 - exp(-dist * dist * uFogDensity * uFogDensity);
   col = mix(col, uFogColor, fog);

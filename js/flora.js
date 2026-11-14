@@ -368,7 +368,7 @@ function flowerMaterial(shared, plant, lod) {
       uSunDir: shared.uSunDir,
       uAuroraTint: shared.uAuroraTint,
       uCabinLight: shared.uCabinLight,
-      uFireLight: shared.uFireLight,
+      uFireLight: shared.uFireLight, uLampLight: shared.uLampLight,
       uFogColor: shared.uFogColor,
       uFogDensity: shared.uFogDensity,
     },
@@ -615,11 +615,34 @@ function onWalk(x, z, margin = 0) {
   if (r < 7.4 + margin && Math.min(Math.abs(gx), Math.abs(gz)) < 0.85 + margin) return true;
   return segDist(x, z, WALK_A, WALK_B)[0] < 1.0 + margin;
 }
+/** the bench in its own frame: [along the seat, forward from it] */
+function benchLocal(x, z) {
+  const dx = x - GARDEN_BENCH.x, dz = z - GARDEN_BENCH.z, c = Math.cos(GARDEN_BENCH.yaw), s = Math.sin(GARDEN_BENCH.yaw);
+  return [dx * c - dz * s, dx * s + dz * c];
+}
+/** a point given in the bench's frame, in the world */
+function benchWorld(lx, lz) {
+  const c = Math.cos(GARDEN_BENCH.yaw), s = Math.sin(GARDEN_BENCH.yaw);
+  return [GARDEN_BENCH.x + lx * c + lz * s, GARDEN_BENCH.z - lx * s + lz * c];
+}
+export const BENCH_LANTERN = [1.42, 0.10];            // beside the right arm of the bench, in its frame
+export const BENCH_NOOK = 2.5;
+/** the nook round the bench: flowers to both ends and behind it; the seat, the feet and the view kept clear */
+function benchNook(x, z) {
+  const r = Math.hypot(x - GARDEN_BENCH.x, z - GARDEN_BENCH.z);
+  if (r > BENCH_NOOK) return -1;
+  const [lx, lz] = benchLocal(x, z);
+  if (Math.abs(lx) < 1.12 && lz > -0.50 && lz < 1.25) return 0;            // the seat and where your feet go
+  if (lz >= 1.25 && Math.abs(lx) < 0.45) return 0;                          // a narrow way up to it through the flowers
+  if (Math.hypot(lx - BENCH_LANTERN[0], lz - BENCH_LANTERN[1]) < 0.30) return 0;
+  return 0.62 + 0.36 * (1 - r / BENCH_NOOK);                                // low kinds hug the bench
+}
 /** where the flower walk is planted: 0 outside, else how close to its edge (1 = right by the walk) */
 function walkBed(x, z) {
+  const nook = benchNook(x, z);
+  if (nook >= 0) return nook;
   if (onWalk(x, z)) return 0;
   const ax = GARDEN_ARCH.x, cz = GARDEN.z;
-  if (Math.hypot(x - GARDEN_BENCH.x, z - GARDEN_BENCH.z) < 1.3) return 0;
   // borders along the walk to the arch
   const [d, t] = segDist(x, z, WALK_A, WALK_B);
   if (t > 0.12 && d < 4.6 && x < ax - 0.7) return 1 - (d - 1.0) / 3.6;
@@ -897,6 +920,23 @@ export function createGarden(shared, rng, scale, lod) {
         P[kind].push(place(x + (rng() - 0.5) * 0.12, z + (rng() - 0.5) * 0.12, (h0 + rng() * hv) * back, c));
       }
     }
+    // the nook round the bench is planted closer still: it is the view from the seat
+    for (let k = 0, n = Math.round(1400 * scale); k < n; k++) {
+      const a = rng() * TAU, rr = BENCH_NOOK * Math.sqrt(rng());
+      const x = GARDEN_BENCH.x + Math.cos(a) * rr, z = GARDEN_BENCH.z + Math.sin(a) * rr;
+      const near = benchNook(x, z);
+      if (near <= 0) continue;
+      const i = got++;
+      const pt = patchTone(x * 2.1, z * 2.1);
+      for (let se = 0; se < 4; se++) {
+        const kind = walkKind(se, x, z, near);
+        if (SPARE[kind] && i % SPARE[kind]) continue;
+        const [h0, hv] = H[kind];
+        const list = COL[kind];
+        const c = list[Math.floor((rng() < 0.85 ? pt : rng()) * list.length * 0.999)];
+        P[kind].push(place(x + (rng() - 0.5) * 0.08, z + (rng() - 0.5) * 0.08, (h0 + rng() * hv) * (0.80 + 0.25 * (1 - near)), c));
+      }
+    }
     add('gTulip', plant(shared, tulipGeo, P.tulip, lod));
     add('gDaffodil', plant(shared, daffodilGeo, P.daffodil, false));
     add('gMuscari', plant(shared, muscariGeo, P.muscari, false));
@@ -1027,6 +1067,90 @@ export function createGarden(shared, rng, scale, lod) {
     group.add(flies);
   }
 
+  /* --- round the bench: clipped box balls at its ends, petals fallen on the ground in spring --- */
+  {
+    const box = crownUniforms(1);
+    box.uColA.value.set(0.018, 0.052, 0.020);
+    box.uColB.value.set(0.055, 0.112, 0.042);
+    const leaves = [];
+    for (const [lx, lz, r] of [[-1.55, -0.55, 0.42], [1.66, -0.62, 0.36], [-2.05, 0.15, 0.30], [0.4, -1.35, 0.34]]) {
+      const [x, z] = benchWorld(lx, lz);
+      const cy = terrainH(x, z) + r * 0.78;
+      for (let k = 0, m = Math.round(95 * r / 0.45); k < m; k++) {
+        const v = new THREE.Vector3(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize();
+        const depth = Math.pow(rng(), 0.5);
+        leaves.push([x + v.x * r * depth, cy + v.y * r * 0.85 * depth, z + v.z * r * depth, 0.15 + rng() * 0.09, 0.25 + 0.75 * depth * (0.6 + 0.4 * Math.max(v.y, 0)), v.x * depth, v.y * depth, v.z * depth]);
+      }
+    }
+    group.add(cards(shared, leaves, box));
+    grow.gShrub = { uGrow: box.uScale, uTint: { value: new THREE.Vector4() } };
+
+    // petals lying where they fell: thickest under the crowns and round the bench, a few on the seat
+    const pm = new THREE.MeshStandardMaterial({ map: petalTexture(), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.85 });
+    const pgeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const n = Math.round(2600 * scale);
+    const fallen = new THREE.InstancedMesh(pgeo, pm, n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      let x, z;
+      if (i % 3 === 0) { const a = rng() * TAU, rr = 2.6 * Math.sqrt(rng()); x = GARDEN_BENCH.x + Math.cos(a) * rr; z = GARDEN_BENCH.z + Math.sin(a) * rr; }
+      else { const [tx, tz] = GARDEN_TREES[i % GARDEN_TREES.length]; const a = rng() * TAU, rr = 4.2 * Math.pow(rng(), 0.65); x = tx + Math.cos(a) * rr; z = tz + Math.sin(a) * rr; }
+      const [lx, lz] = benchLocal(x, z);
+      const onSeat = Math.abs(lx) < 0.88 && lz > -0.22 && lz < 0.18;
+      pos.set(x, terrainH(GARDEN_BENCH.x, GARDEN_BENCH.z) * (onSeat ? 1 : 0) + (onSeat ? 0.48 : terrainH(x, z) + 0.012 + rng() * 0.006), z);
+      e.set((rng() - 0.5) * 0.5, rng() * TAU, (rng() - 0.5) * 0.5);
+      q.setFromEuler(e);
+      const s = 0.022 + rng() * 0.018;
+      sc.set(s, 1, s * (1.15 + rng() * 0.3));
+      fallen.setMatrixAt(i, m4.compose(pos, q, sc));
+      const w = rng();
+      col.setRGB(0.98, 0.80 + 0.14 * w, 0.86 + 0.10 * w).multiplyScalar(rng() < 0.25 ? 0.82 : 1);       // some browning already
+      fallen.setColorAt(i, col);
+    }
+    fallen.receiveShadow = true;
+    group.add(fallen);
+    grow.gFallen = { uGrow: { value: 1 }, uTint: { value: new THREE.Vector4() } };
+    group.userData.meshes = group.userData.meshes || {};
+    group.userData.meshes.gFallen = [fallen];
+  }
+
+  /* --- a lantern on a short post by the bench, lit at dusk --- */
+  {
+    const [x, z] = benchWorld(BENCH_LANTERN[0], BENCH_LANTERN[1]);
+    const y = terrainH(x, z);
+    const lantern = new THREE.Group();
+    const iron = new THREE.MeshStandardMaterial({ color: 0x23201c, roughness: 0.55, metalness: 0.6 });
+    const timber = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.9 });
+    const glass = new THREE.MeshStandardMaterial({ color: 0xffe2b0, emissive: 0xffa040, emissiveIntensity: 0, roughness: 0.2, transparent: true, opacity: 0.85 });
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.82, 10), timber);
+    post.position.y = 0.41;
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.025, 4), iron);
+    plate.position.y = 0.83; plate.rotation.y = Math.PI / 4;
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.19, 4, 1), glass);
+    core.position.y = 0.94; core.rotation.y = Math.PI / 4;
+    const flame = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd28a }));
+    flame.position.y = 0.93; flame.scale.y = 1.7;
+    lantern.add(post, plate, core, flame);
+    for (let k = 0; k < 4; k++) {                                   // corner bars
+      const a = Math.PI / 4 + k * Math.PI / 2;
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.21, 0.014), iron);
+      bar.position.set(Math.cos(a) * 0.066, 0.94, Math.sin(a) * 0.066);
+      lantern.add(bar);
+    }
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.09, 4), iron);
+    roof.position.y = 1.085; roof.rotation.y = Math.PI / 4;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.006, 6, 12), iron);
+    ring.position.y = 1.15;
+    lantern.add(roof, ring);
+    lantern.position.set(x, y, z);
+    lantern.rotation.y = GARDEN_BENCH.yaw;
+    const light = new THREE.PointLight(0xffb066, 0, 7, 2);
+    light.position.set(0, 0.94, 0);
+    lantern.add(light);
+    group.add(lantern);
+    group.userData.lantern = { glass, flame, light, pos: new THREE.Vector3(x, y + 0.94, z) };
+  }
+
   /* --- a bench under the blossom: slatted seat and back on turned legs --- */
   const bench = new THREE.Group();
   const plank = (w, h, d, x, y, z, rx = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wood); m.position.set(x, y, z); m.rotation.x = rx; bench.add(m); };
@@ -1055,6 +1179,29 @@ export function createGarden(shared, rng, scale, lod) {
   return group;
 }
 const smooth01 = (t) => { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); };
+
+/** a cherry petal drawn once on a canvas: a notched oval, white at the tip, blush at the base */
+function petalTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const g = cv.getContext('2d');
+  g.translate(32, 34);
+  g.beginPath();
+  g.moveTo(0, 26);
+  g.bezierCurveTo(-20, 16, -22, -14, -7, -26);
+  g.lineTo(0, -19);                                   // the notch at the tip
+  g.lineTo(7, -26);
+  g.bezierCurveTo(22, -14, 20, 16, 0, 26);
+  const gr = g.createLinearGradient(0, 26, 0, -26);
+  gr.addColorStop(0, '#f0a8bc'); gr.addColorStop(0.45, '#fbe3ea'); gr.addColorStop(1, '#fff7f8');
+  g.fillStyle = gr;
+  g.fill();
+  g.strokeStyle = 'rgba(220,150,170,0.35)'; g.lineWidth = 0.8;
+  for (let k = -2; k <= 2; k++) { g.beginPath(); g.moveTo(0, 24); g.quadraticCurveTo(k * 5, 0, k * 4, -20); g.stroke(); }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 /* ---------- trail signposts ---------- */
 export function createSignposts(places) {

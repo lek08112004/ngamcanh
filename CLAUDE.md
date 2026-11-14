@@ -58,6 +58,7 @@ js/world.js           terrainH(), terrain, mountain ring + baked light map, cabi
 js/flora.js           flower geometry builder (Geo), species (far + close-up models), garden, trees
 js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (twelve kinds, with their stories), saved progress
 js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sunAt/partAt, WorldClock (no renderer code)
+js/library.js         the six books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
 js/layout.js          world coordinates (CABIN, CAMP, GARDEN, BOUNDS) — imports nothing
 js/game.js            constellation game (firefly, stardust, storms, wishes, save)
@@ -166,7 +167,7 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   only back at the tent. The cabin porch offers "Vào nhà nghỉ" (E): a fade, a page of text and a
   reading from the book, and the clock moves to the next part of the day (overnight = next
   season if the clock runs). The garden bench (`GARDEN_BENCH`: back to the cherry trunk, looking
-  west through the arch) offers "Ngồi đọc sách" (E): a book of the tales you have unlocked.
+  west through the arch) offers "Ngồi đọc sách" (E): a little shelf of six books (below).
   Everything leaves a line in the camp diary (`story.log`, short ids rendered by `logText`).
 - **Sky and ground are tied**: `THREADS` in `lore.js` link each constellation to a flower (same
   season or a shared name); the thread shows once the flower is pressed and the constellation
@@ -176,10 +177,47 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   go at 2, the gold hint at 4, wrong strokes unravel the weave from 3, a dawn bonus clock from 5,
   hidden stars from 7. `WEAVE_ORDER` runs simplest first. Each woven figure leaves a keepsake
   star above it for good. `?debug=1&stage=N` starts N figures in.
+- **The bench shelf** (`js/library.js`, UI in `main.js` around `renderShelf`/`openVolume`/`turnPage`):
+  six books, three kinds, and the owner's copyright rules decide what each may contain:
+  - `classic` (Walden; Meditations in George Long's 1862 English): authors long dead, public
+    domain. Each quotation is **verbatim**, copied from the Project Gutenberg plain text named
+    in `src` (Walden #205, Long #15877) and checked word for word when added; chapter or
+    book.section in `ref`. The Vietnamese under it is our own free rendering, labelled
+    "chuyển ý", never presented as a published translation. Add a quotation only after
+    checking it against the source text.
+  - `notes` ("Ghi chú bên lửa trại"): books still in copyright (Kahneman, Sagan, Hawking,
+    Carson). Only the real title and author, plus a reading note in the voice of a fictional
+    guest. **Never** copy, translate or closely summarise such a book.
+  - `vale`: the valley's own books, written for the site (Bà Vân's flower book, Ông Khải's sky
+    book, the visitor's camp diary). They are built from what has been done (`build(ctx)`), so
+    they grow; locked pages say how to unlock them, so no book is ever empty.
+  Where each book was left is saved (`read.at` = `['id:page', ...]`, `read.book`); arrow keys
+  and A/D turn pages while reading (they do not walk). The paper grain is drawn on a canvas
+  once (`paintPaper`); a page turn has a sound (`audio.page()`).
+- **The bench corner**: `benchNook()` in `flora.js` plants the four-season walk mix right round
+  the bench (seat, feet and a narrow way in kept clear), two-plus clipped box balls (`gShrub`),
+  cherry petals lying on the ground and the seat in spring (`gFallen`, an InstancedMesh with a
+  canvas-drawn petal), and a lantern on a post (`garden.userData.lantern`: a real
+  `PointLight` for the built things, plus `uLampLight` so the ground, grass and flowers get the
+  same warm pool; lit from dusk in `applyDay`).
 - **Stories**: every flower in `FLOWERS` (`story.js`) has `tales`, shown in the journal once the
   flower has been pressed; every constellation has `tale` (`TALES` at the end of `lore.js`). The owner
   wants these true and gripping. They were written from general knowledge and not checked
   against sources: check before adding to them, and say so if asked.
+- **Shadows and shade**: `sunShadowSoft` first looks for a caster (5 taps; in open sun it stops
+  there), then filters with eight bilinear lookups over a radius that grows with how far the
+  caster is above the point (1.1 to 5 texels): crisp at a stem's foot, soft under a crown.
+  Built things use `PCFSoftShadowMap`. Where the sun
+  is blocked, the sky light is tinted a little bluer (`shadeSky` in terrain, the same in grass
+  and flowers) so shade is not flat grey.
+- **Flower surfaces**: `gloss` in the flower fragment varies per pixel (mottle, vein grooves,
+  dull thin rim, matte discs, mostly-matte leaves) and sets both the width and strength of the
+  sun glint; a weak fresnel sky reflection at grazing angles; light coming through a petal is
+  more saturated than light bounced off it and strongest when looking toward the sun.
+- **Mountain relief at a slant**: the bump in `mountains.js` comes from screen derivatives of
+  a height `h`. On foothills seen edge-on, ridged noise and tree crowns in that height
+  stepped like contour terraces and square scales; they now fade with `px` sooner than the
+  rest, and the baked map is read with a cubic B-spline (`mapSmooth`, MTN_Q > 0).
 - **Flower shadows**: each planting's far mesh has `castShadow` and its own depth material
   (`flowerDepthFragment`, same cut-outs, same `uGrow`), so blooms are in the sun shadow map. Flowers sample it at their own vertices, offset toward the sun. `low` has
   no shadow map and keeps the painted row shade instead.
@@ -233,13 +271,15 @@ Measured once, on one integrated laptop GPU at about 1900×980, with `tools/chec
 
 | tier | day | night |
 | --- | --- | --- |
-| high | 52–58 → 46 → 45 → 41.5 fps | 39–41 → 33 fps |
-| medium | 87–94 → 71 → 68 → 65 fps | 60–62 → 51 → 50 fps (not re-measured) |
-| low | 144 → 144 → 144 fps (not re-measured) | 116 → not re-measured |
+| high | 52–58 → 46 → 45 → 41.5 → 42.4 fps | 39–41 → 33 → 31.9 fps |
+| medium | 87–94 → 71 → 68 → 65 → 64.9 fps | 60–62 → 51 → 50 fps (not re-measured) |
+| low | 144 → 144 → 144 → 136 fps | 116 → not re-measured |
 
 (third figure: after the grass cards, the running clock and the five new species; fourth:
 after the drift beds, the flower walk, crossed cherry cards, with off-season plantings
-switched off. Sitting on the garden bench, high: 34.5 fps. Measured on an AMD Radeon 780M.)
+switched off. Sitting on the garden bench, high: 34.5 fps. Fifth: the bench shelf and
+lantern, caster-aware soft shadows, flower gloss, mountain B-spline map: bench 35.5 fps. Measured on an
+AMD Radeon 780M.)
 
 That is the only hardware ever measured. No phone, no discrete card, no weak desktop.
 Night on `high` is the heaviest case and it is the aurora sky, not the land.
@@ -306,10 +346,16 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 - Far grass tufts look saw-toothed when zoomed in; some blades stand on bare rock.
 - Mountain strata now vary by massif (three dips, blended by a slow noise) and fade where a face
   is not bedded; the forest is still grain, not trees, when zoomed right in.
-- Soft blocky light/dark patches show on the meadow floor in some views (seen before this
-  round too; cause not found: suspect the shadow map sampling).
+- The pink square blotches on the gravel under the cherries were the painted petal litter (a
+  thresholded square-lattice noise), not shadows: it now draws single oval petals per cell.
+- The soft blocky patches seen on far green slopes were the mountain bump (ridged relief and
+  tree crowns at a slant), not the shadow map; fixed for the foothills that were checked. Rock
+  outcrops on the far meadow still have a stepped edge (the far grass tile, per instance).
 - Muscari and winter heath (added this round) have one model each; the heath reads a little
   spiky up close. Their tales were written from general knowledge, not checked.
+- The bench books: the Walden and Meditations quotations were checked against the Gutenberg
+  texts; the Vietnamese renderings are ours and nobody fluent has proofread them. The reading
+  notes and the valley books are fiction.
 - Rock outcrops in the meadow are flat patches with painted relief, not geometry.
 - Cabin and tent are much richer than before but still simple shapes; the signposts, the
   bench and the fence rails are plain boxes.

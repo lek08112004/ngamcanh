@@ -21,6 +21,7 @@ import { LORE, THREADS, SEASON_SKY, starOfFlower } from './lore.js';
 import { glowVertex, glowFragment } from './shaders/post.js';
 import { Story, CHAPTERS, FLOWERS } from './story.js';
 import { store } from './store.js';
+import { SHELF, pagesOf } from './library.js';
 import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt } from './seasons.js';
 
 const $ = (id) => document.getElementById(id);
@@ -115,6 +116,7 @@ const shared = {
   uAuroraTint: { value: new THREE.Vector3(0.2, 0.5, 0.34) },
   uCabinLight: { value: new THREE.Vector3() },
   uFireLight: { value: new THREE.Vector4(0, 0, 0, 0.5) },
+  uLampLight: { value: new THREE.Vector4(0, -50, 0, 0) },   // the lantern by the garden bench: xyz position, w level
   uFire: { value: 0.5 },
   uFogColor: { value: fogColor },
   uFogDensity: { value: 0.0042 },
@@ -284,6 +286,7 @@ const PLACES = [
   { id: 'south', name: 'Đồi sau trại', x: -6, z: 112, r: 12, note: 'Nhìn ngược về trại và dãy núi phương bắc.' },
 ];
 const garden = createGarden(shared, rng, Q.garden, Q.flowerLod);
+shared.uLampLight.value.set(garden.userData.lantern.pos.x, garden.userData.lantern.pos.y, garden.userData.lantern.pos.z, 0);
 const signposts = createSignposts(PLACES);
 const beds = createBeds(shared, rng, Q.tulips, Q.flowerLod);
 const snow = createSnow(shared, rng, Q.snow);
@@ -308,7 +311,7 @@ scene.add(sunLight, sunLight.target);
 // at no per-frame cost.
 if (Q.shadow) {
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;      // the cabin, bench and tent get soft edges too
   renderer.shadowMap.autoUpdate = false;
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(Q.shadow, Q.shadow);
@@ -422,7 +425,7 @@ const SPOTS = [
   { id: 'lie', name: 'Nằm ngắm trời', x: 1.0, z: 3.0, eye: 0.55, yaw: 4, pitch: 60, fov: 1.3 },
   { id: 'tulip', name: 'Giữa luống tulip', x: -3.6, z: -5.2, eye: 0.82, yaw: -3, pitch: 5, fov: 1.05 },
   { id: 'garden', name: 'Cổng vườn hoa', x: GARDEN_ARCH.x - 3.4, z: GARDEN.z, eye: 1.6, yaw: 90, pitch: 4, fov: 1.0 },
-  { id: 'bench', name: 'Ghế dưới anh đào', x: GARDEN_BENCH.x + Math.sin(GARDEN_BENCH.yaw) * 0.05, z: GARDEN_BENCH.z + Math.cos(GARDEN_BENCH.yaw) * 0.05, eye: 1.12, yaw: Math.atan2(Math.sin(GARDEN_BENCH.yaw), -Math.cos(GARDEN_BENCH.yaw)) / DEG, pitch: 3, fov: 1.15 },
+  { id: 'bench', name: 'Ghế dưới anh đào', x: GARDEN_BENCH.x + Math.sin(GARDEN_BENCH.yaw) * 0.05, z: GARDEN_BENCH.z + Math.cos(GARDEN_BENCH.yaw) * 0.05, eye: 1.12, yaw: Math.atan2(Math.sin(GARDEN_BENCH.yaw), -Math.cos(GARDEN_BENCH.yaw)) / DEG, pitch: -2, fov: 1.15 },
 ];
 const camTarget = camBase.clone();
 let spotIndex = 0;
@@ -831,6 +834,13 @@ function applyDay(dt) {
   camp.canvasMat.emissiveIntensity = 0.03 + 0.34 * lamp;       // the lantern glows through the cloth
   cabin.light.intensity = 7 * dim;
   camp.tentLight.intensity = lanternOn ? 2.2 * dim : 0;
+  // the lantern by the garden bench: lit from dusk, a small steady flame
+  const bl = garden.userData.lantern;
+  const lv = Math.min(1, Math.max(0, (dim - 0.35) / 0.5));
+  bl.light.intensity = 1.6 * lv;
+  bl.glass.emissiveIntensity = 1.4 * lv;
+  bl.flame.visible = lv > 0.02;
+  shared.uLampLight.value.w = 0.55 * lv;
   return d;
 }
 
@@ -969,6 +979,7 @@ function logText(id) {
   if (k === 'r') return ['Nhà gỗ', v === '1' ? 'Lần đầu vào nghỉ trong nhà gỗ: một ấm trà, một trang sách.' : `Lại vào nghỉ trong nhà gỗ (lần thứ ${v}).`];
   if (k === 'k') return ['Lửa trại', v === '1' ? 'Lửa tàn, bạn tự tay nhóm lại.' : `Nhóm lại lửa trại lần thứ ${v}.`];
   if (k === 'd') return ['Trọn một ngày', `Đi hết một ngày ở trại (lần thứ ${v}).`];
+  if (k === 'l') { const b = SHELF.find((x) => x.id === v); return b ? ['Giá sách', `Lần đầu mở cuốn “${b.title}” của ${b.author === 'Bạn' ? 'chính bạn' : b.author}.`] : ['', id]; }
   if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
   return ['', id];
 }
@@ -1045,49 +1056,173 @@ function leaveCabin() {
   setTimeout(() => { veil.classList.add('hidden'); rest.on = false; }, 1200);
 }
 veil.addEventListener('click', leaveCabin);
-/* the book on the garden bench: sit down and read what the valley has given you so far */
-const book = { open: false, pages: [], i: 0 };
+/* the shelf on the garden bench: six books (js/library.js); where you left each one is saved */
+const book = { open: false, id: '', pages: [], i: 0, turning: 0 };
 const bookEl = $('book');
-function bookPages() {
-  const pages = [];
+function shelfCtx() {
   const si = clock.seasonIndex;
-  const inSeason = FLOWERS.filter((f) => f.season.toLowerCase().includes(SEASONS[si].name.replace('Mùa ', '').toLowerCase()));
-  pages.push(['Lời mở đầu', `Cuốn sổ của khu vườn. Mỗi loài hoa bạn ép, mỗi chòm sao bạn nhận ra hay tự tay dệt, đều thêm trang vào đây. ${SEASONS[si].name} này trong vườn có ${inSeason.map((f) => f.name.toLowerCase()).join(', ')}.`]);
-  for (const f of FLOWERS) {
-    if (story.flowers.has(f.id)) f.tales.forEach((t, k) => pages.push([`${f.name} · ${k + 1}/${f.tales.length}`, t]));
-    else if (inSeason.includes(f)) pages.push([`${f.name} (chưa ép)`, `${f.note} Hái một cành rồi mang về lều ép vào sổ, chuyện của nó sẽ hiện ở trang này.`]);
-  }
-  for (const c of CONSTELLATIONS) {
-    const L = LORE[c.id];
-    if (story.seen.has(c.id) || game.woven.has(c.id)) for (const t of L.tale || []) pages.push([`Chòm ${c.name}`, t]);
-    if (THREADS[c.id] && story.flowers.has(THREADS[c.id].flower) && (story.seen.has(c.id) || game.woven.has(c.id))) pages.push([`Sợi chỉ: ${flowerName(THREADS[c.id].flower)} ↔ ${c.name}`, THREADS[c.id].text]);
-    if (game.woven.has(c.id)) pages.push([`Chòm ${c.name} · điều chỉ người dệt mới biết`, L.deep]);
-  }
-  if (pages.length < 3) pages.push(['Trang trắng', 'Những trang sau còn trống. Đi một vòng thung lũng, ép vài loài hoa, đêm xuống tìm vài chòm sao: cuốn sổ sẽ dày dần lên.']);
-  return pages;
+  const word = SEASONS[si].name.replace('Mùa ', '').toLowerCase();
+  return {
+    FLOWERS, CONS: CONSTELLATIONS, LORE, THREADS, flowerName, logText,
+    pressed: story.flowers, seen: story.seen, woven: game.woven, log: story.log,
+    inSeason: FLOWERS.filter((f) => f.season.toLowerCase().includes(word)),
+  };
 }
-function renderBook() {
-  const [title, text] = book.pages[book.i];
-  $('bookTitle').textContent = title;
-  $('bookText').textContent = text;
+const bookOf = (id) => SHELF.find((b) => b.id === id);
+/** the saved page of a book ('id:n' in read.at) */
+function savedPage(id) {
+  const hit = store.get('read.at', []).find((s) => s.startsWith(`${id}:`));
+  return hit ? Number(hit.split(':')[1]) || 0 : 0;
+}
+function savePage(id, n) {
+  store.set('read.at', [`${id}:${n}`, ...store.get('read.at', []).filter((s) => !s.startsWith(`${id}:`))]);
+  store.set('read.book', id);
+}
+function renderShelf() {
+  const el = $('shelf');
+  el.textContent = '';
+  const ctx = shelfCtx();
+  SHELF.forEach((b, k) => {
+    const n = pagesOf(b, ctx).length, at = savedPage(b.id);
+    const s = document.createElement('button');
+    s.type = 'button';
+    s.className = `spine spine-${b.kind}`;
+    s.style.setProperty('--c', b.color);
+    s.style.setProperty('--ink', b.ink);
+    s.style.setProperty('--h', b.h);
+    s.style.setProperty('--tilt', `${k === 2 ? -4 : k === 5 ? 3 : 0}deg`);
+    s.dataset.book = b.id;
+    s.setAttribute('aria-label', `${b.title}, ${b.author}`);
+    s.innerHTML = '<span class="spine-band"></span><span class="spine-title"></span><span class="spine-author"></span><span class="spine-mark"></span>';
+    s.querySelector('.spine-title').textContent = b.title;
+    s.querySelector('.spine-author').textContent = b.author;
+    s.querySelector('.spine-mark').textContent = at > 0 ? `tr. ${Math.min(at, n - 1) + 1}/${n}` : `${n} tr.`;
+    s.addEventListener('click', () => openVolume(b.id));
+    el.append(s);
+  });
+}
+function showShelf() {
+  book.id = '';
+  $('readView').classList.add('hidden');
+  $('shelfView').classList.remove('hidden');
+  renderShelf();
+  const last = store.get('read.book', '');
+  const btn = last && $('shelf').querySelector(`[data-book="${last}"]`);
+  (btn || $('shelf').firstChild).focus({ preventScroll: true });
+}
+function openVolume(id) {
+  const b = bookOf(id);
+  if (!b) return;
+  book.id = id;
+  book.pages = pagesOf(b, shelfCtx());
+  book.i = Math.min(savedPage(id), book.pages.length - 1);
+  $('shelfView').classList.add('hidden');
+  $('readView').classList.remove('hidden');
+  const sheet = $('bookSheet');
+  sheet.style.setProperty('--c', b.color);
+  sheet.classList.remove('turn-out', 'turn-in-next', 'turn-in-prev');
+  void sheet.offsetWidth;
+  sheet.classList.add('turn-in-next');
+  renderPage();
+  savePage(id, book.i);
+  story.note(`l:${id}`);
+}
+function renderPage() {
+  const b = bookOf(book.id), p = book.pages[book.i];
+  $('bookRun').textContent = b.title;
+  $('bookAuthor').textContent = b.author;
+  $('bookTitle').textContent = p.h;
+  const q = $('bookQuote'), ref = $('bookRef');
+  q.classList.toggle('hidden', !p.q);
+  q.textContent = p.q || '';
+  ref.classList.toggle('hidden', !p.ref);
+  ref.textContent = p.ref ? `${p.ref}. ${b.kind === 'classic' ? 'Chuyển ý:' : ''}` : '';
+  const text = $('bookText');
+  text.textContent = '';
+  for (const para of p.t.split('\n\n')) { const e = document.createElement('p'); e.textContent = para; text.append(e); }
+  $('bookSrc').textContent = book.i === 0 ? b.src : '';
   $('bookPage').textContent = `${book.i + 1} / ${book.pages.length}`;
+  $('bookPrev').disabled = book.i === 0;
+  $('bookNext').disabled = book.i === book.pages.length - 1;
+  $('bookSheet').scrollTop = 0;
+}
+/** turn a page slowly: the sheet lifts away, the next settles in */
+function turnPage(dir) {
+  const to = book.i + dir;
+  if (!book.id || to < 0 || to >= book.pages.length || performance.now() < book.turning) return;
+  book.turning = performance.now() + 640;
+  const sheet = $('bookSheet');
+  sheet.classList.remove('turn-in-next', 'turn-in-prev');
+  sheet.dataset.dir = dir > 0 ? 'next' : 'prev';
+  sheet.classList.add('turn-out');
+  audio.page();
+  setTimeout(() => {
+    book.i = to;
+    renderPage();
+    savePage(book.id, book.i);
+    sheet.classList.remove('turn-out');
+    void sheet.offsetWidth;
+    sheet.classList.add(dir > 0 ? 'turn-in-next' : 'turn-in-prev');
+  }, 300);
+}
+/** paper grain drawn once on a canvas: fine speckle, a few long fibres, faint foxing */
+let paperDone = false;
+function paintPaper() {
+  if (paperDone) return;
+  paperDone = true;
+  try {
+    const n = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = n;
+    const g = cv.getContext('2d'), img = g.createImageData(n, n), r = makeRng(1854);
+    for (let i = 0; i < n * n; i++) {
+      const v = (r() - 0.5) * 22;
+      img.data[i * 4] = 120 + v; img.data[i * 4 + 1] = 96 + v; img.data[i * 4 + 2] = 60 + v;
+      img.data[i * 4 + 3] = 10 + r() * 16;
+    }
+    g.putImageData(img, 0, 0);
+    g.lineCap = 'round';
+    for (let i = 0; i < 70; i++) {                       // fibres, wrapped so the tile repeats
+      const x = r() * n, y = r() * n, a = r() * Math.PI, l = 6 + r() * 22;
+      g.strokeStyle = `rgba(${r() < 0.5 ? '120,90,50' : '255,250,235'},${0.06 + r() * 0.08})`;
+      g.lineWidth = 0.5 + r() * 0.7;
+      for (const [dx, dy] of [[0, 0], [n, 0], [-n, 0], [0, n], [0, -n]]) {
+        g.beginPath(); g.moveTo(x + dx, y + dy);
+        g.quadraticCurveTo(x + dx + Math.cos(a + 0.4) * l * 0.5, y + dy + Math.sin(a + 0.4) * l * 0.5, x + dx + Math.cos(a) * l, y + dy + Math.sin(a) * l);
+        g.stroke();
+      }
+    }
+    for (let i = 0; i < 5; i++) {                        // foxing: soft brown spots of old paper
+      const x = r() * n, y = r() * n, rad = 3 + r() * 9;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      gr.addColorStop(0, 'rgba(150,100,50,0.07)'); gr.addColorStop(1, 'rgba(150,100,50,0)');
+      g.fillStyle = gr; g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    $('bookSheet').style.setProperty('--paper', `url(${cv.toDataURL()})`);
+  } catch (e) { /* plain ivory then */ }
 }
 function openBook(open) {
   if (open === book.open) return;
+  paintPaper();
   book.open = open;
   bookEl.classList.toggle('hidden', !open);
-  if (!open) return;
+  document.body.classList.toggle('reading', open);
+  if (!open) { book.id = ''; return; }
   setStroll(false);
   goSpot(SPOTS.findIndex((sp) => sp.id === 'bench'));
-  book.pages = bookPages();
-  book.i = Math.min(book.i, book.pages.length - 1);
-  renderBook();
+  showShelf();
   story.mark('bench');
   story.note(`b:${clock.seasonIndex}`);
 }
-$('bookPrev').addEventListener('click', () => { book.i = (book.i - 1 + book.pages.length) % book.pages.length; renderBook(); });
-$('bookNext').addEventListener('click', () => { book.i = (book.i + 1) % book.pages.length; renderBook(); });
+$('bookPrev').addEventListener('click', () => turnPage(-1));
+$('bookNext').addEventListener('click', () => turnPage(1));
+$('bookShelf').addEventListener('click', showShelf);
 $('bookClose').addEventListener('click', () => openBook(false));
+// a swipe across the page turns it (phones)
+{
+  let x0 = null;
+  $('bookSheet').addEventListener('pointerdown', (e) => { x0 = e.clientX; });
+  $('bookSheet').addEventListener('pointerup', (e) => { if (x0 !== null && Math.abs(e.clientX - x0) > 50) turnPage(e.clientX < x0 ? 1 : -1); x0 = null; });
+}
 const actBtn = $('actBtn');
 let actKind = '';
 function updateActions() {
@@ -1965,6 +2100,12 @@ addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   const typing = e.target instanceof HTMLInputElement && e.target.type === 'text';
+  if (book.open && !typing && ['arrowleft', 'arrowright', 'a', 'd', 'backspace', 'pageup', 'pagedown'].includes(k)) {
+    e.preventDefault();                            // reading: the keys turn pages, they do not walk
+    if (k === 'backspace') showShelf();
+    else if (book.id) turnPage(k === 'arrowleft' || k === 'a' || k === 'pageup' ? -1 : 1);
+    return;
+  }
   if (started && MOVE_KEYS.has(k) && !typing) {
     keys.add(k);
     if (k.startsWith('arrow')) e.preventDefault();
@@ -2028,8 +2169,8 @@ function savePhoto() {
 // ?debug=1 hands the page's state to the developer tools (tools/check.mjs reads it).
 if (query.has('debug')) {
   window.__av = {
-    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book,
+    camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
+    restInCabin, leaveCabin, openBook, book, openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
