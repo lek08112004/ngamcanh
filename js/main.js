@@ -846,10 +846,11 @@ const _sunWas = new THREE.Vector3(), _seasonWas = new THREE.Vector4(-1, 0, 0, 0)
 let shadowSettle = 0;
 const ease = (t) => t * t * (3 - 2 * t);
 /** the crest that hides a low sun: walk out from the camp along the sun's bearing over the real
-    ground and mountain heights, keep the point seen highest. Cached per third of a degree. */
+    ground and mountain heights, keep the point seen highest. Cached per tenth of a degree. */
 const _ridge = { key: NaN, h: 100, d: 500 };
+const _ridgeWant = new THREE.Vector2();
 function ridgeFor(sx, sz, out) {
-  const key = Math.round(Math.atan2(sz, sx) * 540 / Math.PI);
+  const key = Math.round(Math.atan2(sz, sx) * 1800 / Math.PI);           // a tenth of a degree
   if (key !== _ridge.key) {
     _ridge.key = key;
     const h0 = terrainH(0, 0) + 1.7;
@@ -900,7 +901,11 @@ function applyDay(dt) {
     const sf = shared.light.uSunFlat.value, rd = shared.light.uRidge.value;
     const h = Math.hypot(clock.sun[0], clock.sun[2]) || 1e-4;
     sf.set(clock.sun[0] / h, clock.sun[2] / h, clock.sun[1] / h, 1);
-    ridgeFor(sf.x, sf.y, rd);
+    // the crest that matters can change from one peak to the next as the sun swings round:
+    // ease toward it, so the shade line glides instead of jumping
+    ridgeFor(sf.x, sf.y, _ridgeWant);
+    if (rd.x === 100 && rd.y === 500) rd.copy(_ridgeWant);
+    else rd.lerp(_ridgeWant, 1 - Math.exp(-dt * 1.5));
     const t = Math.max(rd.y - (camBase.x * sf.x + camBase.z * sf.y), 40);
     const e = sf.z - (rd.x - camBase.y + 1.7) / t;
     reach = ease(Math.min(1, Math.max(0, (e + 0.026) / 0.052)));
@@ -920,13 +925,15 @@ function applyDay(dt) {
   renderer.toneMappingExposure = lerp(1.12, 1.04) * (1 - 0.10 * w[3] * d);       // snow is bright: hold the highlights
   applySeason(w);
 
-  // The shadow map is drawn and reused. It goes stale when the sun has moved a third of a
+  // The shadow map is drawn and reused. It goes stale when the sun has moved a twentieth of a
   // degree or the plantings change height (a new season); then it is redrawn, at most every
-  // third frame, until things settle.
+  // other frame, until things settle. (It used to wait for a third of a degree: with the clock
+  // running every shadow then jumped a hand's breadth twice a second, which the owner saw as
+  // juddering. Measured on the 780M, a redraw does not lengthen the frame it happens in.)
   if (Q.shadow) {
-    const moved = _sunWas.distanceToSquared(shared.uSunDir.value) > 3e-5 || !_seasonWas.equals(shared.uSeason.value);
+    const moved = _sunWas.distanceToSquared(shared.uSunDir.value) > 8e-7 || !_seasonWas.equals(shared.uSeason.value);
     if (moved) shadowSettle = 2;
-    if (shadowSettle > 0 && frames % 3 === 0) {
+    if (shadowSettle > 0 && frames % 2 === 0) {
       _sunWas.copy(shared.uSunDir.value);
       _seasonWas.copy(shared.uSeason.value);
       sunLight.position.copy(sunLight.target.position).addScaledVector(shared.uSunDir.value, 220);
@@ -2390,7 +2397,7 @@ function savePhoto() {
 if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH,
+    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
     actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     gpu: () => {
@@ -2613,7 +2620,7 @@ function frame() {
     if (indoor.on) shared.light.uMoverOn.value = 0;
     else movers.render(camBase, shared.uSunDir.value, dayAmt > 0.03 && shared.light.uSunReach.value > 0.02);
   }
-  if (indoor.on && Q.shadow && frames % 3 === 0) renderer.shadowMap.needsUpdate = true;
+  if (indoor.on && Q.shadow) renderer.shadowMap.needsUpdate = true;        // every frame: the room is small, and the flame never steps
   composer.render(dt);
   if (Q.shadow && (shadowStale || !shared.light.uShadowOn.value) && sunLight.shadow.map) {
     shadowStale = false;

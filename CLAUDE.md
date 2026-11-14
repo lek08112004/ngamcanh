@@ -135,14 +135,27 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
 - **The flower walk** (`walkBed`/`walkFlowerAt` in `flora.js`): deep borders both sides of the
   walk from the camp to the rose arch, a crescent in front of the arch and a carpet round each
   cherry tree, planted with a flower for **every** season at every place (plantings `g*` in
-  `GROW`). The owner asked for that corner to overflow with flowers all year.
+  `GROW`). The owner asked for that corner to overflow with flowers all year. Later they found
+  the garden itself too bare, so `walkBed` now also covers low kinds under the rose ring and
+  every bit of the garden's open ground outside it (not the walks, the lavender block, the
+  sunflower field, the arch or the trunks), sown with the same mix (`want = 16000 * scale`, about
+  nine plants a square metre on high). The rose ring is planted closer (50/62/75 bushes).
+  Cost (780M): garden view high 36.3 → 31.8 fps, bench 34.0 → 31.8, day view high 42.6 → 39.0,
+  medium 63.7 → 58.9. A first try with half as much again cost a quarter of the frame rate.
 - Off-season plantings are switched off whole (`mesh.visible`, in `applySeason`); that is what
   pays for the extra flowers. `group.userData.meshes[name]` lists each planting's meshes. The garden has sunflowers
   in summer only, and the rose ring is tinted into red camellias in winter (`uTint`).
   Each planting is made by `plant()` in `flora.js` and exposes `{uGrow, uTint}` through
   `group.userData.grow[name]`; names must match the keys of `GROW`.
-- The sun moves all day. The shadow map is redrawn when the sun has moved a third of a degree
-  or the season is changing (`shadowSettle` in `applyDay`), about twice a second while time runs.
+- The sun moves all day. The shadow map is redrawn when the sun has moved a twentieth of a
+  degree or the season is changing (`shadowSettle` in `applyDay`, at most every other frame):
+  about eight times a second while time runs, in steps too small to see. It used to be a third
+  of a degree twice a second, and the owner saw every shadow judder; on the 780M a redraw does
+  not lengthen its frame (measured with `renderer.shadowMap.render` wrapped). The casters'
+  depth materials hold the wind still (`uTime` frozen at 0), or a crown or a flower would be
+  caught in a different gust at each redraw and its shadow would flicker. The shade-line crest
+  (`uRidge`) eases toward each new value instead of jumping. Indoors the stove's shadow is
+  redrawn every frame.
   The mountains carry three baked visibility maps (`uMtnMap.a` for the 9:00 sun, `uMtnDusk.r` for
   the 17:36 sun, `uMtnDusk.g` for the 6:24 sun) blended by `uDusk` and `uMorn`.
 - **Winter**: snow lies on the tops of built things (`snowy()` in `main.js` adds a few lines to

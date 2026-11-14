@@ -382,7 +382,9 @@ function depthMaterial(shared, plant) {
     fragmentShader: flowerDepthFragment,
     side: THREE.DoubleSide,
     defines: { DEPTH_ONLY: '' },
-    uniforms: { ...shared.light, ...plant, uTime: shared.uTime, uDay: { value: 1 }, uSunDir: shared.uSunDir },
+    // the wind is held still here: the map is only redrawn now and then, and a shadow caught in a
+    // different gust each time would jump about between redraws instead of sliding with the sun
+    uniforms: { ...shared.light, ...plant, uTime: { value: 0 }, uDay: { value: 1 }, uSunDir: shared.uSunDir },
   });
 }
 
@@ -486,7 +488,7 @@ function cards(shared, list, u, cross = false) {
     mesh.castShadow = true;
     mesh.customDepthMaterial = new THREE.ShaderMaterial({
       vertexShader: cardVertex, fragmentShader: cardFragment, side: THREE.DoubleSide,
-      defines: { DEPTH_ONLY: '' }, uniforms: mesh.material.uniforms,
+      defines: { DEPTH_ONLY: '' }, uniforms: { ...mesh.material.uniforms, uTime: { value: 0 } },   // still air, as above
     });
   }
   return mesh;
@@ -659,9 +661,21 @@ function walkBed(x, z) {
   // a carpet round the foot of each cherry tree
   for (const [tx, tz] of GARDEN_TREES) {
     const r = Math.hypot(x - tx, z - tz);
-    if (r > 0.75 && r < (tx === GARDEN.x ? 2.05 : 2.6)) return 0.9;
+    if (r <= 0.75) return 0;                                                  // the trunk
+    if (r < (tx === GARDEN.x ? 2.05 : 2.6)) return 0.9;
   }
-  return 0;
+  // The rest of the garden's open ground is planted too (the owner found the garden too bare,
+  // a lawn with a few beds): low kinds under the roses of the ring bed, and wide drifts of the
+  // same four-season mix everywhere outside the ring that is not a walk, the lavender block or
+  // the sunflower field. Low kinds edge the walks there as well.
+  const gx = x - GARDEN.x, gz = z - GARDEN.z, r = Math.hypot(gx, gz);
+  if (Math.abs(gx) > GARDEN.hx - 0.6 || Math.abs(gz) > GARDEN.hz - 0.6) return 0;
+  if (r > 3.6 && r < 6.1) return 0.95;                                       // under the roses
+  if (r < 8.7) return 0;                                                      // the daisy edging and the walks round the ring
+  if (gx > 2.1 && gx < 17.9 && gz > 4.2 && gz < 15.7) return 0;              // the lavender block
+  if (gx > 4.0 && gx < 19.0 && gz > -16.0 && gz < -4.1) return 0;           // the sunflower field
+  if (x > ax - 0.6 && x < ax + 1.4 && Math.abs(z - cz) < 2.0) return 0;      // under the arch
+  return onWalk(x, z, 0.6) ? 0.85 : 0.40 + 0.25 * driftNoise(x * 0.3 + 4, z * 0.3);
 }
 // season by season: the edging kind, then the kinds of the drifts behind it
 const WALK_PLAN = [
@@ -830,7 +844,8 @@ export function createGarden(shared, rng, scale, lod) {
     }
   };
   // two neat rings of bushes, evenly spaced, each quarter of the bed its own colour
-  for (const [r, n] of [[3.85, Math.round(40 * scale)], [4.75, Math.round(50 * scale)], [5.70, Math.round(60 * scale)]]) {
+  // (planted closer than at first, bushes nearly touching: the owner wanted more flowers)
+  for (const [r, n] of [[3.85, Math.round(50 * scale)], [4.75, Math.round(62 * scale)], [5.70, Math.round(75 * scale)]]) {
     for (let i = 0; i < n; i++) {
       const a = ((i + 0.5) / n) * TAU;
       if (Math.abs(Math.sin(2 * a)) < 0.20) continue;                       // the four walks
@@ -907,12 +922,13 @@ export function createGarden(shared, rng, scale, lod) {
     const COL = { tulip: TULIPS, daffodil: DAFFODILS, muscari: MUSCARI, lavender: LAVENDERS, poppy: POPPIES, cosmos: COSMOS, daisy: DAISIES.slice(0, 3).concat([DAISIES[3]]), mum: MUMS, snowdrop: [SNOWDROP], heather: HEATHERS };
     // bushy kinds take more ground than a single stem: keep only some of their places
     const SPARE = { lavender: 2, mum: 2, heather: 2 };
-    const want = Math.round(9000 * scale);
-    const bx0 = Math.min(WALK_A[0], GARDEN_ARCH.x - 5) - 5, bx1 = GARDEN.x + 13, bz0 = GARDEN.z - 12, bz1 = GARDEN.z + 15;
+    // (the whole garden is sown now, not only the walk: about 9 plants a square metre on high)
+    const want = Math.round(16000 * scale);
+    const bx0 = Math.min(WALK_A[0], GARDEN_ARCH.x - 5) - 5, bx1 = GARDEN.x + GARDEN.hx, bz0 = GARDEN.z - GARDEN.hz, bz1 = GARDEN.z + GARDEN.hz;
+    const zLo = Math.min(WALK_A[1] - 5, bz0);
     let got = 0, tries = 0;
     while (got < want && tries++ < want * 30) {
-      const x = bx0 + rng() * (bx1 - bx0), z = Math.min(WALK_A[1], GARDEN.z) - 5 + rng() * (bz1 - Math.min(WALK_A[1], GARDEN.z) + 5);
-      if (z < bz0 && x > GARDEN_ARCH.x) continue;
+      const x = bx0 + rng() * (bx1 - bx0), z = zLo + rng() * (bz1 - zLo);
       const near = walkBed(x, z);
       if (near <= 0) continue;
       const i = got++;
