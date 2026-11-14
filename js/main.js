@@ -9,7 +9,7 @@ import { skyVertex, skyFragment, starPointsVertex, starPointsFragment } from './
 import { FinalShader, LensShader } from './shaders/post.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import {
-  makeRng, terrainH, createTerrain, createMountains, createCabin, createFence,
+  makeRng, terrainH, mountainRise, createTerrain, createMountains, createCabin, createFence,
   createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS,
 } from './world.js';
 import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH, GARDEN_BENCH, walkFlowerAt, nearBench } from './flora.js';
@@ -22,7 +22,7 @@ import { glowVertex, glowFragment } from './shaders/post.js';
 import { Story, CHAPTERS, FLOWERS } from './story.js';
 import { store } from './store.js';
 import { SHELF, pagesOf } from './library.js';
-import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt } from './seasons.js';
+import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt, sunAt } from './seasons.js';
 import { createCabinRoom, ROOM_LAYER } from './cabinroom.js';
 import { createCorgi } from './corgi.js';
 import { MoverShadow } from './movers.js';
@@ -106,6 +106,7 @@ const clock = new WorldClock({
   auto: store.get('settings.flow', true) && !pinned,
 });
 const SUN_DIR = Object.fromEntries(PHASES.map((ph) => [ph.id, new THREE.Vector3(...ph.sun).normalize()]));
+SUN_DIR.dawn = new THREE.Vector3(...sunAt(6.4)).normalize();       // the mountains bake the sunrise light too
 
 /* -------------------------------------------------------- shared uniforms */
 const uDay = { value: 0 };                       // 0 night .. 1 morning
@@ -134,6 +135,8 @@ const shared = {
     uShadowOn: { value: 0 },
     uShadowTexel: { value: 1 / 2048 },
     uSunReach: { value: 1 },
+    uSunFlat: { value: new THREE.Vector4(0, 1, 1, 0) },   // the sun's bearing and height, for the shade line (see sunReachAt)
+    uRidge: { value: new THREE.Vector2(100, 500) },
     uMoverMap: { value: null },              // the corgi and companions: see movers.js
     uMoverMatrix: { value: new THREE.Matrix4() },
     uMoverOn: { value: 0 },
@@ -142,6 +145,7 @@ const shared = {
   aurora: {
     uDay,
     uDusk: { value: clock.dusk },
+    uMorn: { value: 0 },                   // 1 before noon: the low sun is rising (cooler colours, its own mountain light)
     uAurora: { value: 1.0 },
     uAurTime: { value: Number(query.get('t')) || 0 },
     uAurTall: { value: 2.5 },
@@ -342,6 +346,46 @@ if (Q.shadow) {
 // The room inside the cabin (its own layer: drawn only when you are in it) and its own random
 // numbers, so building it leaves the rest of the world exactly as it was.
 const room = createCabinRoom(cabin, makeRng(5150), { shadows: Q.shadow > 0, shadowSize: tier === 'high' ? 512 : 256 });
+// Winter lays snow on the tops of things: every built thing outdoors (cabin, tent, fence, rocks,
+// bench, signposts, tree limbs) whitens where its surface faces the sky, in a ragged edge. One
+// small addition to each material's own shader; it costs nothing while uSnowCover is 0.
+const uSnowCover = { value: 0 };
+function snowy(mat) {
+  if (!mat || !mat.isMeshStandardMaterial || mat.userData.snowy) return;
+  mat.userData.snowy = true;
+  const prev = mat.onBeforeCompile, prevKey = prev ? prev.toString() : '';
+  mat.onBeforeCompile = (sh, r) => {
+    if (prev) prev.call(mat, sh, r);
+    sh.uniforms.uSnowCover = uSnowCover;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSnowW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvSnowW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+uniform float uSnowCover;
+varying vec3 vSnowW;
+float snHash(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float snNoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(snHash(i), snHash(i + vec2(1.0, 0.0)), f.x), mix(snHash(i + vec2(0.0, 1.0)), snHash(i + vec2(1.0, 1.0)), f.x), f.y); }`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+if (uSnowCover > 0.001) {
+  float up = dot(normal, normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz));
+  float sn = snNoise(vSnowW.xz * 6.0 + vSnowW.y * 2.0) * 0.6 + snNoise(vSnowW.xz * 21.0 + 3.0) * 0.4;
+  float cover = smoothstep(0.62, 0.90, up + (sn - 0.5) * 0.5) * smoothstep(0.0, 0.6, uSnowCover * 1.6 - (1.0 - up) * 0.4);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.56, 0.59, 0.65) * (0.92 + 0.16 * sn), cover);
+  roughnessFactor = mix(roughnessFactor, 0.72, cover);
+  metalnessFactor = mix(metalnessFactor, 0.0, cover);
+}`);
+  };
+  mat.customProgramCacheKey = () => `snow|${prevKey}`;
+  mat.needsUpdate = true;
+}
+for (const root of [cabin.group, camp.group, fence, rocks, garden, signposts]) {
+  root.traverse((o) => {
+    if (!o.isMesh || o.layers.mask === 2) return;            // not the room inside the cabin
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) snowy(m);
+  });
+}
 // What moves and throws a shadow: drawn every frame into a small map of its own (movers.js).
 const movers = Q.shadow ? new MoverShadow(renderer, shared.light, tier === 'high' ? 1024 : 768, 11) : null;
 
@@ -470,6 +514,8 @@ trek.dist = store.get('trek.dist', 0);
 for (const id of store.get('trek.found', [])) trek.found.add(id);
 function saveTrek() { store.patch('trek', { dist: Math.round(trek.dist), found: trek.found }); }
 function inStream(x, z) { return z < -30 && Math.abs(x - streamX(z)) < streamW(z); }
+/** wading slows you and splashes; in winter the stream is frozen and you walk over the ice */
+function wetAt(x, z) { return inStream(x, z) && clock.weights[3] < 0.5; }
 function updateWalk(dt) {
   let fx = 0, fz = 0;
   if (mode === 'view' && journal.classList.contains('hidden') && partyBox.classList.contains('hidden')) {
@@ -492,7 +538,7 @@ function updateWalk(dt) {
       [...$('spots').children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
     }
     const run = keys.has('shift') ? 2.0 : 1.0;
-    const wet = inStream(walker.x, walker.z);
+    const wet = wetAt(walker.x, walker.z);
     const sp = 3.3 * run * Math.min(1, mag) * (wet ? 0.55 : 1);
     const yr = view.yaw * DEG;
     const dx = (Math.sin(yr) * fz + Math.cos(yr) * fx) / mag;
@@ -782,6 +828,7 @@ function applySeason(w) {
   snow.visible = w[3] > 0.02;
   snow.material.uniforms.uAmount.value = w[3];
   cabin.sod.color.copy(SOD_GREEN).lerp(SOD_SNOW, w[3]);
+  uSnowCover.value = w[3];
 }
 
 /* ------------------------------------------------------------ day and night */
@@ -791,10 +838,31 @@ const NIGHT_FOG = [0.010, 0.026, 0.034], DAY_FOG = [0.46, 0.63, 0.86], DUSK_FOG 
 // ground and the grass get from the shader uniforms: three.js divides by pi, so the numbers differ.
 const HEMI_SKY_N = new THREE.Color(0x3a6a86), HEMI_GROUND_N = new THREE.Color(0x0a160d), HEMI_GROUND_D = new THREE.Color().setRGB(0.20, 0.22, 0.13);
 const SUN = [2.9, 2.55, 1.95], DUSK_SUN = [3.4, 1.42, 0.50];
+// Sunrise is not sunset run backwards: the air is cold and clean after the night, the light
+// pale gold and rose, the shadows lilac; sunset is warm, dusty and orange.
+const DAWN_SUN = [3.1, 1.95, 1.20], DAWN_AMB = [0.30, 0.33, 0.48], DAWN_FOG = [0.50, 0.46, 0.58];
 let lanternOn = true;
 const _sunWas = new THREE.Vector3(), _seasonWas = new THREE.Vector4(-1, 0, 0, 0);
 let shadowSettle = 0;
 const ease = (t) => t * t * (3 - 2 * t);
+/** the crest that hides a low sun: walk out from the camp along the sun's bearing over the real
+    ground and mountain heights, keep the point seen highest. Cached per third of a degree. */
+const _ridge = { key: NaN, h: 100, d: 500 };
+function ridgeFor(sx, sz, out) {
+  const key = Math.round(Math.atan2(sz, sx) * 540 / Math.PI);
+  if (key !== _ridge.key) {
+    _ridge.key = key;
+    const h0 = terrainH(0, 0) + 1.7;
+    let best = -1e9;
+    for (let d = 20, step = 6; d < 1250; d += step, step *= 1.025) {
+      const x = sx * d, z = sz * d;
+      const h = terrainH(x, z) + mountainRise(x, z);
+      const tn = (h - h0) / d;
+      if (tn > best) { best = tn; _ridge.h = h; _ridge.d = d; }
+    }
+  }
+  out.set(_ridge.h, _ridge.d);
+}
 function applyDay(dt) {
   clock.hold = mode === 'play';             // the star game keeps its night
   clock.update(dt);
@@ -811,19 +879,33 @@ function applyDay(dt) {
     }
     return out;
   };
-  const amb = mix3([0, 0, 0], NIGHT_AMB, DAY_AMB, DUSK_AMB, 1);
+  const morn = clock.hour < 12 ? 1 : 0;           // at noon there is no sunrise or sunset colour, so the switch never shows
+  shared.aurora.uMorn.value = morn;
+  const amb = mix3([0, 0, 0], NIGHT_AMB, DAY_AMB, morn ? DAWN_AMB : DUSK_AMB, 1);
   shared.uAmb.value.set(amb[0], amb[1], amb[2]);
   // the low sun is orange while rising, then whitens; at sunset it goes all the way to ember
   const warm = 1 - d;
   const sun = [SUN[0] * d, SUN[1] * d * (1 - 0.35 * warm), SUN[2] * d * (1 - 0.6 * warm)];
-  for (let ch = 0; ch < 3; ch++) sun[ch] = (sun[ch] + (DUSK_SUN[ch] - sun[ch]) * k) * tint(0, ch);
+  const lowSun = morn ? DAWN_SUN : DUSK_SUN;
+  for (let ch = 0; ch < 3; ch++) sun[ch] = (sun[ch] + (lowSun[ch] - sun[ch]) * k) * tint(0, ch);
   shared.uSunCol.value.set(sun[0], sun[1], sun[2]);
   shared.uSunDir.value.set(clock.sun[0], clock.sun[1], clock.sun[2]);
   // below about ten degrees the sun is behind the mountain wall: the valley floor loses its
   // direct light while the sky and the peaks keep theirs
-  const reach = ease(Math.min(1, Math.max(0, (clock.sun[1] - 0.10) / 0.12)));
+  let reach = ease(Math.min(1, Math.max(0, (clock.sun[1] - 0.10) / 0.12)));
   shared.light.uSunReach.value = reach;
-  const fog = mix3([0, 0, 0], NIGHT_FOG, DAY_FOG, DUSK_FOG, -1);
+  if (Q.terrainQ > 0) {
+    // medium and high: the shade line creeps across the valley (sunReachAt in light.js); the
+    // built things get the sun as it is where you stand
+    const sf = shared.light.uSunFlat.value, rd = shared.light.uRidge.value;
+    const h = Math.hypot(clock.sun[0], clock.sun[2]) || 1e-4;
+    sf.set(clock.sun[0] / h, clock.sun[2] / h, clock.sun[1] / h, 1);
+    ridgeFor(sf.x, sf.y, rd);
+    const t = Math.max(rd.y - (camBase.x * sf.x + camBase.z * sf.y), 40);
+    const e = sf.z - (rd.x - camBase.y + 1.7) / t;
+    reach = ease(Math.min(1, Math.max(0, (e + 0.026) / 0.052)));
+  }
+  const fog = mix3([0, 0, 0], NIGHT_FOG, DAY_FOG, morn ? DAWN_FOG : DUSK_FOG, -1);
   // winter air is paler, autumn air a little golden
   fogColor.setRGB(fog[0] * (1 + 0.10 * w[3] * d + 0.05 * w[2] * d), fog[1] * (1 + 0.08 * w[3] * d), fog[2] * (1 + 0.04 * w[3] * d - 0.08 * w[2] * d));
   const lerp = (a, b) => a + (b - a) * d;
@@ -2285,7 +2367,7 @@ if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
     restInCabin, leaveCabin, openBook, book, corgi, petCorgi, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH,
-    actKind: () => actKind, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
+    actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -2499,7 +2581,7 @@ function frame() {
   updateParty(dt);
   {
     const sd = camBase.z < -20 ? Math.abs(camBase.x - streamX(camBase.z)) : 60;
-    audio.setStream(clamp(1 - sd / 38, 0, 1));
+    audio.setStream(clamp(1 - sd / 38, 0, 1) * (1 - clock.weights[3]));     // a frozen stream is silent
   }
   // shadows that move: outdoors the dog's and companions' little map; indoors the stove light's
   // cube map, redrawn every third frame as the flame shifts (nothing else is in it then)

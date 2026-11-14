@@ -81,18 +81,25 @@ vec3 nightSky(vec3 d){
 // Daylight sky. By morning: deep blue overhead, milky warm horizon, fair-weather clouds.
 // At sunset (uDusk) the horizon burns orange under a violet zenith and the clouds catch
 // fire on the side that faces the sun.
+// At sunrise (uMorn) the same moment is cooler: a rose and pale-gold band low in the east
+// under a clear lilac-blue, not the burning orange of evening.
+uniform float uMorn;
 vec3 daySky(vec3 d){
   float el = max(d.y, 0.0);
   float sd = max(dot(d, uSunDir), 0.0);
   float az = max(dot(normalize(d.xz + vec2(1e-5)), normalize(uSunDir.xz)), 0.0);   // toward the sun, along the horizon
-  vec3 hor = mix(vec3(0.40, 0.66, 0.95), mix(vec3(0.46, 0.36, 0.52), vec3(1.00, 0.50, 0.24), az * az), uDusk);
-  vec3 zen = mix(vec3(0.020, 0.13, 0.58), vec3(0.060, 0.085, 0.30), uDusk);
+  vec3 lowHor = mix(mix(vec3(0.46, 0.36, 0.52), vec3(1.00, 0.50, 0.24), az * az),       // evening
+                    mix(vec3(0.52, 0.52, 0.70), vec3(1.00, 0.70, 0.62), az * az), uMorn);   // morning
+  vec3 hor = mix(vec3(0.40, 0.66, 0.95), lowHor, uDusk);
+  vec3 zen = mix(vec3(0.020, 0.13, 0.58), mix(vec3(0.060, 0.085, 0.30), vec3(0.090, 0.150, 0.46), uMorn), uDusk);
   vec3 col = mix(hor, zen, pow(el, mix(0.55, 0.40, uDusk)));
   col += vec3(1.00, 0.72, 0.42) * pow(sd, 12.0) * 0.26;
   col += vec3(1.00, 0.86, 0.66) * pow(sd, 90.0) * 0.8;
   col += vec3(1.00, 0.78, 0.60) * exp(-el * 9.0) * 0.14;
-  col += vec3(1.00, 0.46, 0.16) * pow(sd, 5.0) * 0.55 * uDusk;                      // the glow round a low sun
-  col += vec3(1.00, 0.36, 0.10) * exp(-el * 7.0) * az * 0.35 * uDusk;
+  vec3 glowA = mix(vec3(1.00, 0.46, 0.16), vec3(1.00, 0.66, 0.50), uMorn);
+  vec3 glowB = mix(vec3(1.00, 0.36, 0.10), vec3(0.95, 0.55, 0.60), uMorn);
+  col += glowA * pow(sd, 5.0) * 0.55 * uDusk;                      // the glow round a low sun
+  col += glowB * exp(-el * 7.0) * az * 0.35 * uDusk;
   if (d.y > 0.0) {
     vec2 p = d.xz / (d.y + 0.22) * 0.9 + vec2(uTime * 0.006, 0.0);
     float c = fbm2(p * 0.8 + vec2(2.0, 5.0));
@@ -101,11 +108,12 @@ vec3 daySky(vec3 d){
     float m = smoothstep(0.57 - 0.06 * uDusk, 0.80, dens) * smoothstep(0.0, 0.10, d.y);
     vec3 cc = mix(vec3(0.62, 0.66, 0.80), vec3(1.0, 0.99, 0.96), smoothstep(0.58, 0.84, dens)) * (0.95 + 0.30 * pow(sd, 4.0));
     // sunset: slate bellies, edges lit rose and gold from below
-    vec3 cd = mix(vec3(0.30, 0.24, 0.36), mix(vec3(0.95, 0.42, 0.34), vec3(1.25, 0.72, 0.36), sd), (1.0 - smoothstep(0.60, 0.86, dens)) * (0.35 + 0.65 * az));
+    vec3 lit = mix(mix(vec3(0.95, 0.42, 0.34), vec3(1.25, 0.72, 0.36), sd), mix(vec3(0.95, 0.60, 0.66), vec3(1.20, 0.92, 0.70), sd), uMorn);
+    vec3 cd = mix(mix(vec3(0.30, 0.24, 0.36), vec3(0.36, 0.36, 0.50), uMorn), lit, (1.0 - smoothstep(0.60, 0.86, dens)) * (0.35 + 0.65 * az));
     cc = mix(cc, cd, uDusk);
     col = mix(col, cc, m * 0.92);
     float disc = smoothstep(mix(0.99930, 0.99860, uDusk), mix(0.99972, 0.99930, uDusk), sd);
-    col += mix(vec3(1.0, 0.95, 0.85), vec3(1.0, 0.55, 0.20), uDusk) * disc * 9.0 * (1.0 - m);
+    col += mix(vec3(1.0, 0.95, 0.85), mix(vec3(1.0, 0.55, 0.20), vec3(1.0, 0.74, 0.50), uMorn), uDusk) * disc * 9.0 * (1.0 - m);
   }
   return col;
 }

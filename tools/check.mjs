@@ -95,6 +95,12 @@ async function walk() {
     await sleep(500);
     const outP = await pos();
     check(!(await b.eval('__av.indoor.on')) && Math.hypot(outP.x + 8.3, outP.z + 9) < 1, 'leaving puts you back on the porch');
+    // --- the stream: you wade it (slowly, splashing) in summer and walk on it once it has frozen
+    const wetSummer = await b.eval('__av.clock.setSeason("summer", true), __av.wetAt(__av.streamX(-70), -70)');
+    await b.eval('__av.clock.setSeason("winter")');
+    await b.waitFor('__av.clock.weights[3] > 0.95', 30000, 'winter to settle in');
+    const wetWinter = await b.eval('__av.wetAt(__av.streamX(-70), -70)');
+    check(wetSummer && !wetWinter, `the stream is water in summer (wet: ${wetSummer}) and ice you walk on in winter (wet: ${wetWinter})`);
     check(errorsOf(b).length === 0, `no console errors${errorsOf(b).length ? ': ' + errorsOf(b).join(' | ') : ''}`);
   } finally { await b.close(); }
 }

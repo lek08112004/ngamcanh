@@ -3,6 +3,7 @@
 // bed, tinted by depth and, on a sunny morning, crossed by caustics.
 // Requires commonGLSL + auroraGLSL, and the includer's uSunDir / uSunCol uniforms.
 export const waterGLSL = /* glsl */ `
+uniform float uMorn;       // the low sun is the rising one: rose and pale gold, not orange
 vec3 skyReflect(vec3 r){
   float el = max(r.y, 0.0);
   vec3 c = mix(vec3(0.020, 0.055, 0.080), vec3(0.006, 0.012, 0.034), pow(el, 0.55));
@@ -12,7 +13,8 @@ vec3 skyReflect(vec3 r){
   dayc += vec3(1.00, 0.78, 0.60) * exp(-el * 9.0) * 0.14;
   // sunset: the water carries the orange of the horizon toward the sun
   float az = max(dot(normalize(r.xz + vec2(1e-5)), normalize(uSunDir.xz)), 0.0);
-  vec3 duskc = mix(mix(vec3(0.46, 0.36, 0.52), vec3(1.00, 0.50, 0.24), az * az), vec3(0.060, 0.085, 0.30), pow(el, 0.40));
+  vec3 duskc = mix(mix(mix(vec3(0.46, 0.36, 0.52), vec3(1.00, 0.50, 0.24), az * az), mix(vec3(0.52, 0.52, 0.70), vec3(1.00, 0.70, 0.62), az * az), uMorn),
+                   mix(vec3(0.060, 0.085, 0.30), vec3(0.090, 0.150, 0.46), uMorn), pow(el, 0.40));
   dayc = mix(dayc, duskc, uDusk);
   return mix(c, dayc, uDay);
 }

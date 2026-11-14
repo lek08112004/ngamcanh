@@ -28,8 +28,9 @@ uniform vec3 uSunDir;
 uniform vec3 uAuroraTint;
 uniform vec3 uFogColor;
 uniform sampler2D uMtnMap;  // rg: normal.xz, b: occlusion, a: baked sun visibility (morning)
-uniform sampler2D uMtnDusk; // r: baked sun visibility for the sunset sun
+uniform sampler2D uMtnDusk; // r: baked sun visibility for the sunset sun, g: for the sunrise sun
 uniform float uDusk;
+uniform float uMorn;        // 1 before noon: the low sun is the rising one
 uniform vec4 uSeason;
 uniform vec4 uMtnRect;      // xy: min corner (world xz), zw: 1 / size
 varying vec3 vWorld;
@@ -76,7 +77,8 @@ void main(){
   n = normalize(n);
   float ao = m.z;
   vec2 muv = (xz - uMtnRect.xy) * uMtnRect.zw;
-  float lit = mix(m.w, uDusk > 0.001 ? mapSmooth(uMtnDusk, muv).r : 0.0, uDusk);
+  vec2 lowSun = uDusk > 0.001 ? mapSmooth(uMtnDusk, muv).rg : vec2(0.0);
+  float lit = mix(m.w, mix(lowSun.r, lowSun.g, uMorn), uDusk);
   vec3 toCam = cameraPosition - vWorld;
   float dist = length(toCam);
   float slope = 1.0 - n.y;

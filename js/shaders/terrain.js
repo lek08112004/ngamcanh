@@ -197,6 +197,36 @@ void main(){
 #endif
   float grassAmt = 1.0;
 
+  // Looking straight down at your feet, the eye goes between the blades to the ground. In a
+  // real sward what it finds there is more grass: short shoots, the lower parts of blades,
+  // moss. So the near ground, seen from above, is painted as a dense undercoat of short
+  // blades lying every which way, coloured like the grass round it (the dim thatch stays for
+  // the low, sideways look, where it reads as depth). Only pixels near you looking down pay.
+  float under = near * smoothstep(0.30, 0.80, -viewDir.y) * (1.0 - smoothstep(0.30, 0.70, px * 18.5));
+  if (under > 0.01) {
+    // three layers of cells, 2.3 to 4 cm; each cell holds one short shoot at its own place,
+    // angle, length and tone, slightly curved and tapering to its tip. No lattice survives that.
+    float shoots = 0.0, tone = 0.5;
+    for (int L = 0; L < 3; L++) {
+      vec2 cc = xz * (L == 0 ? 11.0 : (L == 1 ? 14.5 : 18.5)) + float(L) * 13.7;
+      vec2 id = floor(cc), f = fract(cc) - 0.5;
+      float hA = hash21(id + float(L) * 3.3);
+      vec2 o = (vec2(hash21(id + 1.7), hash21(id + 9.1)) - 0.5) * 0.12;
+      float an = hA * 6.2832;
+      vec2 q = mat2(cos(an), sin(an), -sin(an), cos(an)) * (f - o);
+      float len = 0.62 + 0.30 * hash21(id + 4.4);
+      float t = clamp(q.x / len + 0.5, 0.0, 1.0);
+      float dd = max(abs(q.y + t * t * 0.12) - 0.045 * (1.0 - 0.85 * t), abs(q.x) - len * 0.5);
+      float aa = max(fwidth(dd), 1e-4);
+      float m = (1.0 - smoothstep(-aa, aa, dd)) * step(0.18, hash21(id + 7.7));
+      if (m > shoots) { shoots = m; tone = hA; }
+    }
+    float moss = vnoise(xz * 9.0 + 2.0);
+    vec3 shootCol = base * (0.62 + 0.45 * tone) * vec3(0.95, 1.04, 0.88);
+    vec3 sward = mix(base * (0.42 + 0.20 * moss), shootCol, shoots);
+    albedo = mix(albedo, sward, under * 0.80 * (1.0 - 0.6 * uSeason.w));
+  }
+
   // a dusting of far-off wildflowers by day
   float speck = mix(0.07, smoothstep(0.87, 0.93, vnoise(xz * 1.9 + 7.0)), AA(1.9)) * smoothstep(120.0, 30.0, dist) * smoothstep(8.0, 30.0, dist);
   vec3 bloomCol = mix(vec3(0.95, 0.85, 0.30), vec3(0.90, 0.45, 0.70), smoothstep(0.44, 0.56, vnoise(xz * 0.31)));
@@ -389,7 +419,29 @@ void main(){
   if (wm > 0.001) {
     float depth = clamp((sw - sd) / 1.5, 0.0, 1.0);
     vec3 bedLit = pebble * 1.3 * (uAmb * 0.8 + uAuroraTint * 0.4 + uSunCol * 0.55 * vis);
-    col = mix(col, waterColor(vWorld, viewDir, uTime, depth, bedLit, vis), wm);
+    vec3 surf = uSeason.w < 0.999 ? waterColor(vWorld, viewDir, uTime, depth, bedLit, vis) : vec3(0.0);
+    if (uSeason.w > 0.001) {
+      // winter: the stream is frozen. Still, grey-blue ice, milky where it froze fast, darker
+      // and clearer over the deep middle, snow blown onto it toward the banks, and cracks:
+      // long ones that wander and a finer net of short ones. Its sheen is the sky, dull and steady.
+      float ia = mix(0.5, vnoise(xz * 0.45 + 3.0), AA(0.45));
+      vec3 ice = mix(vec3(0.15, 0.22, 0.27), vec3(0.30, 0.37, 0.42), ia) * mix(1.0, 0.72, depth);
+      float milk = smoothstep(0.45, 0.85, mix(0.5, vnoise(xz * 1.7 + 11.0), AA(1.7)));
+      ice = mix(ice, vec3(0.42, 0.47, 0.52), milk * 0.45);
+      float drift = clamp(smoothstep(0.16, 0.0, depth) * 0.9 + (mix(0.5, vnoise(xz * 0.9 + 5.0), AA(0.9)) - 0.62) * 0.9, 0.0, 1.0);
+      ice = mix(ice, vec3(0.50, 0.54, 0.60), drift * 0.85);
+      float cr1 = pow(1.0 - abs(2.0 * vnoise(xz * 0.55 + vnoise(xz * 0.21) * 2.0) - 1.0), 22.0) * AA(1.6);
+      float cr2 = pow(1.0 - abs(2.0 * vnoise(xz * 2.3 + 17.0) - 1.0), 26.0) * AA(5.0) * 0.6;
+      float crack = max(cr1, cr2) * (1.0 - drift);
+      ice = mix(ice, vec3(0.05, 0.08, 0.10), crack * 0.7);
+      vec3 iceLit = ice * (uAmb * 1.05 + uAuroraTint * 0.5 + uSunCol * (0.25 + 0.75 * max(uSunDir.y, 0.0)) * vis);
+      float fr = 0.03 + 0.45 * pow(1.0 - max(-viewDir.y, 0.0), 5.0);
+      iceLit = mix(iceLit, skyReflect(reflect(viewDir, vec3(0.0, 1.0, 0.0))), fr * (1.0 - drift) * 0.6);
+      // a few bright crystals in the sun on the snowy edges
+      iceLit += uSunCol * vis * pow(mix(0.0, vnoise(xz * 140.0 + viewDir.xz * 7.0), AA(140.0)), 28.0) * drift * 3.0;
+      surf = mix(surf, iceLit, uSeason.w);
+    }
+    col = mix(col, surf, wm);
   }
 
   float fog = 1.0 - exp(-dist * dist * uFogDensity * uFogDensity);

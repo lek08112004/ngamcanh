@@ -127,7 +127,7 @@ export function mountainRise(x, z) {
 
 /* Bake what the low sun does to the range, once: a smooth normal (rg), how hollow the
    spot is (b) and whether the sun reaches it past the ridges in the way (a). */
-function bakeMountainMap(size, sunDir, duskDir) {
+function bakeMountainMap(size, sunDir, duskDir, dawnDir) {
   const half = MOUNTAIN.r1 + 30;
   const x0 = MOUNTAIN.cx - half, z0 = MOUNTAIN.cz - half, cell = (2 * half) / size;
   const N = size * size;
@@ -222,8 +222,12 @@ function bakeMountainMap(size, sunDir, duskDir) {
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
-  // the sunset sun stands somewhere else entirely, so it gets a map of its own
-  const dusk = new THREE.DataTexture(visibility(duskDir), size, size, THREE.RedFormat, THREE.UnsignedByteType);
+  // the sunset sun stands somewhere else entirely, so it gets a map of its own (r); so does the
+  // sunrise sun, low in the north-east, on the other side of the range (g)
+  const evening = visibility(duskDir), morning = dawnDir ? visibility(dawnDir) : evening;
+  const rg = new Uint8Array(N * 2);
+  for (let k = 0; k < N; k++) { rg[k * 2] = evening[k]; rg[k * 2 + 1] = morning[k]; }
+  const dusk = new THREE.DataTexture(rg, size, size, THREE.RGFormat, THREE.UnsignedByteType);
   dusk.magFilter = THREE.LinearFilter;
   dusk.minFilter = THREE.LinearMipmapLinearFilter;
   dusk.generateMipmaps = true;
@@ -261,7 +265,7 @@ export function createMountains(shared, detail = 1, mapSize = 512, quality = 2, 
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('aRise', new THREE.BufferAttribute(rise, 1));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
-  const map = bakeMountainMap(mapSize, sunDirs.day, sunDirs.dusk);
+  const map = bakeMountainMap(mapSize, sunDirs.day, sunDirs.dusk, sunDirs.dawn);
   const mesh = new THREE.Mesh(geo, new THREE.ShaderMaterial({
     vertexShader: mountainVertex,
     fragmentShader: mountainFragment,
@@ -278,6 +282,7 @@ export function createMountains(shared, detail = 1, mapSize = 512, quality = 2, 
       uMtnMap: { value: map.tex },
       uMtnDusk: { value: map.dusk },
       uDusk: shared.aurora.uDusk,
+      uMorn: shared.aurora.uMorn,
       uSeason: shared.uSeason,
       uMtnRect: { value: map.rect },
     },

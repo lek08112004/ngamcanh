@@ -96,9 +96,19 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   the address pin the clock (it does not run). The star game holds the clock (`clock.hold`).
   `applyDay()` in `main.js` turns the clock into every light, fog and sky value each frame,
   then calls `applySeason()`. `clock.weights` is the season blend (sums to 1).
-- `uSunReach` (in the `shared.light` group, applied inside `sunShadow`/`sunShadowSoft`) fades
-  the direct sun on the valley floor once the sun is below about ten degrees, i.e. behind the
-  mountain wall; the peaks and the sky keep their light. The three.js sun lamp gets the same factor.
+- **The shade line** (`sunReachAt` in `light.js`, used inside `sunShadow`/`sunShadowSoft`): when
+  the sun is low, each place sees it or not past the crest toward the sun. `ridgeFor()` in
+  `main.js` walks out from the camp along the sun's bearing over `terrainH + mountainRise` and
+  keeps the crest seen highest (`uRidge`: its height and distance; cached per third of a degree);
+  the shader compares the sun's elevation with that crest seen from the spot, so the shade
+  creeps across the valley from the sun's side instead of switching off everywhere at once.
+  `uSunFlat.w` turns it on (medium/high); on `low` the old single factor `uSunReach` is used.
+  The three.js sun lamp gets the value at the viewer. The crest is the one seen from the camp:
+  far east/west of it the line is an approximation.
+- **Sunrise is not sunset**: `uMorn` (in `shared.aurora`, 1 before noon) switches the low-sun
+  colours: `DAWN_SUN/AMB/FOG` in `main.js`, the dawn palette in the sky (`daySky`) and in the
+  water's reflection; the mountains read their own sunrise visibility map (`uMtnDusk.g`, baked
+  for the 6:24 sun) instead of the sunset one (`.r`).
 - Shaders see the season as `uniform vec4 uSeason` (declared in `curvesGLSL`, so terrain and
   grass get it together; mountains and the grass fragment declare it themselves) and sunset
   as `uDusk` (declared in `auroraGLSL`, part of the `shared.aurora` group). A material that
@@ -123,8 +133,19 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   `group.userData.grow[name]`; names must match the keys of `GROW`.
 - The sun moves all day. The shadow map is redrawn when the sun has moved a third of a degree
   or the season is changing (`shadowSettle` in `applyDay`), about twice a second while time runs.
-  The mountains carry two baked visibility maps (`uMtnMap.a` for the 9:00 sun, `uMtnDusk.r` for
-  the 17:36 sun) blended by `uDusk`; at dawn that blend is wrong (it uses the evening map).
+  The mountains carry three baked visibility maps (`uMtnMap.a` for the 9:00 sun, `uMtnDusk.r` for
+  the 17:36 sun, `uMtnDusk.g` for the 6:24 sun) blended by `uDusk` and `uMorn`.
+- **Winter**: snow lies on the tops of built things (`snowy()` in `main.js` adds a few lines to
+  every outdoor `MeshStandardMaterial`: white where the surface faces the sky, ragged by noise,
+  driven by `uSnowCover` = the winter weight; chained after any `onBeforeCompile` the material
+  already had, with its own `customProgramCacheKey`). The stream freezes (ice in the terrain
+  shader's water branch: grey-blue, cracks, snow toward the banks, a steady dull sheen; the
+  moving water is not even computed in full winter), goes silent, and can be walked on
+  (`wetAt` is false in winter).
+- **Underfoot from above** (terrain shader, `under`): near you and looking down, the ground is
+  painted as an undercoat of short shoots (one per cell, three cell sizes, random angle and
+  length), so the eye finds grass between the blades, not bare earth. Every tier (low most
+  needs it); only near, downward-looking pixels pay for it.
 - Cherry trees: `growCherry()` builds real forking limbs; blossom cards hang along the twigs
   and slide from blossom to leaf with `uLeaf`; colours per season come from `CROWN` in `main.js`.
 - **The save** (`store.js`): `store.get('table.field')` / `store.set(...)`; the schema at the top
@@ -368,15 +389,17 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 
 ## Known weak spots (honest list)
 
-- Grass: now slender blades cut from cards, much denser, but underfoot (looking straight
-  down within two metres) the ground still shows between plants, most on `low`. The owner asked
-  three times for better grass and has not yet seen this version.
-- Winter is the least finished season: snow is a ground colour, not depth (nothing is
-  buried; rocks, tent and bench carry no snow), the stream does not freeze, the fire and
-  smoke are unchanged. Summer and autumn mostly recolour; spring got the most attention.
-- Sunset: the valley floor now falls into shade when the sun is low (`uSunReach`), all at
-  once rather than as a shadow edge creeping across it. Stars and aurora no longer show
-  through the sunset. Dawn reuses the sunset colours and the evening mountain bake.
+- Grass: looking straight down, the gaps between blades now show a painted undercoat of short
+  shoots, not bare earth; it is flat paint (it does not move with the wind and has no depth),
+  and on `low` the real blades over it are still sparse.
+- Winter: snow on built things is a colour by surface angle, not a layer with thickness (no
+  overhanging edge, nothing is buried); the corgi, companions, flowers and cherry limbs carry
+  none. Ice cracks are a noise pattern and can look like jigsaw lines. Fire and smoke unchanged.
+- Sunset: the shade line moves, but fast: on the summer test view it crosses the valley
+  between about 16:40 and 17:20 on the clock (about 40 s of real time) and the floor is in
+  shade some 40 minutes earlier than before the change (the crest seen from the valley is
+  higher than the old ten-degree rule assumed). Not tuned against anything real. Dawn has its
+  own colours and mountain light, but was judged from two screenshots only.
 - A full unattended day-and-year cycle (64 minutes) has not been watched; the clock was checked
   at single hours, for two seconds of running, and for the jump-to-night button.
 - The new flowers were looked at in one screenshot per season. Snowdrops are white on snow and
