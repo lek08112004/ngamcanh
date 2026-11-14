@@ -59,6 +59,9 @@ js/flora.js           flower geometry builder (Geo), species (far + close-up mod
 js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (twelve kinds, with their stories), saved progress
 js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sunAt/partAt, WorldClock (no renderer code)
 js/library.js         the six books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
+js/cabinroom.js       the room inside the cabin (its own render layer), its lights, and what you can walk through in it
+js/corgi.js           Bơ the camp corgi: capsule model, vertex-colour coat, four-beat gait, a small mind of its own
+js/movers.js          the per-frame shadow map for things that move (the corgi, companions)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
 js/layout.js          world coordinates (CABIN, CAMP, GARDEN, BOUNDS) — imports nothing
 js/game.js            constellation game (firefly, stardust, storms, wishes, save)
@@ -165,8 +168,10 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   (`fire.wood`, up to 4, filled by walking past the woodpile beside the tent) and being within
   12 m. Flowers met by day go into a satchel (`story.satchel`) and are pressed into the book
   only back at the tent. The cabin porch offers "Vào nhà nghỉ" (E): a fade, a page of text and a
-  reading from the book, and the clock moves to the next part of the day (overnight = next
-  season if the clock runs). The garden bench (`GARDEN_BENCH`: back to the cherry trunk, looking
+  reading from the book, the clock moves to the next part of the day (overnight = next
+  season if the clock runs), and the veil lifts **inside the room** (`enterRoom`): you walk
+  about in it (slower, `room.confine` keeps you off the walls and furniture) and "Rời nhà · E"
+  by the door (or Esc) fades you back out onto the porch (`leaveCabin` → `leaveRoom`). The garden bench (`GARDEN_BENCH`: back to the cherry trunk, looking
   west through the arch) offers "Ngồi đọc sách" (E): a little shelf of six books (below).
   Everything leaves a line in the camp diary (`story.log`, short ids rendered by `logText`).
 - **Sky and ground are tied**: `THREADS` in `lore.js` link each constellation to a flower (same
@@ -200,6 +205,42 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   canvas-drawn petal), and a lantern on a post (`garden.userData.lantern`: a real
   `PointLight` for the built things, plus `uLampLight` so the ground, grass and flowers get the
   same warm pool; lit from dusk in `applyDay`).
+- **The cabin room** (`cabinroom.js`): a log liner (one inward-facing extrusion), plank floor,
+  tie beams and rafters, a cast-iron stove with its door open on a shader fire, bed and quilt,
+  the table with the notebook, a candle and a mug, a shelf, a rag rug, a rocking chair and the
+  dog's cushion. Textures are canvas-drawn (floorboards, quilt, rug, the notebook's pages). Every
+  mesh **and light** in it is on `ROOM_LAYER` (1); `enterRoom` switches `camera.layers` to it, so
+  outside the room costs nothing and inside nothing of the valley is drawn, not even the sun's
+  shadow pass. The windows are a painted view (sky, ridge, meadow coloured from the hour), not
+  the real valley. Light: the stove's `PointLight` (the only shadow caster, a cube map redrawn
+  every third frame while you are in, its position jittered with the flame so the shadows of
+  the chairs and the dog move), a non-shadow bounce light, the candle at night, a spot light
+  per window by day, a hemisphere fill. `room.update` runs from `applyDay` only while inside.
+- **Bơ, the corgi** (`corgi.js`, wired in `main.js` near `BLOCKS`): capsules and spheres on
+  pivots like the companions; coat colours are baked into vertex colours from where each vertex
+  sits on the dog (`coat()`), with a `sheen` on medium/high. Gait: each leg has a stance/swing
+  cycle; a four-beat walk (LH, LF, RH, RF) blends into a diagonal trot with speed; the body bobs
+  twice a stride, the head counters it, the knee bends in the swing. States: idle (looks round,
+  sniffs), walk, come (trots over when you arrive within 9 m, or now and then), sit, follow (a
+  little way, if you walk off while it sits with you), lie, sleep, happy (petted). Home is between
+  the fire and the cabin (radius 7). At night it lies by the fire (or on the porch if the fire is
+  out); if you go into the cabin it comes in, asleep on its cushion by night. "Vuốt ve corgi · E"
+  within 2 m: hops, wags, a synthesised bark and pant (`audio.bark`), a diary line `c:<season>`.
+  On low its pose is worked out at half the frame rate and the coat has no sheen. Test hooks:
+  `?room=1` starts inside, `?dog=run` keeps it trotting to and fro; `__av.corgi.walkTo/hold/free`.
+- **Shadows of things that move** (`movers.js`): the corgi and companions cast into their own
+  small orthographic depth map (22 m, 1024 on high / 768 on medium) around the viewer, redrawn
+  every frame with only those meshes; `moverShadow()` in `light.js` multiplies it into
+  `sunShadow`/`sunShadowSoft`, so ground, grass and flowers get it. They are **not** in the
+  static sun map (it would freeze them where they stood). Built things (bench, rocks) do not
+  receive these shadows. None of this exists on `low`.
+- **Grass shade** (medium/high): the ground under the sward is shaded from the clump field a
+  little way toward the sun, broken into short streaks along the sun's direction (terrain,
+  `TERRAIN_Q > 0`), and each blade's lower part is shaded by the clumps sunward of it
+  (`GRASS_SELF` in the grass vertex shader). Blades are still not in the shadow map.
+- **Crowns and box balls cast**: `cards()` in `flora.js` gives every card mesh a depth material
+  (`cardFragment` with `DEPTH_ONLY`, same cut-outs, a fuller cut), so cherry crowns throw dappled
+  shade, not only the solid `shades` proxies.
 - **Stories**: every flower in `FLOWERS` (`story.js`) has `tales`, shown in the journal once the
   flower has been pressed; every constellation has `tale` (`TALES` at the end of `lore.js`). The owner
   wants these true and gripping. They were written from general knowledge and not checked
@@ -247,7 +288,9 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
 - Anything on a flower that is moved off the stem axis with `g.transform` still bends by its
   model height (`position.y`), which is what you want; but `aInfo.y` (opening) scales about the
   model axis, so keep `open: 0` on transformed heads.
-- Grass does **not** cast into the shadow map (flowers do). Outside the map's 104 m square,
+- Anything new that walks about must go in `movers.roots` (not `castShadow` for the sun map).
+  Anything new inside the cabin must be on `ROOM_LAYER` or it will not be seen there.
+- Grass does **not** cast into the shadow map (flowers do; grass shade is worked out, see above). Outside the map's 104 m square,
   and on `low`, the shade under tulip rows is painted by the ground shader (`rowShade`).
 - The lens focus ray assumes planting is 0.55 m tall, 1.95 m in the sunflower field
   (hard-coded rectangle in `main.js`); move the field and you must move that too.
@@ -280,6 +323,13 @@ after the drift beds, the flower walk, crossed cherry cards, with off-season pla
 switched off. Sitting on the garden bench, high: 34.5 fps. Fifth: the bench shelf and
 lantern, caster-aware soft shadows, flower gloss, mountain B-spline map: bench 35.5 fps. Measured on an
 AMD Radeon 780M.)
+
+Sixth round (cabin room, corgi, moving shadows, grass shade, crowns casting), same GPU, measured
+the same afternoon against the previous commit: day high 43.9 → 43.7, medium 66.0 → 64.1, low
+144 → 144 (the display's cap, so it says nothing finer). New baselines: sunny camp with two
+companions and the corgi trotting (`hour=10.5&season=summer&ghost=2&dog=run&x=2&z=7&yaw=-15&pitch=-12`)
+high 38.1–39.4 (previous commit, same view, no dog: 40.1), medium 55–59 (60.0); inside the cabin
+at night with the stove and the dog (`hour=22.5&room=1&x=-9.5&z=-10`) high 79, medium 102, low 144.
 
 That is the only hardware ever measured. No phone, no discrete card, no weak desktop.
 Night on `high` is the heaviest case and it is the aurora sky, not the land.
@@ -359,13 +409,22 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 - Rock outcrops in the meadow are flat patches with painted relief, not geometry.
 - Cabin and tent are much richer than before but still simple shapes; the signposts, the
   bench and the fence rails are plain boxes.
-- No shadows from grass or companions. Flower shadows are as sharp as the map allows
-  (4096 on high over 104 m, about 2.5 cm a texel): fine for rows, soft for single petals.
+- Grass shade is an estimate from the clump field, not the blades' real shapes; seen straight
+  down it reads as soft streaks. Companion and corgi shadows fall on the ground, grass and
+  flowers but not on the bench, rocks or cabin; the corgi casts no shadow on itself outdoors.
+  Flower shadows are as sharp as the map allows (4096 on high over 104 m, about 2.5 cm a texel).
+- The cabin room: the windows are painted, not a view of the valley; the stove fire is a flat
+  shader quad; by night the stove's shadow leaves the back corner very dark. The corgi's gait
+  was checked in frame sequences (walk, trot) from the side only; its sit and lie poses are
+  approximations (the hind legs fold by rotation, nothing bends like a real hock), and it can
+  walk through a companion. Its AI was watched in test runs, not over a long session.
 - Sunflower discs are a painted spiral pattern on a low dome, not modelled florets.
 - "Dạo vườn" (`STROLL` in `main.js`) follows fixed waypoints; it does not avoid companions.
 - `node tools/check.mjs fps` sometimes fails to start when run back to back (port still held);
   run it again.
 - Companions are capsule figures. Their movement is interpolated from ten updates a second.
+  The corgi is the same kind of model, with more pivots; it is cute at a few metres, plainly
+  built from capsules at arm's length.
 - Astronomy text in `lore.js` was re-read against general knowledge (two corrections made:
   Rigel's luminosity, Deneb's distance ratio). It was **not** checked against sources.
 - Real constellation *shapes* are from RA/Dec, but their placement in the sky is arranged

@@ -894,6 +894,10 @@ body.zen #actBtn { opacity: 0; pointer-events: none; }
 }
 #veil.fading { opacity: 0; }
 #veil.hidden { display: none; }
+#veil.quick { transition-duration: 0.45s; background: #030406; cursor: default; }
+#veil.blank .veil-card { display: none; }
+/* inside the cabin: the valley's labels, the fire button and the compass have nothing to point at */
+body.indoor .friend-label, body.indoor #labels, body.indoor #fireBtn, body.indoor #compass { display: none !important; }
 .veil-card { max-width: min(560px, 100%); color: #efe6d6; text-align: center; animation: actIn 1.4s var(--ease); }
 .veil-card #veilText { font-size: 17px; line-height: 1.6; margin: 10px 0 16px; }
 .veil-card .veil-read { font-size: 14px; line-height: 1.65; color: #cbbfa9; font-style: italic; margin: 0 0 18px; }

@@ -287,7 +287,7 @@ export function createMountains(shared, detail = 1, mapSize = 512, quality = 2, 
 }
 
 /* ---------- procedural wood texture ---------- */
-function woodTexture(rng) {
+export function woodTexture(rng) {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
   const g = c.getContext('2d');
@@ -407,7 +407,7 @@ function barkTexture(rng) {
 }
 
 /* ---------- dry-stone masonry (colour + height) ---------- */
-function stoneTexture(rng) {
+export function stoneTexture(rng) {
   const c = document.createElement('canvas'), b = document.createElement('canvas');
   c.width = c.height = b.width = b.height = 256;
   const g = c.getContext('2d'), bg = b.getContext('2d');
@@ -995,7 +995,8 @@ export function createRocks(rng) {
 
 /* ---------- grass + wildflowers ---------- */
 // layers: [{ r, count, h: [min, max], w: [min, max], grow, widen, fadeIn }] from near to far
-export function createGrass(shared, rng, layers, cabin, roofCount, msaa = 0) {
+// selfShade: the lower part of each blade is shaded by the clumps between it and the sun (not on low)
+export function createGrass(shared, rng, layers, cabin, roofCount, msaa = 0, selfShade = false) {
   const blade = new THREE.BufferGeometry();
   // a card of four segments; the vertex shader arcs it, the fragment shader cuts the blades out of it
   blade.setAttribute('position', new THREE.Float32BufferAttribute([
@@ -1014,6 +1015,7 @@ export function createGrass(shared, rng, layers, cabin, roofCount, msaa = 0) {
     uAmb: shared.uAmb,
     uSunCol: shared.uSunCol,
     uSunDir: shared.uSunDir,
+    uSunDirV: shared.uSunDir,
     uDay: shared.uDay,
     uFogColor: shared.uFogColor,
     uFogDensity: shared.uFogDensity,
@@ -1021,6 +1023,7 @@ export function createGrass(shared, rng, layers, cabin, roofCount, msaa = 0) {
   const a2c = msaa > 0;       // with multisampling the blade edges are resolved by coverage, not a hard cut
   const build = (offsets, params, n, defines) => {
     if (a2c) defines.A2C = '';
+    if (selfShade && !('STATIC' in defines)) defines.GRASS_SELF = '';
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = blade.index;
     geo.setAttribute('position', blade.attributes.position);

@@ -306,6 +306,68 @@ export class Soundscape {
     src.start(t, Math.random() * 6, 0.42);
   }
 
+  /**
+   * The corgi, glad to see you: one or two soft "boof"s (a voiced pulse that drops in pitch,
+   * through a mouth-like formant, with a breathy edge), then a few quick pants.
+   * pan: -1..1 where it is; near: 0..1 how close.
+   */
+  bark(pan = 0, near = 1) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t0 = ctx.currentTime + 0.02;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.35 + 0.65 * near;
+    this._place(bus, pan * 0.6, 0.12);
+    const barks = Math.random() < 0.6 ? 2 : 1;
+    for (let b = 0; b < barks; b++) {
+      const t = t0 + b * (0.24 + Math.random() * 0.06);
+      const f0 = 430 + Math.random() * 60 - b * 30;
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(f0 * 0.82, t);
+      o.frequency.linearRampToValueAtTime(f0, t + 0.025);
+      o.frequency.exponentialRampToValueAtTime(f0 * 0.62, t + 0.13);
+      const form = ctx.createBiquadFilter();
+      form.type = 'bandpass'; form.Q.value = 2.2;
+      form.frequency.setValueAtTime(1100, t);
+      form.frequency.linearRampToValueAtTime(760, t + 0.13);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 2600;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.11, t + 0.018);
+      g.gain.exponentialRampToValueAtTime(0.05, t + 0.07);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(form).connect(lp).connect(g).connect(bus);
+      o.start(t); o.stop(t + 0.2);
+      // the breath behind it
+      const n = ctx.createBufferSource();
+      n.buffer = this.noise;
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'bandpass'; nf.frequency.value = 1500; nf.Q.value = 0.8;
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, t);
+      ng.gain.exponentialRampToValueAtTime(0.035, t + 0.012);
+      ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.10);
+      n.connect(nf).connect(ng).connect(bus);
+      n.start(t, Math.random() * 6, 0.12);
+    }
+    // a happy pant: short huffs of breath, in and out
+    const tp = t0 + barks * 0.28 + 0.15;
+    for (let i = 0; i < 6; i++) {
+      const t = tp + i * 0.16;
+      const n = ctx.createBufferSource();
+      n.buffer = this.noise;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass'; f.frequency.value = i % 2 ? 1900 : 1400; f.Q.value = 1.1;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.022 * (1 - i * 0.1), t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+      n.connect(f).connect(g).connect(bus);
+      n.start(t, Math.random() * 6, 0.13);
+    }
+  }
+
   /** 0..1 — how close the stream is. */
   setStream(level) {
     if (!this.ctx) return;

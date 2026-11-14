@@ -17,6 +17,9 @@ vec2 windBend(vec2 wp, float seed, float t){
 export const grassVertex = /* glsl */ `
 uniform float uTime;
 uniform vec3 uPlayer;
+#ifdef GRASS_SELF
+uniform vec3 uSunDirV;
+#endif
 attribute vec3 aOffset;
 attribute vec4 aParams;   // x: height, y: yaw, z: seed, w: width
 varying float vH;
@@ -134,6 +137,16 @@ void main(){
   vAcross = position.x * 2.0;
   vHead = head;
   vVis = sunShadow(base + vec3(0.0, 0.25, 0.0)) * cloudShade(base.xz, uTime);
+#ifdef GRASS_SELF
+  // the clumps between a blade and the sun shade its lower part (blades are not in the shadow
+  // map: this reads the same clump field that sets their heights, a little way toward the sun)
+  {
+    vec2 sd = normalize(uSunDirV.xz + vec2(1e-5));
+    float fall = clamp(0.30 / max(uSunDirV.y, 0.12), 0.0, 2.5);
+    float up = cnoise((cw + sd * fall * 0.4) * 1.6 + 7.0);
+    vVis *= 1.0 - 0.62 * smoothstep(0.25, 0.80, up) * (1.0 - h) * (1.0 - 0.6 * uSeason.w);
+  }
+#endif
   vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }

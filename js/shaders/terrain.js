@@ -336,6 +336,26 @@ void main(){
   vec3 L = normalize(vec3(-0.2, 0.55, -0.8));       // the aurora, a broad light ahead of the viewer
   float diff = max(dot(nb, L), 0.0);
   float vis = sunShadowSoft(vWorld) * cloudShade(xz, uTime) * (1.0 - 0.60 * rowShade * (1.0 - uRealFlowerShade * shadowCover(vWorld)));
+#if TERRAIN_Q > 0
+  // The sward shades the ground it grows from. Blades are not in the shadow map (far too many),
+  // so the shade is worked out from the same clump field that sets their height: where the grass
+  // between this spot and the sun stands tall, the spot is in its shade, broken into thin
+  // stripes laid along the sun's direction, as the shadows of single blades are.
+  if (near > 0.0 && uSunDir.y > 0.02) {
+    vec2 sd = normalize(uSunDir.xz + vec2(1e-5));
+    float fall = clamp(0.32 / max(uSunDir.y, 0.12), 0.0, 2.6);      // how far a knee-high sward throws its shade
+    vec2 sp = xz + sd * fall * 0.5;
+    float tall = cnoise(sp * 1.6 + 7.0) * 0.65 + cnoise(sp * 0.34 + 21.0) * 0.35;
+    vec2 bq = vec2(dot(xz, vec2(-sd.y, sd.x)), dot(xz, sd));
+    // two sets of short streaks, a little askew to each other, so no ruled lines show
+    vec2 bq2 = mat2(0.97, 0.24, -0.24, 0.97) * bq;
+    float blades = mix(0.5, vnoise(bq * vec2(30.0, 9.0)) * 0.5 + vnoise(bq2 * vec2(23.0, 7.0) + 5.0) * 0.5, AA(30.0));
+    // no grass by the fire, the tent or the cabin
+    float clear = smoothstep(1.9, 2.8, distance(xz, uFireLight.xz)) * smoothstep(2.3, 3.2, distance(xz, TENT_XZ)) * smoothstep(4.4, 5.6, distance(xz, CABIN_XZ));
+    float gs = smoothstep(0.38, 0.82, tall * 0.72 + blades * 0.42) * grassAmt * near * clear * (1.0 - snowCov);
+    vis *= 1.0 - 0.52 * gs;
+  }
+#endif
   float ndl = max(dot(nb, uSunDir), 0.0);
   // in shade only the sky lights the ground: a touch bluer, and a little less of it under a
   // caster that also hides part of the sky (flat grey shade is what makes a scene look pasted on)

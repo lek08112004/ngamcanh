@@ -67,6 +67,34 @@ async function walk() {
     }
     await b.key('keyUp', 'w');
     check(nearest > size * 0.8, `the boulder (size ${size}) stops you: never closer than ${nearest.toFixed(2)} m to its centre`);
+    // --- inside the cabin: the four walls and the furniture hold you, the floor holds you up
+    await b.goto(`${BASE}/?auto=view&q=low&time=day&debug=1&x=-9.5&z=-10`);
+    await b.waitFor('window.__av && __av.started()', 60000, 'the scene to start');
+    await sleep(800);
+    await b.eval('__av.enterRoom()');
+    await sleep(500);
+    const room = () => b.eval('(() => { const [x, z] = __av.room.toLocal(__av.camBase.x, __av.camBase.z); return { x, z, y: __av.camBase.y - __av.room.floorY, on: __av.indoor.on }; })()');
+    let worst = { x: 0, z: 0 }, lowest = 9, highest = 0;
+    for (const [keys, ms] of [['w', 4000], ['a', 3000], ['s', 6000], ['d', 5000], [['shift', 'w'], 3000], ['a', 4000], [['shift', 's'], 4000]]) {
+      await b.key('keyDown', Array.isArray(keys) ? keys[0] : keys);
+      if (Array.isArray(keys)) await b.key('keyDown', keys[1]);
+      for (let t = 0; t < ms; t += 250) {
+        await sleep(250);
+        const p = await room();
+        worst = { x: Math.max(worst.x, Math.abs(p.x)), z: Math.max(worst.z, Math.abs(p.z)) };
+        lowest = Math.min(lowest, p.y); highest = Math.max(highest, p.y);
+      }
+      if (Array.isArray(keys)) await b.key('keyUp', keys[1]);
+      await b.key('keyUp', Array.isArray(keys) ? keys[0] : keys);
+    }
+    check(worst.x < 2.18 && worst.z < 3.08, `29 s of walking and running about the room, into walls and furniture: never further than ${worst.x.toFixed(2)} m / ${worst.z.toFixed(2)} m from its middle (walls at 2.18 / 3.08)`);
+    check(lowest > 1.4 && highest < 1.8, `the floor holds you: eye ${lowest.toFixed(2)}–${highest.toFixed(2)} m over it`);
+    const bed = await b.eval('(() => { const r = __av.room; let inBed = 0; for (let i = 0; i < 60; i++) { const [x, z] = r.toWorld(-1.7 + (i % 6) * 0.1, -2.6 + Math.floor(i / 6) * 0.15); const [lx, lz] = r.toLocal(...r.confine(x, z, 0.32)); if (lx < -1.18 + 0.32 - 1e-3 && lz < -0.98 + 0.32 - 1e-3 && lz > -3.08) inBed++; } return inBed; })()');
+    check(bed === 0, 'nobody can stand in the bed (every point in it is pushed out)');
+    await b.eval('__av.leaveRoom()');
+    await sleep(500);
+    const outP = await pos();
+    check(!(await b.eval('__av.indoor.on')) && Math.hypot(outP.x + 8.3, outP.z + 9) < 1, 'leaving puts you back on the porch');
     check(errorsOf(b).length === 0, `no console errors${errorsOf(b).length ? ': ' + errorsOf(b).join(' | ') : ''}`);
   } finally { await b.close(); }
 }
@@ -168,9 +196,31 @@ async function story() {
     await sleep(2600);
     const hr1 = await b.eval('__av.clock.hour');
     check(Math.abs(hr1 - 17.6) < 0.2 && (await done()).includes('rest'), `resting from ${hr0.toFixed(1)} h wakes you at ${hr1.toFixed(1)} h`);
+    // and you are really in the room now: the camera draws the room's layer and nothing else
+    const inside = await b.eval('({ on: __av.indoor.on, mask: __av.camera.layers.mask, local: __av.room.toLocal(__av.camBase.x, __av.camBase.z), y: __av.camBase.y - __av.room.floorY })');
+    check(inside.on && inside.mask === 2 && Math.abs(inside.local[0]) < 2.2 && Math.abs(inside.local[1]) < 3.1 && Math.abs(inside.y - 1.6) < 0.2,
+      `inside the cabin: camera sees only the room (layers ${inside.mask}), standing at (${inside.local.map((v) => v.toFixed(2)).join(', ')}) in the room, eye ${inside.y.toFixed(2)} m over the floor`);
     await b.hold('e', 80);
     await sleep(1600);
-    check(!(await b.eval('__av.rest.on')), 'and E steps back out onto the porch');
+    check(!(await b.eval('__av.rest.on')) && (await b.eval('__av.indoor.on')), 'E lifts the veil on the room; you are still inside');
+    check((await b.eval('document.getElementById("actBtn").textContent')).includes('Rời nhà'), 'by the door, "Rời nhà" is offered');
+    await b.hold('e', 80);
+    await sleep(1500);
+    const out = await b.eval('({ on: __av.indoor.on, mask: __av.camera.layers.mask, d: Math.hypot(__av.camBase.x + 8.3, __av.camBase.z + 9) })');
+    check(!out.on && out.mask === 1 && out.d < 1.5, `and E steps back out onto the porch (layers ${out.mask}, ${out.d.toFixed(2)} m from the step)`);
+    // the corgi: stand by it, scratch its ears, the diary remembers
+    await open('time=day&x=0&z=4');
+    await b.eval('__av.corgi.place(__av.camBase.x + 1.1, __av.camBase.z, -Math.PI / 2, "sit", 30)');
+    await sleep(900);
+    check((await b.eval('document.getElementById("actBtn").textContent')).includes('Vuốt ve corgi'), 'next to Bơ, "Vuốt ve corgi" is offered');
+    const log0 = await b.eval('__av.story.log.length');
+    await b.hold('e', 80);
+    await sleep(400);
+    const pet = await b.eval('({ state: __av.corgi.state, log: __av.story.log.slice(), season: __av.clock.seasonIndex })');
+    check(pet.state === 'happy' && pet.log.includes(`c:${pet.season}`) && pet.log.length === log0 + 1, `E: the dog is glad (${pet.state}) and the diary gets a line (c:${pet.season})`);
+    await sleep(3200);
+    check((await b.eval('__av.corgi.state')) === 'sit', 'after a moment of joy it sits down by you');
+    check((await b.eval('__av.pagesOf("diary").some((p) => p.t.includes("Bơ"))')), 'the line shows in the camp diary book on the shelf');
     // the garden bench: sit, open the book, turn a page, close it
     await open('time=day&spot=bench');
     await sleep(1200);

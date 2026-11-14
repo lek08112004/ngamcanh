@@ -481,6 +481,14 @@ function cards(shared, list, u, cross = false) {
     },
   }));
   mesh.frustumCulled = false;
+  // crowns and clipped box balls cast into the sun's shadow map too, through the same cut-outs
+  if (shared.flowerShadows) {
+    mesh.castShadow = true;
+    mesh.customDepthMaterial = new THREE.ShaderMaterial({
+      vertexShader: cardVertex, fragmentShader: cardFragment, side: THREE.DoubleSide,
+      defines: { DEPTH_ONLY: '' }, uniforms: mesh.material.uniforms,
+    });
+  }
   return mesh;
 }
 const crownUniforms = (leaf) => ({

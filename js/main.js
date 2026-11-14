@@ -23,6 +23,9 @@ import { Story, CHAPTERS, FLOWERS } from './story.js';
 import { store } from './store.js';
 import { SHELF, pagesOf } from './library.js';
 import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt } from './seasons.js';
+import { createCabinRoom, ROOM_LAYER } from './cabinroom.js';
+import { createCorgi } from './corgi.js';
+import { MoverShadow } from './movers.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -131,6 +134,10 @@ const shared = {
     uShadowOn: { value: 0 },
     uShadowTexel: { value: 1 / 2048 },
     uSunReach: { value: 1 },
+    uMoverMap: { value: null },              // the corgi and companions: see movers.js
+    uMoverMatrix: { value: new THREE.Matrix4() },
+    uMoverOn: { value: 0 },
+    uMoverTexel: { value: 1 / 1024 },
   },
   aurora: {
     uDay,
@@ -271,7 +278,7 @@ const grass = createGrass(shared, rng, [
   { r: 11, count: Q.grassNear, h: [0.26, 0.74], w: [0.011, 0.020], grow: 0.0, widen: 0.8, tuft: 2, spread: 0.16, loose: 1 },
   { r: 56, count: Q.grass, h: [0.38, 1.00], w: [0.020, 0.036], grow: 0.5, widen: 2.4, tuft: 2, spread: 0.34, loose: 1 },
   { r: 110, count: Q.grassFar, h: [0.55, 1.15], w: [0.05, 0.10], grow: 0.6, widen: 1.0, fadeIn: 46 },
-], cabin, Q.roof, Q.msaa);
+], cabin, Q.roof, Q.msaa, Q.shadow > 0);
 scene.add(grass);
 
 // Places worth walking to. Reaching one writes it into the trek log.
@@ -332,6 +339,11 @@ if (Q.shadow) {
   }
   renderer.shadowMap.needsUpdate = true;
 }
+// The room inside the cabin (its own layer: drawn only when you are in it) and its own random
+// numbers, so building it leaves the rest of the world exactly as it was.
+const room = createCabinRoom(cabin, makeRng(5150), { shadows: Q.shadow > 0, shadowSize: tier === 'high' ? 512 : 256 });
+// What moves and throws a shadow: drawn every frame into a small map of its own (movers.js).
+const movers = Q.shadow ? new MoverShadow(renderer, shared.light, tier === 'high' ? 1024 : 768, 11) : null;
 
 /* --------------------------------------------------------- post-processing */
 const target = new THREE.WebGLRenderTarget(4, 4, {
@@ -443,6 +455,16 @@ const BLOCKS = [
   ...GARDEN_TREES.map(([x, z]) => [x, z, 0.6]),
   ...ROCK_SPOTS.map(([x, z, size]) => [x, z, size * 0.82 + 0.25]),
 ];
+// Bơ, the camp corgi (corgi.js): lives between the fire and the cabin, sleeps by the fire at
+// night (or by the stove, if you have gone in), and comes over when you arrive.
+const corgi = createCorgi({ rich: tier !== 'low', low: tier === 'low', home: { x: -1.5, z: -3.5, r: 7 } });
+corgi.group.traverse((o) => {
+  o.layers.enable(ROOM_LAYER);                 // seen indoors as well as out
+  if (o.isMesh) o.receiveShadow = Q.shadow > 0;
+});
+scene.add(corgi.group);
+if (movers) movers.roots.push(corgi.group);
+const DOG_FIRE = { x: CAMP.fire.x - 1.25, z: CAMP.fire.z + 1.3 }, DOG_PORCH = { x: -8.5, z: -9.0 };
 const trek = { dist: 0, found: new Set(['camp']), saveAt: 0 };
 trek.dist = store.get('trek.dist', 0);
 for (const id of store.get('trek.found', [])) trek.found.add(id);
@@ -475,13 +497,18 @@ function updateWalk(dt) {
     const yr = view.yaw * DEG;
     const dx = (Math.sin(yr) * fz + Math.cos(yr) * fx) / mag;
     const dz = (-Math.cos(yr) * fz + Math.sin(yr) * fx) / mag;
-    let nx = walker.x + dx * sp * dt, nz = walker.z + dz * sp * dt;
-    for (const [bx, bz, br] of BLOCKS) {
-      const ox = nx - bx, oz = nz - bz, d = Math.hypot(ox, oz);
-      if (d < br && d > 1e-4) { nx = bx + (ox / d) * br; nz = bz + (oz / d) * br; }
+    const indoorSp = indoor.on ? 0.55 : 1;                  // a small room: you take it slowly
+    let nx = walker.x + dx * sp * indoorSp * dt, nz = walker.z + dz * sp * indoorSp * dt;
+    if (indoor.on) {
+      [nx, nz] = room.confine(nx, nz, 0.32);                 // the four walls and the furniture
+    } else {
+      for (const [bx, bz, br] of BLOCKS) {
+        const ox = nx - bx, oz = nz - bz, d = Math.hypot(ox, oz);
+        if (d < br && d > 1e-4) { nx = bx + (ox / d) * br; nz = bz + (oz / d) * br; }
+      }
+      nx = clamp(nx, BOUNDS.minX, BOUNDS.maxX);
+      nz = clamp(nz, BOUNDS.minZ, BOUNDS.maxZ);
     }
-    nx = clamp(nx, BOUNDS.minX, BOUNDS.maxX);
-    nz = clamp(nz, BOUNDS.minZ, BOUNDS.maxZ);
     const moved = Math.hypot(nx - walker.x, nz - walker.z);
     walker.x = nx; walker.z = nz;
     walker.speed = moved / Math.max(dt, 1e-4);
@@ -492,9 +519,9 @@ function updateWalk(dt) {
     if (walker.stepAcc > (run > 1 ? 1.15 : 0.82)) { walker.stepAcc = 0; audio.step(wet); }
   }
   if (walker.on) {
-    walker.eye += (1.7 - walker.eye) * (1 - Math.exp(-dt * 4));
+    walker.eye += ((indoor.on ? 1.6 : 1.7) - walker.eye) * (1 - Math.exp(-dt * 4));
     const bob = Math.sin(walker.bob) * 0.035 * Math.min(1, walker.speed / 3);
-    camTarget.set(walker.x, terrainH(walker.x, walker.z) + walker.eye + bob, walker.z);
+    camTarget.set(walker.x, (indoor.on ? room.floorY : terrainH(walker.x, walker.z)) + walker.eye + bob, walker.z);
   }
 }
 // "Dạo vườn": the camera takes an unhurried walk through the beds on its own. Any key, drag
@@ -508,7 +535,7 @@ const STROLL = [
 ];
 const stroll = { on: false, i: 0, pause: 0, look: 0 };
 function setStroll(on) {
-  if (stroll.on === on) return;
+  if (stroll.on === on || (on && indoor.on)) return;
   stroll.on = on;
   $('qStroll').setAttribute('aria-pressed', String(on));
   if (!on) return;
@@ -560,6 +587,7 @@ function updateStroll(dt) {
   view.fovT = baseFov;
 }
 function goSpot(i, pose = true) {
+  if (indoor.on) leaveRoom();                  // a place outside: you step out of the cabin first
   setStroll(false);
   spotIndex = i;
   walker.on = false;
@@ -841,6 +869,7 @@ function applyDay(dt) {
   bl.glass.emissiveIntensity = 1.4 * lv;
   bl.flame.visible = lv > 0.02;
   shared.uLampLight.value.w = 0.55 * lv;
+  if (indoor.on) room.update(dt, time, { day: d, dusk: k, sunCol: sun, snow: w[3] });
   return d;
 }
 
@@ -980,6 +1009,7 @@ function logText(id) {
   if (k === 'k') return ['Lửa trại', v === '1' ? 'Lửa tàn, bạn tự tay nhóm lại.' : `Nhóm lại lửa trại lần thứ ${v}.`];
   if (k === 'd') return ['Trọn một ngày', `Đi hết một ngày ở trại (lần thứ ${v}).`];
   if (k === 'l') { const b = SHELF.find((x) => x.id === v); return b ? ['Giá sách', `Lần đầu mở cuốn “${b.title}” của ${b.author === 'Bạn' ? 'chính bạn' : b.author}.`] : ['', id]; }
+  if (k === 'c') return ['Bơ', `Gãi tai cho Bơ, chú corgi của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Cái đuôi cộc vẫy không ngừng.`];
   if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
   return ['', id];
 }
@@ -1031,7 +1061,8 @@ function restInCabin() {
   $('veilWhen').textContent = when;
   $('veilText').textContent = text;
   $('veilRead').textContent = readingFor();
-  veil.classList.remove('hidden', 'fading');
+  $('veilHint').textContent = 'Bấm để nhìn quanh căn phòng';
+  veil.classList.remove('hidden', 'fading', 'quick', 'blank');
   rest.ready = performance.now() + 2200;
   setTimeout(() => {
     const hours = to - from;
@@ -1041,21 +1072,88 @@ function restInCabin() {
     clock.quiet = false;
     syncClockUi();
     fire.level = Math.max(0, fire.level - hours * 0.4);          // nobody tended the fire meanwhile
-    walker.on = true;
-    walker.x = PORCH.x + 1.2; walker.z = PORCH.z + 1.0;
-    view.yawT = view.yaw = 120; view.pitchT = view.pitch = 4;
-    camTarget.set(walker.x, terrainH(walker.x, walker.z) + walker.eye, walker.z);
-    camBase.copy(camTarget);
+    enterRoom();
   }, 900);
   story.mark('rest');
   story.note(`r:${story.log.filter((x) => x.startsWith('r:')).length + 1}`);
 }
+/* inside: the room is its own layer; the camera switches to it, and walking keeps to the four walls */
+const indoor = { on: false, leaving: false };
+function enterRoom() {
+  indoor.on = true;
+  setStroll(false);
+  setTour(false);
+  camera.layers.set(ROOM_LAYER);
+  document.body.classList.add('indoor');
+  walker.on = true;
+  walker.x = room.entry.x; walker.z = room.entry.z; walker.eye = 1.6; walker.speed = 0;
+  view.yawT = view.yaw = room.entry.yaw; view.pitchT = view.pitch = -8;
+  view.fovT = baseFov;
+  camTarget.set(walker.x, room.floorY + walker.eye, walker.z);
+  camBase.copy(camTarget);
+  // Bơ comes in too: asleep on its cushion by the stove at night, at your heels by day
+  const sleepy = clock.day < 0.35;
+  if (sleepy) corgi.place(room.dogSpot.x, room.dogSpot.z, Math.atan2(room.fire.x - room.dogSpot.x, room.fire.z - room.dogSpot.z) + 1.2, 'sleep');
+  else {
+    const [x, z] = room.confine(walker.x + (room.dogSpot.x - walker.x) * 0.35, walker.z + (room.dogSpot.z - walker.z) * 0.35, 0.3);
+    corgi.place(x, z, Math.atan2(walker.x - x, walker.z - z), 'sit', 5);
+  }
+  for (const o of corgi.meshes) o.castShadow = Q.shadow > 0;        // into the stove light's shadow
+  if (Q.shadow) renderer.shadowMap.needsUpdate = true;
+}
+function leaveRoom() {
+  if (!indoor.on) return;
+  indoor.on = false;
+  camera.layers.set(0);
+  document.body.classList.remove('indoor');
+  walker.on = true;
+  walker.x = PORCH.x + 1.2; walker.z = PORCH.z + 1.0; walker.eye = 1.7;
+  view.yawT = view.yaw = 120; view.pitchT = view.pitch = 4;
+  camTarget.set(walker.x, terrainH(walker.x, walker.z) + walker.eye, walker.z);
+  camBase.copy(camTarget);
+  corgi.place(DOG_PORCH.x + 0.6, DOG_PORCH.z + 0.4, 2.2, 'idle', 2);   // it trots out after you
+  for (const o of corgi.meshes) o.castShadow = false;               // outside it is in the movers' map instead
+  shadowSettle = 2;                                                  // the sun may have moved while you were in
+}
+/** the veil after resting lifts on the room; inside, E (or the button) takes you back out onto the porch */
 function leaveCabin() {
-  if (!rest.on || performance.now() < rest.ready) return;
-  veil.classList.add('fading');
-  setTimeout(() => { veil.classList.add('hidden'); rest.on = false; }, 1200);
+  if (rest.on) {
+    if (performance.now() < rest.ready) return;
+    veil.classList.add('fading');
+    setTimeout(() => { veil.classList.add('hidden'); rest.on = false; }, 1200);
+    return;
+  }
+  if (!indoor.on || indoor.leaving) return;
+  indoor.leaving = true;
+  veil.classList.add('quick', 'blank', 'fading');
+  veil.classList.remove('hidden');
+  void veil.offsetWidth;
+  veil.classList.remove('fading');                                   // a short fade to dark at the door
+  audio.step(false);
+  setTimeout(() => {
+    leaveRoom();
+    veil.classList.add('fading');
+    setTimeout(() => { veil.classList.add('hidden'); veil.classList.remove('quick', 'blank'); indoor.leaving = false; }, 520);
+  }, 480);
 }
 veil.addEventListener('click', leaveCabin);
+/** a scratch behind the ears: the dog is glad, says so, and the diary remembers */
+const PET_WORDS = [
+  'Bơ vẫy cái đuôi cộc tít mù, nhảy cẫng lên hai cái rồi ngồi xuống sát chân bạn',
+  'Bơ dụi mõm vào tay bạn, hai tai dựng thẳng, đuôi ngoáy liên hồi',
+  'Bơ thở hổn hển vì vui, lè lưỡi nhìn bạn như chờ thêm một lần nữa',
+  'Bơ nghiêng đầu nhìn bạn rồi sủa khẽ một tiếng, mông lắc theo đuôi',
+];
+function petCorgi() {
+  if (corgi.distanceTo(camBase.x, camBase.z) > 2.4) return;
+  const wasAsleep = corgi.state === 'sleep';
+  corgi.pet();
+  audio.init();
+  const rel = wrapYaw(Math.atan2(corgi.x - camBase.x, -(corgi.z - camBase.z)) / DEG - view.yaw);
+  audio.bark(clamp(rel / 60, -1, 1), clamp(1.6 - corgi.distanceTo(camBase.x, camBase.z) * 0.4, 0, 1));
+  toast(wasAsleep ? 'Bơ đang ngủ thì mở mắt, đập đuôi xuống sàn mấy cái rồi đứng dậy đòi bạn gãi tiếp' : PET_WORDS[(corgi.petCount - 1) % PET_WORDS.length]);
+  story.note(`c:${clock.seasonIndex}`);
+}
 /* the shelf on the garden bench: six books (js/library.js); where you left each one is saved */
 const book = { open: false, id: '', pages: [], i: 0, turning: 0 };
 const bookEl = $('book');
@@ -1228,10 +1326,13 @@ let actKind = '';
 function updateActions() {
   // what you can do right where you stand
   let kind = '';
-  if (mode === 'view' && started && !rest.on) {
+  if (mode === 'view' && started && !rest.on && !indoor.leaving) {
     const x = camBase.x, z = camBase.z;
-    if (Math.hypot(x - PORCH.x, z - PORCH.z) < 3.6) kind = 'rest';
+    const dog = corgi.distanceTo(x, z) < 2.0 && corgi.state !== 'happy';
+    if (indoor.on) kind = Math.hypot(x - room.entry.x, z - room.entry.z) > 1.3 && dog ? 'pet' : 'leave';
+    else if (Math.hypot(x - PORCH.x, z - PORCH.z) < 3.6) kind = 'rest';
     else if (nearBench(x, z, 2.2) && !book.open) kind = 'read';
+    else if (dog && !book.open) kind = 'pet';
   }
   if (book.open && (walker.on || mode !== 'view')) openBook(false);           // standing up closes the book
   if (kind !== actKind) {
@@ -1239,9 +1340,17 @@ function updateActions() {
     actBtn.classList.toggle('hidden', !kind);
     if (kind === 'rest') actBtn.textContent = 'Vào nhà nghỉ · E';
     if (kind === 'read') actBtn.textContent = 'Ngồi đọc sách · E';
+    if (kind === 'pet') actBtn.textContent = 'Vuốt ve corgi · E';
+    if (kind === 'leave') actBtn.textContent = 'Rời nhà · E';
   }
 }
-actBtn.addEventListener('click', () => { if (actKind === 'rest') restInCabin(); else if (actKind === 'read') openBook(true); });
+function doAction() {
+  if (actKind === 'rest') restInCabin();
+  else if (actKind === 'read') openBook(true);
+  else if (actKind === 'pet') petCorgi();
+  else if (actKind === 'leave') leaveCabin();
+}
+actBtn.addEventListener('click', doAction);
 
 // Pages are turned by what you actually do. Checked a few times a second, never per frame.
 const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map(), flower: '', flowerT: 0 };
@@ -1277,7 +1386,7 @@ function updateStory(step) {
   if (storyAcc.bloom > 1.6) story.mark('bloom');
   // the flower book: linger among a kind of flower (standing, or pausing on a stroll) by day
   {
-    const kind = dayNow && (walker.speed < 0.2 || stroll.pause > 0) ? flowerHere(x, z) : '';
+    const kind = dayNow && !indoor.on && (walker.speed < 0.2 || stroll.pause > 0) ? flowerHere(x, z) : '';
     storyAcc.flowerT = kind && kind === storyAcc.flower ? storyAcc.flowerT + step : 0;
     storyAcc.flower = kind;
     if (kind && storyAcc.flowerT > 2.0) {
@@ -1669,12 +1778,17 @@ function makeFriend(c) {
 }
 function syncFriends() {
   for (const [id, f] of friends) {
-    if (!party.others.has(id)) { scene.remove(f.group); f.label.remove(); friends.delete(id); }
+    if (!party.others.has(id)) {
+      scene.remove(f.group); f.label.remove(); friends.delete(id);
+      if (movers) movers.roots = movers.roots.filter((r) => r !== f.group);
+    }
   }
   for (const [id, o] of party.others) {
     if (friends.has(id)) continue;
     const f = makeFriend(friendColor(id));
     scene.add(f.group);
+    if (movers) movers.roots.push(f.group);            // a real shadow on the ground in the sun
+    f.group.traverse((o) => { if (o.isMesh) o.receiveShadow = Q.shadow > 0; });
     const label = document.createElement('div');
     label.className = 'friend-label';
     labelBox.parentNode.insertBefore(label, labelBox);
@@ -2118,7 +2232,7 @@ addEventListener('keydown', (e) => {
   }
   if (typing && k !== 'escape') return;
   if (k === 'escape') {
-    if (rest.on) leaveCabin();
+    if (rest.on || indoor.on) leaveCabin();
     else if (book.open) openBook(false);
     else if (!partyBox.classList.contains('hidden')) openParty(false);
     else if (!journal.classList.contains('hidden')) openJournal(false);
@@ -2131,7 +2245,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'g' && party.active) $('partyWave').click();
   else if (k === 'b') $('dockToggle').click();
   else if (k === 'n') cyclePhase();
-  else if (k === 'e') { if (rest.on) leaveCabin(); else if (book.open) openBook(false); else if (actKind === 'rest') restInCabin(); else if (actKind === 'read') openBook(true); }
+  else if (k === 'e') { if (rest.on) leaveCabin(); else if (book.open) openBook(false); else doAction(); }
   else if (k === 'j') openJournal(journal.classList.contains('hidden'));
   else if (k === 't' && mode === 'view') setTour(!tour.on);
   else if (k === 'v' && mode === 'view') setStroll(!stroll.on);
@@ -2170,7 +2284,8 @@ function savePhoto() {
 if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book, openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
+    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH,
+    actKind: () => actKind, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -2189,6 +2304,8 @@ let perfAcc = 0, perfFrames = 0, perfSkip = 3;
 let grassFrac = 1;
 let firstFrame = true;
 let storyClock = 0;
+// test hooks: ?room=1 starts inside the cabin; ?dog=run keeps Bơ trotting to and fro in front of the camp
+let dogLoop = query.get('dog') === 'run' ? 1 : 0;
 const _q = new THREE.Quaternion();
 const _fwd = new THREE.Vector3();
 const _m4 = new THREE.Matrix4();
@@ -2339,7 +2456,10 @@ function frame() {
   camp.light.intensity = 10 * shared.uFire.value * flicker;
   camp.charred.emissiveIntensity = (0.12 + 0.75 * shared.uFire.value * flicker) * (1 - 0.8 * dayAmt);   // embers pale in daylight
   camp.flame.rotation.y = Math.atan2(camera.position.x - camp.firePos.x, camera.position.z - camp.firePos.z);
-  if (Math.abs(fire.level - fire.lastAudio) > 0.03) { fire.lastAudio = fire.level; audio.setFire(fire.level); }
+  {
+    const heard = indoor.on ? 0.5 : fire.level;               // indoors it is the stove that crackles
+    if (Math.abs(heard - fire.lastAudio) > 0.03) { fire.lastAudio = heard; audio.setFire(heard); }
+  }
 
   // The lens focuses on what you are looking at. Walk the view ray out to where it meets the
   // flowers or the ground: look out over the valley and everything is sharp; bend down to a
@@ -2347,7 +2467,8 @@ function frame() {
   {
     camera.getWorldDirection(_fwd);
     let hit = 40;
-    for (let i = 0, d = 0.5; i < 30; i++, d *= 1.17) {
+    if (indoor.on) hit = 2.6;                                  // indoors: the far wall, near enough; the loop below is skipped
+    else for (let i = 0, d = 0.5; i < 30; i++, d *= 1.17) {
       const hx = camera.position.x + _fwd.x * d, hy = camera.position.y + _fwd.y * d, hz = camera.position.z + _fwd.z * d;
       // how tall the planting is here: head-high in the sunflower field, knee-high elsewhere
       const gx = hx - GARDEN.x, gz = hz - GARDEN.z;
@@ -2365,6 +2486,13 @@ function frame() {
   }
   updateLabels();
   updateCompass();
+  if (dogLoop && started && !corgi.target) { dogLoop = -dogLoop; corgi.walkTo(dogLoop > 0 ? 0.2 : 3.6, dogLoop > 0 ? 3.4 : 0.8, 1); }
+  corgi.update(dt, time, {
+    px: camBase.x, pz: camBase.z, camY: indoor.on ? walker.eye : camBase.y - terrainH(camBase.x, camBase.z),
+    night: clock.day < 0.3, indoor: indoor.on, room,
+    rest: fire.level > 0.06 ? DOG_FIRE : DOG_PORCH,
+    ground: terrainH, blocks: BLOCKS,
+  });
   if (frames % 6 === 0) updateActions();
   if (frames % 12 === 0) updateStory(Math.min(0.6, (time - storyClock)));
   if (frames % 12 === 0) storyClock = time;
@@ -2373,6 +2501,13 @@ function frame() {
     const sd = camBase.z < -20 ? Math.abs(camBase.x - streamX(camBase.z)) : 60;
     audio.setStream(clamp(1 - sd / 38, 0, 1));
   }
+  // shadows that move: outdoors the dog's and companions' little map; indoors the stove light's
+  // cube map, redrawn every third frame as the flame shifts (nothing else is in it then)
+  if (movers) {
+    if (indoor.on) shared.light.uMoverOn.value = 0;
+    else movers.render(camBase, shared.uSunDir.value, dayAmt > 0.03 && shared.light.uSunReach.value > 0.02);
+  }
+  if (indoor.on && Q.shadow && frames % 3 === 0) renderer.shadowMap.needsUpdate = true;
   composer.render(dt);
   if (Q.shadow && (shadowStale || !shared.light.uShadowOn.value) && sunLight.shadow.map) {
     shadowStale = false;
@@ -2385,7 +2520,7 @@ function frame() {
   /* ---- "+ củi" button rides on the fire ---- */
   if (started && frames % 2 === 0) {
     _proj.set(camp.firePos.x, camp.firePos.y + 1.0, camp.firePos.z).project(camera);
-    const on = _proj.z < 1 && Math.abs(_proj.x) < 0.96 && _proj.y > -0.9 && _proj.y < 0.9 && journal.classList.contains('hidden');
+    const on = _proj.z < 1 && Math.abs(_proj.x) < 0.96 && _proj.y > -0.9 && _proj.y < 0.9 && journal.classList.contains('hidden') && !indoor.on;
     fireBtn.classList.toggle('hidden', !on);
     const label = mode !== 'view' ? '+ củi' : fire.level < 0.04 ? (fire.wood ? 'Nhóm lửa' : 'Lửa đã tắt · cần củi') : fire.wood ? `+ củi · còn ${fire.wood}` : '+ củi · hết củi';
     if (label !== fire.label) { fire.label = label; fireBtn.textContent = label; }
@@ -2417,6 +2552,7 @@ function frame() {
       camTarget.set(px, terrainH(px, pz) + eye, pz);
       camBase.copy(camTarget);
     }
+    if (query.get('room') === '1') enterRoom();
     if (query.has('yaw') || query.has('pitch') || query.has('fov')) {
       setTour(false);
       view.yaw = view.yawT = Number(query.get('yaw')) || 0;

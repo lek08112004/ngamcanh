@@ -435,6 +435,9 @@ void main(){
 `;
 
 export const cardFragment = /* glsl */ `
+#ifdef DEPTH_ONLY
+#include <packing>
+#endif
 uniform float uLeaf;       // 0 blossom .. 1 foliage
 uniform vec3 uColA;        // the season's two tones for this crown
 uniform vec3 uColB;
@@ -525,6 +528,13 @@ void main(){
   // crossing it (which faces you there) carries the spray instead
   float m = mix(mFlower, mLeaf, uLeaf) * smoothstep(0.10, 0.32, abs(dot(N, V)));
   if (m < 0.03) discard;
+#ifdef DEPTH_ONLY
+  // in the sun's shadow map: the same sprays, cut the same way (a little fuller, as many
+  // overlapping cards would be), so the shade under a crown is dappled, not a solid disc
+  if (m < 0.35) discard;
+  gl_FragColor = packDepthToRGBA(gl_FragCoord.z);
+  return;
+#endif
   vec3 albedo = mix(flowerCol, leafCol * (0.80 + 0.20 * mLeaf), uLeaf);
   float nl = dot(N, uSunDir);
   // petals are thin: lit from behind they glow almost as much as from the front

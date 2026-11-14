@@ -9,6 +9,27 @@ uniform mat4 uShadowMatrix;
 uniform float uShadowOn;
 uniform float uShadowTexel;
 uniform float uSunReach;     // 0 once the sun has gone behind the ridge: the valley floor is in its shade, the peaks are not
+// Things that move (the corgi, walking companions) cannot go into the static map: it is
+// redrawn only when the sun moves. They get a small map of their own, redrawn every frame
+// round the viewer (see movers.js). Plain depth, orthographic, so it is linear.
+uniform sampler2D uMoverMap;
+uniform mat4 uMoverMatrix;
+uniform float uMoverOn;
+uniform float uMoverTexel;
+float moverShadow(vec3 w){
+  if (uMoverOn < 0.5) return 1.0;
+  vec4 sc = uMoverMatrix * vec4(w, 1.0);
+  vec3 p = sc.xyz / sc.w;
+  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
+  // the receivers (ground, grass, flowers) never draw into this map, so there is no acne to
+  // hide and no bias to push the shadow off the paws: it starts where the foot stands
+  float z = p.z - 0.0004, T = uMoverTexel, s = 0.0;
+  for (int k = 0; k < 4; k++) {
+    vec2 o = vec2(k == 0 || k == 3 ? -0.6 : 0.6, k < 2 ? -0.6 : 0.6) * T * 1.6;
+    s += step(z, textureLod(uMoverMap, p.xy + o, 0.0).r);
+  }
+  return s * 0.25;
+}
 float lhash(vec2 p){
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -35,7 +56,7 @@ float sunShadowMap(vec3 w){
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
   return shadowTap(p.xy, p.z);
 }
-float sunShadow(vec3 w){ return sunShadowMap(w) * uSunReach; }
+float sunShadow(vec3 w){ return sunShadowMap(w) * moverShadow(w) * uSunReach; }
 // four taps blended by where the point falls between texels: a shadow edge becomes a ramp,
 // not the staircase (and the soft square blotches) of the map's grid
 float shadowBilinear(vec2 uv, float z){
@@ -75,7 +96,7 @@ float sunShadowSoftMap(vec3 w){
   }
   return s * 0.125;
 }
-float sunShadowSoft(vec3 w){ return sunShadowSoftMap(w) * uSunReach; }
+float sunShadowSoft(vec3 w){ return sunShadowSoftMap(w) * moverShadow(w) * uSunReach; }
 // 1 inside the area the shadow map covers, 0 outside
 float shadowCover(vec3 w){
   if (uShadowOn < 0.5) return 0.0;
