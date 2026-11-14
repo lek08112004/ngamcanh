@@ -5,3 +5,6 @@ node_modules/
 .vscode/
 .claude/
 .wrangler/
+
+# the owner's private books: never committed, pushed or deployed
+private/

@@ -1039,6 +1039,11 @@ body.reading #story, body.reading #quick { opacity: 0.18; transition: opacity 0.
 .sheet-ref { margin: 4px 0 12px; font: 12px/1.4 var(--read); font-variant: small-caps; letter-spacing: 0.05em; color: #8a7458; }
 #bookText p { margin: 0 0 0.9em; font: 16.5px/1.78 var(--read); text-align: justify; hyphens: auto; }
 #bookText p:first-child::first-letter { font-size: 1.15em; font-weight: 600; }
+/* a whole book from private/: its chapter subtitles, quoted passages and pictures */
+#bookText p.book-sub { font-style: italic; text-align: center; color: #5a6e6a; margin-bottom: 1.3em; }
+#bookText p.book-sub::first-letter, #bookText p.book-q::first-letter { font-size: 1em; font-weight: inherit; }
+#bookText p.book-q { margin: 0 1.4em 0.9em; padding-left: 0.9em; border-left: 2px solid rgba(80, 60, 30, 0.25); font-style: italic; }
+#bookText img.book-img { display: block; max-width: 100%; max-height: 52vh; margin: 0.6em auto 1em; border-radius: 3px; mix-blend-mode: multiply; }
 .sheet-foot {
   display: flex;
   justify-content: space-between;

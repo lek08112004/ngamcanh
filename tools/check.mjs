@@ -235,24 +235,31 @@ async function story() {
     await b.hold('e', 80);
     await sleep(700);
     const shelf = await b.eval('({ open: __av.book.open, shelf: !document.getElementById("shelfView").classList.contains("hidden"), spines: [...document.querySelectorAll("#shelf .spine")].map((s) => s.dataset.book) })');
-    check(shelf.open && shelf.shelf && shelf.spines.length >= 5 && shelf.spines.length <= 6, `E opens the shelf first (${shelf.spines.length} books: ${shelf.spines.join(', ')})`);
+    // six books, plus the owner's private full book when private/ is present on this machine
+    check(shelf.open && shelf.shelf && shelf.spines.length >= 5 && shelf.spines.length <= 7, `E opens the shelf first (${shelf.spines.length} books: ${shelf.spines.join(', ')})`);
     // every book, every page, read on screen: none blank, none broken
     const bad = [];
-    let total = 0;
+    let total = 0, pics = 0;
     for (const id of shelf.spines) {
       await b.click(`#shelf [data-book="${id}"]`);
       await sleep(250);
       const n = await b.eval('__av.book.pages.length');
       for (let i = 0; i < n; i++) {
         if (i > 0) { await b.eval('__av.book.turning = 0; __av.turnPage(1)'); await sleep(330); }
-        const pg = await b.eval('({ i: __av.book.i, h: document.getElementById("bookTitle").textContent, t: document.getElementById("bookText").textContent, q: document.getElementById("bookQuote").textContent, run: document.getElementById("bookRun").textContent })');
+        const pg = await b.eval('({ i: __av.book.i, h: document.getElementById("bookTitle").textContent, t: document.getElementById("bookText").textContent, q: document.getElementById("bookQuote").textContent, run: document.getElementById("bookRun").textContent, img: [...document.querySelectorAll("#bookText img")].map((im) => im.complete && im.naturalWidth > 0 ? 1 : (im.loading = "eager", 0)) })');
         total++;
-        if (pg.i !== i || pg.h.trim().length < 2 || pg.t.trim().length < 20 || /undefined|null|NaN|\[object/.test(pg.h + pg.t + pg.q + pg.run)) bad.push(`${id} p${i + 1}: "${pg.h}" (${pg.t.length} chars)`);
+        if (pg.i !== i || pg.h.trim().length < 2 || (pg.t.trim().length < 20 && !pg.img.length) || /undefined|null|NaN|\[object|\[\[/.test(pg.h + pg.t + pg.q + pg.run)) bad.push(`${id} p${i + 1}: "${pg.h}" (${pg.t.length} chars)`);
+        pics += pg.img.length;
       }
       await b.click('#bookShelf');
       await sleep(200);
     }
-    check(bad.length === 0 && total >= 25, `all ${shelf.spines.length} books turned page by page, ${total} pages, none blank or broken${bad.length ? `: ${bad.slice(0, 4).join('; ')}` : ''}`);
+    check(bad.length === 0 && total >= 25, `all ${shelf.spines.length} books turned page by page, ${total} pages (${pics} pictures), none blank or broken${bad.length ? `: ${bad.slice(0, 4).join('; ')}` : ''}`);
+    if (shelf.spines.includes('money')) {
+      const pv = await b.eval('(() => { const bk = __av.shelf.find((x) => x.id === "money"); return { title: bk.title, author: bk.author, translator: bk.translator, pages: bk.pages.length, pics: bk.pages.reduce((n, p) => n + (p.t.match(/\\[\\[img:/g) || []).length, 0) }; })()');
+      check(pv.title === 'Tâm Lý Học Về Tiền' && pv.author === 'Morgan Housel' && pv.translator === 'Hoàng Thị Minh Phúc' && pics === pv.pics,
+        `the private book: "${pv.title}", ${pv.author}, dịch ${pv.translator}: ${pv.pages} pages, all ${pv.pics} pictures shown`);
+    }
     // a classic carries its source and a verbatim quotation; the modern books only a note
     const cl = await b.eval('(() => { const r = {}; for (const bk of __av.shelf) { const ps = __av.pagesOf(bk.id); r[bk.id] = { kind: bk.kind, src: bk.src || "", quotes: ps.filter((p) => p.q).length, refs: ps.filter((p) => p.q && p.ref).length }; } return r; })()');
     const classics = Object.values(cl).filter((x) => x.kind === 'classic'), notes = Object.values(cl).filter((x) => x.kind === 'notes');

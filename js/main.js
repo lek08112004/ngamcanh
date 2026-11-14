@@ -1249,6 +1249,13 @@ function shelfCtx() {
   };
 }
 const bookOf = (id) => SHELF.find((b) => b.id === id);
+// The owner's own full books live in private/ (git-ignored: never committed or deployed). When
+// the folder is there, its book joins the shelf; when it is not (any public copy), nothing happens.
+import('../private/money/book.js').then(({ default: b }) => {
+  if (!b || !Array.isArray(b.pages) || SHELF.some((x) => x.id === b.id)) return;
+  SHELF.push({ ...b, imgBase: 'private/money/img/' });
+  if (book.open && !book.id) renderShelf();
+}).catch(() => {});
 /** the saved page of a book ('id:n' in read.at) */
 function savedPage(id) {
   const hit = store.get('read.at', []).find((s) => s.startsWith(`${id}:`));
@@ -1310,7 +1317,7 @@ function openVolume(id) {
 function renderPage() {
   const b = bookOf(book.id), p = book.pages[book.i];
   $('bookRun').textContent = b.title;
-  $('bookAuthor').textContent = b.author;
+  $('bookAuthor').textContent = b.translator ? `${b.author} · ${b.translator} dịch` : b.author;
   $('bookTitle').textContent = p.h;
   const q = $('bookQuote'), ref = $('bookRef');
   q.classList.toggle('hidden', !p.q);
@@ -1319,7 +1326,24 @@ function renderPage() {
   ref.textContent = p.ref ? `${p.ref}. ${b.kind === 'classic' ? 'Chuyển ý:' : ''}` : '';
   const text = $('bookText');
   text.textContent = '';
-  for (const para of p.t.split('\n\n')) { const e = document.createElement('p'); e.textContent = para; text.append(e); }
+  for (const para of p.t.split('\n\n')) {
+    // a whole book (private/): [[img:NN]] a picture, [[q]] a quoted passage, [[sub:…]] a chapter's subtitle
+    const pic = /^\[\[img:(\d+)\]\]$/.exec(para);
+    if (pic && b.imgBase) {
+      const im = document.createElement('img');
+      im.className = 'book-img'; im.loading = 'lazy'; im.alt = '';
+      im.src = `${b.imgBase}${pic[1]}.jpg`;
+      text.append(im);
+      continue;
+    }
+    if (pic) continue;
+    const e = document.createElement('p');
+    const sub = /^\[\[sub:(.*)\]\]$/.exec(para);
+    if (sub) { e.className = 'book-sub'; e.textContent = sub[1]; }
+    else if (para.startsWith('[[q]]')) { e.className = 'book-q'; e.textContent = para.slice(5); }
+    else e.textContent = para;
+    text.append(e);
+  }
   $('bookSrc').textContent = book.i === 0 ? b.src : '';
   $('bookPage').textContent = `${book.i + 1} / ${book.pages.length}`;
   $('bookPrev').disabled = book.i === 0;
