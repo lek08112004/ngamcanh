@@ -235,8 +235,8 @@ async function story() {
     await b.hold('e', 80);
     await sleep(700);
     const shelf = await b.eval('({ open: __av.book.open, shelf: !document.getElementById("shelfView").classList.contains("hidden"), spines: [...document.querySelectorAll("#shelf .spine")].map((s) => s.dataset.book) })');
-    // six books, plus the owner's private full book when private/ is present on this machine
-    check(shelf.open && shelf.shelf && shelf.spines.length >= 5 && shelf.spines.length <= 7, `E opens the shelf first (${shelf.spines.length} books: ${shelf.spines.join(', ')})`);
+    // seven books, plus the owner's private full book when private/ is present on this machine
+    check(shelf.open && shelf.shelf && shelf.spines.length >= 7 && shelf.spines.length <= 8, `E opens the shelf first (${shelf.spines.length} books: ${shelf.spines.join(', ')})`);
     // every book, every page, read on screen: none blank, none broken
     const bad = [];
     let total = 0, pics = 0;

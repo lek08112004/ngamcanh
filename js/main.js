@@ -10,7 +10,7 @@ import { FinalShader, LensShader } from './shaders/post.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import {
   makeRng, terrainH, mountainRise, createTerrain, createMountains, createCabin, createFence,
-  createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS,
+  createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS, CAMP_SEATS,
 } from './world.js';
 import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH, GARDEN_BENCH, walkFlowerAt, nearBench, LOD_NEAR } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
@@ -26,10 +26,13 @@ import { SHELF, pagesOf } from './library.js';
 import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt, sunAt } from './seasons.js';
 import { createCabinRoom, ROOM_LAYER } from './cabinroom.js';
 import { createCorgi } from './corgi.js';
+import { createCat } from './cat.js';
 import { MoverShadow } from './movers.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
+// test hook (?debug=1&eye=0.35): the walker's eye height, to look at the animals from their level
+const TEST_EYE = query.has('debug') && Number(query.get('eye')) > 0 ? Number(query.get('eye')) : 0;
 const DEG = Math.PI / 180;
 const PITCH_DEG = 11.6;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -537,7 +540,21 @@ corgi.group.traverse((o) => {
 });
 scene.add(corgi.group);
 if (movers) movers.roots.push(corgi.group);
-const DOG_FIRE = { x: CAMP.fire.x - 1.25, z: CAMP.fire.z + 1.3 }, DOG_PORCH = { x: -8.5, z: -9.0 };
+// (the dog's place by the fire used to be 0.2 m from the axis of the west sitting log, i.e. inside it)
+const DOG_FIRE = { x: CAMP.fire.x - 1.55, z: CAMP.fire.z + 0.5 }, DOG_PORCH = { x: -8.5, z: -9.0 };
+// Choco, the camp cat (cat.js): keeps near Bơ, curls up beside it by the fire at night and on the
+// rocking chair in the cabin. Fur shells up close on medium and high.
+const cat = createCat({ rich: tier !== 'low', low: tier === 'low', fur: tier === 'high' ? 6 : tier === 'medium' ? 3 : 0, furNear: tier === 'high' ? 2.6 : 1.8, home: { x: -1.5, z: -3.5, r: 7 } });
+cat.group.traverse((o) => {
+  o.layers.enable(ROOM_LAYER);
+  if (o.isMesh) o.receiveShadow = Q.shadow > 0;
+});
+scene.add(cat.group);
+if (movers) movers.roots.push(cat.group);
+const catPrev = { x: 0, z: 0 };
+// the cat keeps off the sitting logs too (circles along each log), as well as everything in BLOCKS
+const CAT_BLOCKS = [...BLOCKS, ...CAMP_SEATS.flatMap(([x, z, yaw, len]) => [-0.5, -0.25, 0, 0.25, 0.5]
+  .map((t) => [x + Math.cos(yaw) * len * t, z - Math.sin(yaw) * len * t, 0.27]))];
 const trek = { dist: 0, found: new Set(['camp']), saveAt: 0 };
 trek.dist = store.get('trek.dist', 0);
 for (const id of store.get('trek.found', [])) trek.found.add(id);
@@ -594,7 +611,7 @@ function updateWalk(dt) {
     if (walker.stepAcc > (run > 1 ? 1.15 : 0.82)) { walker.stepAcc = 0; audio.step(wet); }
   }
   if (walker.on) {
-    walker.eye += ((indoor.on ? 1.6 : 1.7) - walker.eye) * (1 - Math.exp(-dt * 4));
+    walker.eye += ((TEST_EYE || (indoor.on ? 1.6 : 1.7)) - walker.eye) * (1 - Math.exp(-dt * 4));
     const bob = Math.sin(walker.bob) * 0.035 * Math.min(1, walker.speed / 3);
     camTarget.set(walker.x, (indoor.on ? room.floorY : terrainH(walker.x, walker.z)) + walker.eye + bob, walker.z);
   }
@@ -1130,6 +1147,7 @@ function logText(id) {
   if (k === 'd') return ['Trọn một ngày', `Đi hết một ngày ở trại (lần thứ ${v}).`];
   if (k === 'l') { const b = SHELF.find((x) => x.id === v); return b ? ['Giá sách', `Lần đầu mở cuốn “${b.title}” của ${b.author === 'Bạn' ? 'chính bạn' : b.author}.`] : ['', id]; }
   if (k === 'c') return ['Bơ', `Gãi tai cho Bơ, chú corgi của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Cái đuôi cộc vẫy không ngừng.`];
+  if (k === 'm') return ['Choco', `Vuốt lưng Choco, con mèo nâu của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Nó rừ rừ mãi không thôi.`];
   if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
   return ['', id];
 }
@@ -1219,6 +1237,10 @@ function enterRoom() {
     corgi.place(x, z, Math.atan2(walker.x - x, walker.z - z), 'sit', 5);
   }
   for (const o of corgi.meshes) o.castShadow = Q.shadow > 0;        // into the stove light's shadow
+  // Choco: asleep on the rocking chair's blanket at night, on the rug by the stove by day
+  if (sleepy) cat.place(room.chair.x, room.chair.z, room.chair.yaw, 'sleep', 999, room.chair.y);
+  else cat.place(room.catSpot.x, room.catSpot.z, Math.atan2(room.fire.x - room.catSpot.x, room.fire.z - room.catSpot.z), 'loaf', 12);
+  for (const o of cat.meshes) o.castShadow = Q.shadow > 0 && !o.userData.shell;
   if (Q.shadow) renderer.shadowMap.needsUpdate = true;
 }
 function leaveRoom() {
@@ -1233,6 +1255,8 @@ function leaveRoom() {
   camBase.copy(camTarget);
   corgi.place(DOG_PORCH.x + 0.6, DOG_PORCH.z + 0.4, 2.2, 'idle', 2);   // it trots out after you
   for (const o of corgi.meshes) o.castShadow = false;               // outside it is in the movers' map instead
+  cat.place(DOG_PORCH.x - 0.5, DOG_PORCH.z + 0.9, 2.4, 'sit', 3);     // and the cat strolls out after it
+  for (const o of cat.meshes) o.castShadow = false;
   shadowSettle = 2;                                                  // the sun may have moved while you were in
 }
 /** the veil after resting lifts on the room; inside, E (or the button) takes you back out onto the porch */
@@ -1264,6 +1288,25 @@ const PET_WORDS = [
   'Bơ thở hổn hển vì vui, lè lưỡi nhìn bạn như chờ thêm một lần nữa',
   'Bơ nghiêng đầu nhìn bạn rồi sủa khẽ một tiếng, mông lắc theo đuôi',
 ];
+const CAT_WORDS = [
+  'Choco nheo mắt, dụi đầu vào tay bạn rồi rừ rừ khe khẽ',
+  'Choco dựng thẳng đuôi, chóp đuôi run run, cọ má vào ngón tay bạn',
+  'Choco nằm yên cho bạn vuốt, mắt khép hờ, tiếng rừ rừ đều như máy khâu',
+  'Choco kêu “mrrr” một tiếng ngắn rồi ưỡn lưng theo bàn tay bạn',
+];
+/** a stroke along the cat's back: it purrs, and the diary remembers */
+function petCat() {
+  if (cat.distanceTo(camBase.x, camBase.z) > 2.0) return;
+  const wasAsleep = cat.state === 'sleep';
+  cat.pet();
+  audio.init();
+  const rel = wrapYaw(Math.atan2(cat.x - camBase.x, -(cat.z - camBase.z)) / DEG - view.yaw);
+  const near = clamp(1.6 - cat.distanceTo(camBase.x, camBase.z) * 0.5, 0, 1);
+  audio.purr(clamp(rel / 60, -1, 1), near, 3.2);
+  if (!wasAsleep && cat.petCount % 3 === 1) audio.meow(clamp(rel / 60, -1, 1), near, cat.petCount % 2 === 1);
+  toast(wasAsleep ? 'Choco đang ngủ, chỉ hé một mắt nhìn bạn rồi bắt đầu rừ rừ' : CAT_WORDS[(cat.petCount - 1) % CAT_WORDS.length]);
+  story.note(`m:${clock.seasonIndex}`);
+}
 function petCorgi() {
   if (corgi.distanceTo(camBase.x, camBase.z) > 2.4) return;
   const wasAsleep = corgi.state === 'sleep';
@@ -1473,9 +1516,12 @@ function updateActions() {
   if (mode === 'view' && started && !rest.on && !indoor.leaving) {
     const x = camBase.x, z = camBase.z;
     const dog = corgi.distanceTo(x, z) < 2.0 && corgi.state !== 'happy';
+    // the cat, when it is the nearer of the two (it does not come to you; you go to it)
+    const kitty = cat.distanceTo(x, z) < 1.7 && cat.state !== 'happy' && (!dog || cat.distanceTo(x, z) < corgi.distanceTo(x, z));
     if (indoor.on) kind = Math.hypot(x - room.entry.x, z - room.entry.z) > 1.3 && dog ? 'pet' : 'leave';
     else if (Math.hypot(x - PORCH.x, z - PORCH.z) < 3.6) kind = 'rest';
     else if (nearBench(x, z, 2.2) && !book.open) kind = 'read';
+    else if (kitty && !book.open) kind = 'petcat';
     else if (dog && !book.open) kind = 'pet';
   }
   if (book.open && (walker.on || mode !== 'view')) openBook(false);           // standing up closes the book
@@ -1485,6 +1531,7 @@ function updateActions() {
     if (kind === 'rest') actBtn.textContent = 'Vào nhà nghỉ · E';
     if (kind === 'read') actBtn.textContent = 'Ngồi đọc sách · E';
     if (kind === 'pet') actBtn.textContent = 'Vuốt ve corgi · E';
+    if (kind === 'petcat') actBtn.textContent = 'Vuốt ve Choco · E';
     if (kind === 'leave') actBtn.textContent = 'Rời nhà · E';
   }
 }
@@ -1492,6 +1539,7 @@ function doAction() {
   if (actKind === 'rest') restInCabin();
   else if (actKind === 'read') openBook(true);
   else if (actKind === 'pet') petCorgi();
+  else if (actKind === 'petcat') petCat();
   else if (actKind === 'leave') leaveCabin();
 }
 actBtn.addEventListener('click', doAction);
@@ -2450,7 +2498,7 @@ function savePhoto() {
 if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
+    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, petCat, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
     actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     setPixelRatio: (p) => { pixelRatio = p; resize(); },
@@ -2683,6 +2731,17 @@ function frame() {
     rest: fire.level > 0.06 ? DOG_FIRE : DOG_PORCH,
     ground: terrainH, blocks: BLOCKS,
   });
+  {
+    const moving = Math.hypot(camBase.x - catPrev.x, camBase.z - catPrev.z) > 0.15 * Math.max(dt, 1e-3);
+    catPrev.x = camBase.x; catPrev.z = camBase.z;
+    cat.update(dt, time, {
+      px: camBase.x, pz: camBase.z, camY: indoor.on ? walker.eye : camBase.y - terrainH(camBase.x, camBase.z),
+      cam: camera.position, moving,
+      night: clock.day < 0.3, light: indoor.on ? (clock.day < 0.35 ? 0.15 : 0.5) : dayAmt, indoor: indoor.on, room,
+      rest: fire.level > 0.06 ? DOG_FIRE : DOG_PORCH,
+      ground: terrainH, blocks: CAT_BLOCKS, buddy: corgi,
+    });
+  }
   if (frames % 6 === 0) updateActions();
   if (frames % 12 === 0) updateStory(Math.min(0.6, (time - storyClock)));
   if (frames % 12 === 0) storyClock = time;

@@ -585,6 +585,10 @@ export function createCabinRoom(cabin, rng, opts = {}) {
     group: room, lights, fireLight, floorY, confine, toWorld, toLocal, update, yawOf,
     entry: { x: ex, z: ez, yaw: yawOf(0.25, -1) },
     dogSpot: { x: dx, z: dz },
+    // the cat: by night on the folded blanket of the rocking chair (seat top 0.53 m above the
+    // floor, facing the way the chair faces), by day on the rug nearer the stove
+    chair: (() => { const [x, z] = toWorld(1.62, 0.42); return { x, z, y: 0.528, yaw: g.rotation.y + 2.5 }; })(),
+    catSpot: (() => { const [x, z] = toWorld(0.78, -0.32); return { x, z }; })(),
     fire: { x: fx, z: fz },
     table: { x: tx, z: tz },
   };

@@ -368,6 +368,87 @@ export class Soundscape {
     }
   }
 
+  /**
+   * The cat, stroked: a purr, a rumble of about 26 beats a second (noise, low-passed, pulsed),
+   * louder on the out-breath than the in-breath, for `dur` seconds. Quiet: you hear it only near.
+   */
+  purr(pan = 0, near = 1, dur = 3) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t0 = ctx.currentTime + 0.02;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.25 + 0.75 * near;
+    this._place(bus, pan * 0.5, 0.06);
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 340; lp.Q.value = 0.9;
+    const body = ctx.createBiquadFilter();
+    body.type = 'peaking'; body.frequency.value = 110; body.gain.value = 9; body.Q.value = 1.2;
+    const pulse = ctx.createGain();
+    pulse.gain.value = 0;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sawtooth'; lfo.frequency.value = 25 + Math.random() * 3;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.5;
+    lfo.connect(depth).connect(pulse.gain);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t0);
+    // breath by breath: out (stronger, ~0.9 s), in (softer, ~0.7 s)
+    let t = t0;
+    while (t < t0 + dur) {
+      env.gain.exponentialRampToValueAtTime(0.16, t + 0.12);
+      env.gain.setValueAtTime(0.16, t + 0.75);
+      env.gain.exponentialRampToValueAtTime(0.05, t + 0.9);
+      env.gain.setValueAtTime(0.07, t + 1.0);
+      env.gain.exponentialRampToValueAtTime(0.07, t + 1.5);
+      env.gain.exponentialRampToValueAtTime(0.03, t + 1.6);
+      t += 1.6;
+    }
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    src.connect(lp).connect(body).connect(pulse).connect(env).connect(bus);
+    src.start(t0, Math.random() * 4, t - t0 + 0.3);
+    lfo.start(t0); lfo.stop(t + 0.3);
+  }
+
+  /**
+   * A short "mrrp" (the trill a cat gives when greeted) or, now and then, a soft "mi-ao": a
+   * voiced tone that rises and falls through a mouth that opens (the formant sweeps up, then down).
+   */
+  meow(pan = 0, near = 1, trill = true) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.03;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.3 + 0.7 * near;
+    this._place(bus, pan * 0.6, 0.1);
+    const len = trill ? 0.32 : 0.62;
+    const f0 = trill ? 560 : 620;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0 * 0.85, t);
+    o.frequency.linearRampToValueAtTime(f0 * 1.18, t + len * 0.35);
+    o.frequency.linearRampToValueAtTime(f0 * 0.78, t + len);
+    const vib = ctx.createOscillator();
+    vib.frequency.value = trill ? 28 : 6;
+    const vd = ctx.createGain();
+    vd.gain.value = trill ? 30 : 8;
+    vib.connect(vd).connect(o.frequency);
+    const form = ctx.createBiquadFilter();
+    form.type = 'bandpass'; form.Q.value = 3;
+    form.frequency.setValueAtTime(800, t);
+    form.frequency.linearRampToValueAtTime(trill ? 1500 : 1900, t + len * 0.4);
+    form.frequency.linearRampToValueAtTime(900, t + len);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 3400;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(trill ? 0.06 : 0.08, t + 0.05);
+    g.gain.setValueAtTime(trill ? 0.05 : 0.07, t + len * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    o.connect(form).connect(lp).connect(g).connect(bus);
+    o.start(t); o.stop(t + len + 0.05);
+    vib.start(t); vib.stop(t + len + 0.05);
+  }
+
   /** 0..1 — how close the stream is. */
   setStream(level) {
     if (!this.ctx) return;

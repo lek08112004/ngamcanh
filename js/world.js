@@ -1164,6 +1164,8 @@ export function createFireflies(shared, rng, count) {
 }
 
 /* ---------- campsite: fire ring, logs, tent ---------- */
+/** the two sitting logs by the fire: [x, z, yaw, length] (main.js keeps the cat off them) */
+export const CAMP_SEATS = [[3.0, -2.5, 0.5, 2.1], [6.4, -3.0, -0.7, 1.7]];
 
 export function insideCamp(x, z) {
   const fx = x - CAMP.fire.x, fz = z - CAMP.fire.z;
@@ -1251,8 +1253,7 @@ export function createCamp(shared, rng) {
   const barkMat = new THREE.MeshStandardMaterial({ map: barkMap, roughness: 1 });
   const ringMat = new THREE.MeshStandardMaterial({ map: ringTexture(rng), roughness: 1 });
   const logMats = [barkMat, ringMat, ringMat];
-  const seats = [[3.0, -2.5, 0.5, 2.1], [6.4, -3.0, -0.7, 1.7]];
-  for (const [x, z, yaw, len] of seats) {
+  for (const [x, z, yaw, len] of CAMP_SEATS) {
     const log = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.27, len, 16), logMats);
     log.position.set(x, terrainH(x, z) + 0.22, z);
     log.rotation.set(0, yaw, Math.PI / 2);

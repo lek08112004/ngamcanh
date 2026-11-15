@@ -80,6 +80,7 @@ js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sun
 js/library.js         the seven books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
 js/cabinroom.js       the room inside the cabin (its own render layer), its lights, and what you can walk through in it
 js/corgi.js           Bơ the camp corgi: capsule model, vertex-colour coat, four-beat gait, a small mind of its own
+js/cat.js             Choco the camp cat: one skinned mesh, fur shells up close, eyes with lids and pupils, a cat's habits
 js/movers.js          the per-frame shadow map for things that move (the corgi, companions)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
 js/cloud.js           a copy of the save on Supabase (anonymous user, RLS), and the opt-in telemetry line
@@ -313,6 +314,30 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   within 2 m: hops, wags, a synthesised bark and pant (`audio.bark`), a diary line `c:<season>`.
   On low its pose is worked out at half the frame rate and the coat has no sheen. Test hooks:
   `?room=1` starts inside, `?dog=run` keeps it trotting to and fro; `__av.corgi.walkTo/hold/free`.
+- **Choco, the cat** (`cat.js`, wired in `main.js` next to the corgi): the owner asked for a cat
+  with Bơ, "thực tế 100%". Built the most realistic way this project allows (code only, no image
+  or model files, no new library): **one `SkinnedMesh`** merged from pieces hung on 34 bones
+  (two spine bones, chest and loin, so the back rounds when it sits; 3-joint legs; nine tail
+  bones); at each joint the skin is shared half and half between the bones, so it bends as one.
+  Chocolate coat (darker spine, ghost tabby barring) in vertex colours; on medium/high a faint
+  sheen and **fur shells** (6 on high, 3 on medium, 2.7 mm, strands hashed from the rest position)
+  shown only within 2.6 m / 1.8 m. Eyes: painted iris, a pupil that is a slit by day and round at
+  night (`ctx.light`), an additive cornea and a glint, lids that blink, slow-blink at you, close
+  asleep. Nose, mouth line, whiskers (lines, lit by `ctx.light`), ears that twitch on their own and
+  flatten when the dog bustles past. Poses: stand, sit (tail round the feet), loaf, sleep, stretch
+  (after a nap), groom (licks the right forepaw, wipes its face). Mind: by day near the dog or
+  about home, sitting/grooming/loafing/napping; if you stay still nearby it may come and sit by
+  you; at night it walks to **beside Bơ** by the fire and sleeps (it picks the side of the dog that
+  is free); in the cabin: asleep on the rocking chair's blanket by night (`room.chair`), loafing on
+  the rug by day (`room.catSpot`). "Vuốt ve Choco · E" when it is nearer than the dog: purr and
+  sometimes a trill (`audio.purr`, `audio.meow`, synthesised), diary line `m:<season>`. It keeps off
+  `CAT_BLOCKS` (BLOCKS plus the two sitting logs, `CAMP_SEATS` from world.js). Shell fragments
+  discard NaN (a zero normal once blacked out the post chain). Cost next to it (780M): high
+  86.7 → 83.7 fps, medium 125 → 121, low none. Test hooks: `__av.cat.walkTo/hold/free/place`,
+  `__av.petCat()`, `?debug=1&eye=0.36` sets the walker's eye height. Honest limit: it is a careful
+  procedural model, not a scanned cat; up close the legs read as smooth tubes, the fur as a short
+  velvet, and there is no foot IK on slopes.
+  The dog's place by the fire (`DOG_FIRE`) was moved: it used to be inside the west sitting log.
 - **Shadows of things that move** (`movers.js`): the corgi and companions cast into their own
   small orthographic depth map (22 m, 1024 on high / 768 on medium) around the viewer, redrawn
   every frame with only those meshes; `moverShadow()` in `light.js` multiplies it into
