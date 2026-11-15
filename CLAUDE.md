@@ -21,7 +21,7 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
   licensed it to them and that the site will get a login so only they can read it; until that
   login exists it must not reach any public copy. `main.js` imports `../private/money/book.js`
   if it is there and adds it to the bench shelf (kind `licensed`, `imgBase` for its pictures);
-  without it the shelf has its usual six books. In the text, `[[img:NN]]` is a picture,
+  without it the shelf has its usual seven books. In the text, `[[img:NN]]` is a picture,
   `[[q]]` a quoted passage, `[[sub:…]]` a chapter subtitle (`renderPage`).
 - **GitHub:** the owner pushed the repo to GitHub (branch `main`). Do not push more, or deploy,
   without asking. `.github/workflows/keep-alive.yml` pings Supabase every three days (the owner
@@ -77,7 +77,7 @@ js/world.js           terrainH(), terrain, mountain ring + baked light map, cabi
 js/flora.js           flower geometry builder (Geo), species (far + close-up models), garden, trees
 js/story.js           "Một ngày ở trại" (fifteen pages), the flower book (twelve kinds, with their stories), saved progress
 js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sunAt/partAt, WorldClock (no renderer code)
-js/library.js         the six books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
+js/library.js         the seven books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
 js/cabinroom.js       the room inside the cabin (its own render layer), its lights, and what you can walk through in it
 js/corgi.js           Bơ the camp corgi: capsule model, vertex-colour coat, four-beat gait, a small mind of its own
 js/movers.js          the per-frame shadow map for things that move (the corgi, companions)
@@ -246,7 +246,7 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   season if the clock runs), and the veil lifts **inside the room** (`enterRoom`): you walk
   about in it (slower, `room.confine` keeps you off the walls and furniture) and "Rời nhà · E"
   by the door (or Esc) fades you back out onto the porch (`leaveCabin` → `leaveRoom`). The garden bench (`GARDEN_BENCH`: back to the cherry trunk, looking
-  west through the arch) offers "Ngồi đọc sách" (E): a little shelf of six books (below).
+  west through the arch) offers "Ngồi đọc sách" (E): a little shelf of seven books (below).
   Everything leaves a line in the camp diary (`story.log`, short ids rendered by `logText`).
 - **Sky and ground are tied**: `THREADS` in `lore.js` link each constellation to a flower (same
   season or a shared name); the thread shows once the flower is pressed and the constellation
@@ -257,7 +257,7 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   hidden stars from 7. `WEAVE_ORDER` runs simplest first. Each woven figure leaves a keepsake
   star above it for good. `?debug=1&stage=N` starts N figures in.
 - **The bench shelf** (`js/library.js`, UI in `main.js` around `renderShelf`/`openVolume`/`turnPage`):
-  six books, three kinds, and the owner's copyright rules decide what each may contain:
+  seven books, three kinds, and the owner's copyright rules decide what each may contain:
   - `classic` (Walden; Meditations in George Long's 1862 English): authors long dead, public
     domain. Each quotation is **verbatim**, copied from the Project Gutenberg plain text named
     in `src` (Walden #205, Long #15877) and checked word for word when added; chapter or
@@ -270,6 +270,17 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   - `vale`: the valley's own books, written for the site (Bà Vân's flower book, Ông Khải's sky
     book, the visitor's camp diary). They are built from what has been done (`build(ctx)`), so
     they grow; locked pages say how to unlock them, so no book is ever empty.
+    "Sự tích thung lũng Aurora" (`legend`, `taleBook`) is the valley's own legend, told by "the
+    fire-keepers": **an original tale**, the owner's rule is that it must not borrow, retell or
+    closely echo any real myth (Greek, Vietnamese, Norse...). Nine pages: the mountains that sat
+    round the earth's fire (the fjell ring, the bowl), the stream and the winding beds (`bedWet`),
+    bà Hạt the seed-seller who planted a kind for every season and the three cherries (the
+    `THREADS.uma` line), the aurora as the ground's breath, ông Kim the tailor who stitched the
+    frayed figures back with a lavender needle (the `THREADS.lyr` line; a woven figure's keepsake
+    star is "the knot"), the cabin, bench lantern and fire ring, the threads, and a last page
+    that hands the tale to the visitor's diary. Pages open on: 1 flower pressed, 3 pressed, a
+    constellation met, one woven, a cabin rest (`story.done` or an `r:` diary line), one thread
+    found; the last when all are open. Keep it consistent with the world if the land changes.
   Where each book was left is saved (`read.at` = `['id:page', ...]`, `read.book`); arrow keys
   and A/D turn pages while reading (they do not walk). The paper grain is drawn on a canvas
   once (`paintPaper`); a page turn has a sound (`audio.page()`).

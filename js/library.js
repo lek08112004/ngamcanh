@@ -1,4 +1,4 @@
-// The little shelf on the garden bench: six books.
+// The little shelf on the garden bench: seven books.
 //
 // Three kinds, kept apart on purpose (the owner set the rules):
 //  - classic: the author died long ago and the text is in the public domain. The quotation is
@@ -126,7 +126,56 @@ function diaryBook(c) {
   return pages;
 }
 
+// The legend of the valley: an original tale written for Aurora Vale only (not drawn from, or
+// retelling, any real myth). It is told by "the fire-keeper" and opens a page at a time as the
+// visitor goes where the tale goes: the beds, the night sky, the weaving, the cabin. Two lines
+// are the same threads `THREADS` in lore.js tells (uma ↔ cherry, lyr ↔ lavender), and the last
+// page hands the tale over to the visitor's own camp diary. Unlocks read only things that do not
+// go backwards (flowers pressed, stars met or woven), plus the cabin rest (chapter or diary line).
+function taleBook(c) {
+  const met = new Set([...c.seen, ...c.woven]);
+  const rested = (c.done && c.done.has('rest')) || c.log.some((x) => x.startsWith('r:'));
+  const threads = Object.entries(c.THREADS).filter(([k, t]) => c.pressed.has(t.flower) && met.has(k));
+  const consName = (id) => (c.CONS.find((k) => k.id === id) || { name: id }).name;
+  const cherry = c.flowerName(c.THREADS.uma.flower).toLowerCase();
+  const lavender = c.flowerName(c.THREADS.lyr.flower).toLowerCase();
+  const lines = c.log.map(c.logText).filter(([h]) => h);
+  const last = lines[lines.length - 1];
+  const nThreads = Object.keys(c.THREADS).length;
+
+  const parts = [
+    { h: 'Lời người giữ lửa', open: true,
+      t: 'Ở trại này có một lệ cũ: ai thêm thanh củi cuối cùng trong ngày thì được gọi là người giữ lửa, và người giữ lửa phải kể tiếp sự tích của thung lũng. Không ai kể hết trong một lần. Mỗi người chỉ kể tới chỗ chính mình đã đi qua: ai chưa xuống luống hoa thì chưa được nghe chuyện hoa, ai chưa thức tới khuya thì chưa được nghe chuyện trời.\n\nTôi chép lại ở đây đúng như đã được nghe. Những trang còn dán kín là những đoạn bạn chưa tới. Cứ ở lại trại, rồi chúng sẽ mở.' },
+    { h: 'Vòng núi ngồi quanh lửa', open: true,
+      t: 'Thuở chưa có thung lũng, chỗ này là một cao nguyên đá phẳng lì, gió thổi quanh năm không gì cản. Dưới lớp đá, sâu lắm, có một bếp lửa của đất: không ai nhóm, không ai biết nó cháy từ bao giờ. Hơi ấm của nó chỉ đủ làm tan một vòng tuyết tròn trên mặt đá, rộng bằng một cánh đồng.\n\nNhững ngọn núi quanh vùng hồi ấy còn đứng rải rác, mỗi ngọn một nơi, lưng hứng gió. Có một mùa đông dài đến mức không ai nhớ nó bắt đầu từ lúc nào. Từng ngọn một xích lại gần vòng tuyết tan, như người đi đường đêm thấy ánh lửa thì tới ngồi ké. Khi ngọn cuối cùng ngồi xuống, chúng khép thành một vòng kín, vai kề vai, và gió không lọt vào được nữa.\n\nLửa được che gió thì cháy chậm lại và lún sâu dần, kéo mặt đá võng xuống thành một lòng chảo. Thung lũng bạn đang đứng chính là chỗ trũng ấy. Đứng giữa trại mà nhìn quanh, bạn sẽ thấy núi vẫn ngồi thành vòng, không ngọn nào quay lưng vào trong.' },
+    { h: 'Con suối và những dải luống', open: c.pressed.size >= 1,
+      lock: 'Người giữ lửa chỉ kể đoạn này cho ai đã mang được một cành hoa về lều. Cách mở: đứng lặng giữa một loài hoa đang nở để hái một cành, rồi mang về lều ép vào sổ.',
+      t: 'Núi ngồi lâu bên lửa thì ấm vai, và tuyết trên vai núi tan ra. Nước tan không biết đi đâu, chỉ biết tìm về chỗ ấm, nên mọi dòng nước nhỏ trên các sườn đều chảy vào lòng chảo rồi gặp nhau thành một con suối. Đến giờ con suối vẫn chưa chịu chảy thẳng: nó uốn qua uốn lại giữa thung lũng như người đi tìm một chỗ ngồi ấm mà quên mất mình vừa ngồi ở đâu, có quãng còn loang rộng ra, nước gần như đứng lại.\n\nNhững dòng nước đầu tiên chảy xuống từ chỗ trại bây giờ để lại những vệt đất mềm, chạy uốn lượn về phía suối. Đất trong các vệt ấy giữ hơi ấm lâu hơn đất hai bên. Người đến sau không phải đào luống: luống đã có sẵn, chỉ việc gieo theo. Vì thế các luống hoa trước trại không chạy thẳng tắp mà uốn như nước chảy, đầu dưới gần suối thì ẩm, đầu trên gần trại thì khô.' },
+    { h: 'Những người canh mùa', open: c.pressed.size >= 3,
+      lock: `Đoạn này thuộc về những người đã cúi xuống nhiều loài hoa. Cách mở: ép ba loài hoa vào sổ (đã ép ${Math.min(c.pressed.size, 3)}/3).`,
+      t: `Người đầu tiên ở lại thung lũng là một người đàn bà đi bán hạt giống, ai cũng gọi là bà Hạt. Bà dừng chân vì thấy giữa mùa đông mà đất ở đây vẫn ấm tay. Bà bảo đất này còn nhớ ngọn lửa cũ nên mùa nào cũng muốn thức, nhưng nó không biết thức một mình: hoa nở cả một lượt rồi tàn cả một lượt, để lại một mùa trơ trụi.\n\nBà Hạt chia hạt trong túi ra làm bốn phần, như người ta chia nhau canh một đêm dài bên lửa. Phần đầu bà gieo cho mùa xuân: tulip, thuỷ tiên, lan dạ hương. Phần thứ hai cho mùa hạ: oải hương, anh túc, hoa cánh bướm. Phần thứ ba cho mùa thu: cúc vàng, cúc hoạ mi. Phần cuối, ít hạt nhất, cho mùa đông: hoa trà, thạch nam và giọt tuyết, những loài chịu thức trong giá. Loài này đi ngủ thì loài kia dậy thay, nên chưa mùa nào thung lũng phải để trống.\n\nBa cây ${cherry} giữa vườn cũng do bà trồng, vào đúng buổi chập tối cán gáo Bắc Đẩu chỉ về phương đông. Bà bảo một cái đồng hồ của mùa xuân đã treo trên trời thì cũng nên có một cái nở trên cành.\n\nSổ hoa của bà Vân, người giữ vườn bây giờ, hôm nay đã có ${c.pressed.size} loài.` },
+    { h: 'Hơi thở của đất', open: met.size >= 1,
+      lock: 'Đoạn này chỉ được kể khi đã khuya. Cách mở: ở lại tới đêm và nhận ra một chòm sao (giữ nó giữa khung nhìn vài giây; phím C để có gợi ý).',
+      t: 'Bếp lửa dưới đất đến giờ vẫn chưa tắt hẳn. Ban ngày hơi ấm của nó đi vào rễ hoa. Ban đêm, khi thung lũng lạnh xuống, nó thoát lên trời, như hơi thở thành khói trắng trong một sáng giá rét. Đó là cực quang: không phải lửa trên trời, mà là đất thở ra. Đêm nào cực quang xanh, người ta bảo đất đang ngủ yên; đêm nào nó ửng hồng là đất đang nhớ ngọn lửa ngày xưa.\n\nNhưng hơi thở ấy cũng có cái hại nhỏ của nó. Màn sáng lay qua lay lại mãi trên đầu, lâu ngày làm các chòm sao trên thung lũng lỏng dần ra, như những mũi khâu bị gió giật. Người trong thung lũng nhìn lên vẫn thấy sao, nhưng không còn chỉ ra được đâu là chiếc gáo, đâu là chiếc ngai, đâu là cây đàn.' },
+    { h: 'Ông Kim và mũi khâu đầu tiên', open: c.woven.size >= 1,
+      lock: 'Đoạn này người giữ lửa để dành cho ai đã tự tay khâu lại bầu trời. Cách mở: chuyển sang “Trò dệt sao” (phím M) và dệt trọn một chòm.',
+      t: `Người khâu lại bầu trời là một ông thợ may đi ngang thung lũng. Tên thật của ông không ai nhớ, chỉ nhớ ông lúc nào cũng cài một cây kim trên ve áo, nên gọi là ông Kim. Ông ngồi bên lửa ba đêm liền nhìn lên, rồi bảo: sao không mất, chỉ là đường chỉ đã sờn. Khâu lại là được.\n\nÔng xin bà Hạt một cọng ${lavender} khô làm kim, vì nó thẳng, nhẹ và thơm, rồi đợi một đêm giữa hè, lúc ngôi sao trắng xanh sáng nhất đứng gần đỉnh đầu, để khâu chòm đầu tiên: cây đàn nhỏ hình bình hành nằm ngay dưới ngôi sao ấy. Người thung lũng bảo vì thế mà đến giờ Vega vẫn lên gần đỉnh đầu đúng vào những tối ${lavender} nở tím: kim với chỉ không nỡ xa nhau.\n\nMỗi khi khâu xong một chòm, ông thắt một cái nút ở đầu sợi chỉ cho khỏi tuột. Cái nút ấy sáng lên thành một ngôi sao nhỏ ngay phía trên chòm vừa khâu, và sáng mãi. Ông Kim để lại một câu mà người giữ lửa nào cũng nhắc: mỗi chòm sao được dệt trọn, thung lũng nhớ thêm được một mùa.\n\nTrên trời trại bây giờ có ${c.woven.size} cái nút như thế, mỗi nút là một chòm chính tay bạn dệt.` },
+    { h: 'Căn nhà gỗ và cuốn sổ trên bàn', open: rested,
+      lock: 'Đoạn này kể trong nhà, cạnh bếp sưởi. Cách mở: tới hiên nhà gỗ và vào nhà nghỉ (phím E).',
+      t: 'Bà Hạt và ông Kim ở lại không phải vì nhau, chỉ vì cả hai cùng không muốn rời thung lũng. Ông Kim dựng căn nhà gỗ từ những thân cây đổ sau một trận tuyết, đẽo khấc ở bốn góc cho các khúc gỗ cài vào nhau, không cần một cái đinh. Bà Hạt đóng chiếc ghế dưới gốc anh đào và treo một ngọn đèn lồng trên cây cột bên cạnh, để ai đọc sách tới chập tối cũng không phải đứng dậy.\n\nVòng đá quanh đống lửa trại là hai người xếp chung, từng hòn một, theo đúng hình vòng núi: một thung lũng nhỏ cho một ngọn lửa nhỏ. Trên bàn trong nhà, ông Kim để sẵn một cuốn sổ mở và một cây bút, kèm một lời dặn: ai ngủ lại một đêm thì viết một dòng, và không ai được viết trang cuối.' },
+    { h: 'Sợi chỉ giữa đất và trời', open: threads.length >= 1,
+      lock: 'Đoạn này chỉ ai lần ra được một sợi chỉ mới nghe. Cách mở: ép một loài hoa, rồi nhận ra (hoặc dệt) chòm sao nối với nó. Sổ tay (J) chỉ đường cho từng chòm.',
+      t: `Ông Kim khâu sao, bà Hạt gieo hoa, và hai người hay ngồi bên lửa cãi nhau xem loài hoa nào hợp với chòm sao nào. Cuối cùng họ thống nhất: chòm nào trên trời cũng phải có một loài dưới đất cùng thức với nó, để khi bên này quên thì bên kia nhắc. Người giữ lửa nói có ${['không', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín', 'mười'][nThreads] || nThreads} sợi chỉ như thế. Không ai nhìn thấy chúng; chỉ người vừa ép một loài hoa vừa tìm ra chòm sao của nó mới lần ra được.\n\nBạn đã lần ra ${threads.length}/${nThreads}: ${threads.map(([k, t]) => `${c.flowerName(t.flower).toLowerCase()} với chòm ${consName(k)}`).join('; ')}.` },
+  ];
+  const ended = parts.every((p) => p.open);
+  parts.push({ h: 'Trang chưa ai viết', open: ended,
+    lock: `Trang cuối chỉ được kể khi mọi trang trước đã mở (còn ${parts.filter((p) => !p.open).length} trang).`,
+    t: `Cuốn sổ của ông Kim kín chữ từ lâu, rồi một cuốn nữa, rồi nhiều cuốn nữa. Không ai biết chúng giờ ở đâu; người ta chỉ biết lời dặn vẫn còn: ai ở lại trại thì viết tiếp, và không ai viết trang cuối.\n\nCuốn “Nhật ký trại” trên giá sách này là cuốn đang viết dở. Nó đã có ${lines.length} dòng của bạn.${last ? ` Dòng gần nhất ghi: “${last[0]}. ${last[1].replace(/\.$/, '')}.”` : ''}\n\nNgười giữ lửa bây giờ là bạn. Tối nay, lúc thêm thanh củi cuối cùng, nếu có ai ngồi cạnh, hãy kể cho họ tới đúng chỗ bạn đã đi qua, phần còn lại để họ tự tìm. Sự tích này chưa có đoạn kết, vì thung lũng vẫn còn đang nhớ.` });
+  return parts.map((p) => (p.open ? { h: p.h, t: p.t } : { h: `${p.h} (chưa mở)`, t: p.lock }));
+}
+
 const VALE = [
+  { id: 'legend', kind: 'vale', color: '#4a3a6a', ink: '#efe8fa', h: 0.92, title: 'Sự tích thung lũng Aurora', author: 'Những người giữ lửa', src: 'Sách của thế giới Aurora Vale: một truyền thuyết viết riêng cho thung lũng này, không dựa trên thần thoại có thật nào. Người kể là nhân vật trong truyện.', build: taleBook },
   { id: 'flowers', kind: 'vale', color: '#8a4a5e', ink: '#f6e6ea', h: 0.95, title: 'Sổ hoa của thung lũng', author: 'Bà Vân, người giữ vườn', src: 'Sách của thế giới Aurora Vale; người viết là nhân vật trong truyện.', build: flowerBook },
   { id: 'sky', kind: 'vale', color: '#1f2b4a', ink: '#e6e4f6', h: 1.04, title: 'Trời đêm Aurora Vale', author: 'Ông Khải, người gác trời', src: 'Sách của thế giới Aurora Vale; người viết là nhân vật trong truyện.', build: skyBook },
   { id: 'diary', kind: 'vale', color: '#7a6438', ink: '#f6eedc', h: 0.78, title: 'Nhật ký trại', author: 'Bạn', src: 'Tự viết theo những gì bạn làm ở trại.', build: diaryBook },

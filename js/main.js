@@ -1274,7 +1274,7 @@ function petCorgi() {
   toast(wasAsleep ? 'Bơ đang ngủ thì mở mắt, đập đuôi xuống sàn mấy cái rồi đứng dậy đòi bạn gãi tiếp' : PET_WORDS[(corgi.petCount - 1) % PET_WORDS.length]);
   story.note(`c:${clock.seasonIndex}`);
 }
-/* the shelf on the garden bench: six books (js/library.js); where you left each one is saved */
+/* the shelf on the garden bench: seven books (js/library.js); where you left each one is saved */
 const book = { open: false, id: '', pages: [], i: 0, turning: 0 };
 const bookEl = $('book');
 function shelfCtx() {
@@ -1282,7 +1282,7 @@ function shelfCtx() {
   const word = SEASONS[si].name.replace('Mùa ', '').toLowerCase();
   return {
     FLOWERS, CONS: CONSTELLATIONS, LORE, THREADS, flowerName, logText,
-    pressed: story.flowers, seen: story.seen, woven: game.woven, log: story.log,
+    pressed: story.flowers, seen: story.seen, woven: game.woven, log: story.log, done: story.done,
     inSeason: FLOWERS.filter((f) => f.season.toLowerCase().includes(word)),
   };
 }
