@@ -102,13 +102,14 @@ function straw() {
 }
 
 /**
- * opts: { rich: bump-mapped snow and finer balls, ground(x, z), at: {x, z} where he stands,
+ * opts: { name, lines: what he says, scale, bank: false for no snow bank and straw, rich: bump-mapped snow and finer balls, ground(x, z), at: {x, z} where he stands,
  *         shelter: {x, z} the middle of the straw bed he guards }
  * returns { group, x, z, shelter, entry(x, z) -> where to walk to first, blocks: [[x, z, r]] (zero radius while he is away), snowable: materials
  *           that should take lying snow, setWinter(w), greet() -> a line of his, distanceTo(x, z) }
  */
 export function createSnowman(opts) {
   const { ground, at, shelter } = opts;
+  const size = opts.scale || 1, bank = opts.bank !== false;      // (a second, smaller one keeps the garden bench: no bank, no straw)
   const rich = !!opts.rich, detail = rich ? 30 : 18;
   const group = new THREE.Group();
   group.name = 'snowman';
@@ -208,11 +209,11 @@ export function createSnowman(opts) {
   }
 
   // the windbreak: mounds of packed snow in a crescent behind the straw, he in the middle of it
-  const blocks = [[at.x, at.z, 0.52]];
+  const blocks = [[at.x, at.z, 0.52 * size]];
   const R = Math.hypot(shelter.x - at.x, shelter.z - at.z);
   const back = Math.atan2(at.x - shelter.x, at.z - shelter.z);          // from the bed toward him
   let k = 0;
-  for (const da of [-1.12, -0.72, 0.72, 1.12]) {
+  for (const da of bank ? [-1.12, -0.72, 0.72, 1.12] : []) {
     const a = back + da, wx = shelter.x + Math.sin(a) * R, wz = shelter.z + Math.cos(a) * R;
     // low and long, like snow shovelled into a bank, lower toward the ends
     const hgt = 0.44 - 0.12 * Math.abs(da) + 0.03 * Math.sin(k * 2.1);
@@ -222,7 +223,7 @@ export function createSnowman(opts) {
     k++;
   }
   // the straw bed, laid on the ground as it lies
-  {
+  if (bank) {
     const g = new THREE.CircleGeometry(0.82, 28).rotateX(-Math.PI / 2);
     const pos = g.attributes.position;
     for (let i = 0; i < pos.count; i++) {
@@ -234,7 +235,7 @@ export function createSnowman(opts) {
   }
   const radii = blocks.map((b) => b[2]);
 
-  const LINES = [
+  const LINES = opts.lines || [
     'Bấc: “Chào bạn! Tôi đứng đây chắn gió bấc cho Bơ với Choco. Nghề gia truyền đấy, tên tôi cũng từ đó mà ra.”',
     'Bấc: “Bạn đếm giúp tôi với: từ sáng tới giờ rơi bao nhiêu bông tuyết rồi? Tôi cứ đếm tới bảy là mũi lại ngứa.”',
     'Bấc: “Sang xuân tôi đi vắng ít lâu, xuống làm nước cho con suối. Gặp luống tulip thì chào hộ tôi một tiếng nhé.”',
@@ -243,7 +244,7 @@ export function createSnowman(opts) {
     'Bấc: “Ổ rơm sau lưng tôi là của Bơ với Choco. Đêm nào hai đứa cũng tranh nhau chỗ sát tôi nhất, tôi đứng im cho công bằng.”',
   ];
   const snowman = {
-    group, name: 'Bấc', x: at.x, z: at.z, shelter, blocks, here: false, greeted: 0,
+    group, name: opts.name || 'Bấc', x: at.x, z: at.z, shelter, blocks, here: false, greeted: 0,
     snowable: [clay, cone, twig, ...group.userData.scarf],
     distanceTo: (x, z) => Math.hypot(x - at.x, z - at.z),
     /** the way in for something walking from (x, z): round the end of the bank on its own side, then the straw */
@@ -258,7 +259,7 @@ export function createSnowman(opts) {
     setWinter(w) {
       const here = w > 0.5;
       group.visible = here;
-      group.scale.y = 0.3 + 0.7 * smooth(0.5, 0.92, w);
+      group.scale.set(size, size * (0.3 + 0.7 * smooth(0.5, 0.92, w)), size);
       blocks.forEach((b, i) => { b[2] = here ? radii[i] : -9; });
       const changed = here !== snowman.here;
       snowman.here = here;

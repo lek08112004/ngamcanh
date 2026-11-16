@@ -349,6 +349,7 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   and they stuck on the bank before). "Chào Bấc · E" within 2 m: one of six lines, a chime, diary line
   `s:<season>`. There is no weather system: "wind or snow" in the request became "winter weight > 0.6".
   Test hook `__av.snowman`; `check.mjs story` covers summer/winter, the greeting, the block, the bed.
+- **Mầm, the little snowman by the garden bench** (`benchSnow` in `main.js`): the owner then asked for one at the reading place too. The same builder at 0.68 size with `bank: false` (no snow bank, no straw), his own name and five lines (he keeps the bench and likes being read to), winter only, in `BLOCKS`, 2.8 m in front of the seat and a little left so the reader sees his face. "Chào Mầm · E" (`snow2`), diary line `n:<season>`. Also original; the request named Olaf again and the answer was the same. He stands among the winter camellias: stems poke round his base. Looked at on high only.
 - **Choco, the cat** (`cat.js`, wired in `main.js` next to the corgi): the owner asked for a cat
   with Bơ, "thực tế 100%". Built the most realistic way this project allows (code only, no image
   or model files, no new library): **one `SkinnedMesh`** merged from pieces hung on 34 bones

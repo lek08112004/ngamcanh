@@ -562,6 +562,26 @@ snowman.group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = Q
 for (const m of snowman.snowable) snowy(m);
 scene.add(snowman.group);
 BLOCKS.push(...snowman.blocks);
+// Mầm, his little brother, keeps the garden bench in winter and likes being read to (the same
+// builder at two thirds the size, no snow bank; also an original character, see snowman.js)
+const benchSnow = createSnowman({
+  name: 'Mầm', scale: 0.68, bank: false, rich: tier !== 'low', ground: terrainH,
+  at: { x: GARDEN_BENCH.x - 2.6, z: GARDEN_BENCH.z + 0.9 }, shelter: { x: GARDEN_BENCH.x, z: GARDEN_BENCH.z },
+  lines: [
+    'Mầm: “Bạn ra đọc sách à? Đọc to lên một chút nhé, tôi nghe ké. Tôi chưa biết chữ, mới biết đứng.”',
+    'Mầm: “Anh Bấc chắn gió ngoài trại, còn tôi giữ ghế. Từ đầu đông tới giờ chưa ai lấy mất cái ghế nào.”',
+    'Mầm: “Hôm qua có cuốn sách để quên trên ghế. Tôi canh cả đêm, tuyết rơi lên bìa tôi cũng không dám phủi.”',
+    'Mầm: “Đèn lồng bật lên là tôi hơi lo, nó ấm quá. Nhưng không có đèn thì bạn đọc sao được, nên thôi.”',
+    'Mầm: “Cuốn nào có chuyện mùa xuân thì đọc cho tôi nghe với. Tôi chỉ biết mùa xuân qua lời kể thôi.”',
+  ],
+});
+benchSnow.group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = Q.shadow > 0; });
+for (const m of benchSnow.snowable) snowy(m);
+scene.add(benchSnow.group);
+BLOCKS.push(...benchSnow.blocks);
+const SNOWMEN = [snowman, benchSnow];
+/** the snowman within reach of (x, z), if any */
+const snowmanNear = (x, z, r) => SNOWMEN.find((m) => m.here && m.distanceTo(x, z) < r);
 /** where the animals lie down at night: the snowman's straw in winter, else the fire, else the porch */
 // (a is the animal asking: from behind the snow bank it is first sent round the end of it)
 const petRest = (a) => (clock.weights[3] > 0.6 ? snowman.entry(a.x, a.z) : fire.level > 0.06 ? DOG_FIRE : DOG_PORCH);
@@ -889,7 +909,7 @@ function applySeason(w) {
   snow.material.uniforms.uAmount.value = w[3];
   cabin.sod.color.copy(SOD_GREEN).lerp(SOD_SNOW, w[3]);
   uSnowCover.value = w[3];
-  if (snowman.setWinter(w[3]) && Q.shadow) renderer.shadowMap.needsUpdate = true;
+  if (snowman.setWinter(w[3]) | benchSnow.setWinter(w[3]) && Q.shadow) renderer.shadowMap.needsUpdate = true;
 }
 
 /* ------------------------------------------------------------ day and night */
@@ -1165,6 +1185,7 @@ function logText(id) {
   if (k === 'c') return ['Bơ', `Gãi tai cho Bơ, chú corgi của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Cái đuôi cộc vẫy không ngừng.`];
   if (k === 'm') return ['Choco', `Vuốt lưng Choco, con mèo nâu của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Nó rừ rừ mãi không thôi.`];
   if (k === 's') return ['Bấc', 'Ghé chào Bấc, người tuyết đứng chắn gió sau đống lửa. Nó giơ cành cây lên vẫy, mũi cà rốt hếch về phía bạn.'];
+  if (k === 'n') return ['Mầm', 'Ghé chào Mầm, người tuyết nhỏ giữ ghế đọc sách dưới gốc anh đào. Nó xin được nghe đọc ké một trang.'];
   if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
   return ['', id];
 }
@@ -1336,11 +1357,12 @@ function petCorgi() {
 }
 /** a word with the snowman: he always has something to say, and the diary remembers the visit */
 function greetSnowman() {
-  if (!snowman.here || snowman.distanceTo(camBase.x, camBase.z) > 2.6) return;
+  const who = snowmanNear(camBase.x, camBase.z, 2.6);
+  if (!who) return;
   audio.init();
-  audio.node(snowman.greeted + 3);
-  toast(snowman.greet());
-  story.note(`s:${clock.seasonIndex}`);
+  audio.node(who.greeted + 3);
+  toast(who.greet());
+  story.note(`${who === snowman ? 's' : 'n'}:${clock.seasonIndex}`);
 }
 /* the shelf on the garden bench (js/library.js, plus the owner's own books when private/ is there); where you left each one is saved */
 const book = { open: false, id: '', pages: [], i: 0, turning: 0 };
@@ -1703,7 +1725,7 @@ function updateActions() {
     else if (nearBench(x, z, 2.2) && !book.open) kind = 'read';
     else if (kitty && !book.open) kind = 'petcat';
     else if (dog && !book.open) kind = 'pet';
-    else if (snowman.here && snowman.distanceTo(x, z) < 2.0 && !book.open) kind = 'snow';
+    else if (snowmanNear(x, z, 2.0) && !book.open) kind = snowmanNear(x, z, 2.0) === snowman ? 'snow' : 'snow2';
   }
   if (book.open && (walker.on || mode !== 'view')) openBook(false);           // standing up closes the book
   if (kind !== actKind) {
@@ -1714,6 +1736,7 @@ function updateActions() {
     if (kind === 'pet') actBtn.textContent = 'Vuốt ve corgi · E';
     if (kind === 'petcat') actBtn.textContent = 'Vuốt ve Choco · E';
     if (kind === 'snow') actBtn.textContent = 'Chào Bấc · E';
+    if (kind === 'snow2') actBtn.textContent = 'Chào Mầm · E';
     if (kind === 'leave') actBtn.textContent = 'Rời nhà · E';
   }
 }
@@ -1722,7 +1745,7 @@ function doAction() {
   else if (actKind === 'read') openBook(true);
   else if (actKind === 'pet') petCorgi();
   else if (actKind === 'petcat') petCat();
-  else if (actKind === 'snow') greetSnowman();
+  else if (actKind === 'snow' || actKind === 'snow2') greetSnowman();
   else if (actKind === 'leave') leaveCabin();
 }
 actBtn.addEventListener('click', doAction);
@@ -2681,7 +2704,7 @@ function savePhoto() {
 if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, petCat, snowman, greetSnowman, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
+    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, petCat, snowman, benchSnow, greetSnowman, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
     actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     setPixelRatio: (p) => { pixelRatio = p; resize(); },
