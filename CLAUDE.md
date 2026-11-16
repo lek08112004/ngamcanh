@@ -551,7 +551,7 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 - Grass: looking straight down, the gaps between blades now show a painted undercoat of short
   shoots, not bare earth; it is flat paint (it does not move with the wind and has no depth),
   and on `low` the real blades over it are still sparse.
-- Frame rate for the snowman and the plumper, finer-meshed cat was **not measured**: an interleaved old/new run (three tiers, three views) was started and the machine ran short of memory before it printed anything. Measure before trusting either on weak hardware (the cat gained vertices in every fur shell).
+- Frame rate, snowman and the plumper cat (780M, one interleaved run, previous commit / this one): high, winter night by the snowman 30.6 / 30.4, winter day 35.8 / 37.7, cat at 1 m 44.7 / 43.8; low 118.3 / 115.8, 128.4 / 127.6, 142.6 / 141.4. All within the 1 to 2 fps these runs move by. The medium figures of that run are **not usable**: partway through, old and new alike fell to about 26 fps (something else was using the graphics card). Medium still needs measuring.
 - Bấc: he stands quite still (no blink, no wave); by firelight his snow goes orange-pink, which is
   the fire's light but reads oddly; the straw bed is a flat textured disc with a faceted edge; the
   snow bank is four mounds, not a drift. On `low` his snow has no bump map. His lines are six and
