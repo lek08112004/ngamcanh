@@ -227,6 +227,31 @@ async function story() {
     await sleep(3200);
     check((await b.eval('__av.corgi.state')) === 'sit', 'after a moment of joy it sits down by you');
     check((await b.eval('__av.pagesOf("diary").some((p) => p.t.includes("Bơ"))')), 'the line shows in the camp diary book on the shelf');
+    // Bấc, the winter snowman: there in winter only, greets you, and the animals sleep on his straw at night
+    await open('hour=11&season=summer&x=3.6&z=-5.0');
+    await sleep(600);
+    check(!(await b.eval('__av.snowman.here || __av.snowman.group.visible')), 'in summer there is no snowman');
+    await open('hour=11&season=winter&x=3.2&z=-5.6');
+    await b.eval('__av.corgi.hold("sit"); __av.corgi.place(-6, 6, 0, "sit", 99); __av.cat.hold("sit"); __av.cat.place(-7, 6, 0, "sit", 99)');
+    await sleep(900);
+    check((await b.eval('__av.snowman.here && __av.snowman.group.visible')) && (await b.eval('document.getElementById("actBtn").textContent')).includes('Chào Bấc'), 'in winter he stands behind the fire, and "Chào Bấc" is offered beside him');
+    const logS = await b.eval('__av.story.log.length');
+    await b.hold('e', 80);
+    await sleep(400);
+    const hi = await b.eval('({ log: __av.story.log.slice(), n: __av.snowman.greeted, diary: __av.pagesOf("diary").some((p) => p.t.includes("Bấc")) })');
+    check(hi.n === 1 && hi.log.includes('s:3') && hi.log.length === logS + 1 && hi.diary, `E: he says something (${hi.n}) and the diary gets a line (s:3)`);
+    {
+      const at0 = await b.eval('[__av.camBase.x, __av.camBase.z]');
+      await b.eval('__av.view.yawT = __av.view.yaw = Math.atan2(__av.snowman.x - __av.camBase.x, -(__av.snowman.z - __av.camBase.z)) * 180 / Math.PI');
+      await b.hold('w', 2200);
+      const at1 = await b.eval('[__av.camBase.x, __av.camBase.z, __av.snowman.distanceTo(__av.camBase.x, __av.camBase.z)]');
+      check(Math.hypot(at1[0] - at0[0], at1[1] - at0[1]) > 0.3 && at1[2] > 0.45, `you cannot walk through him (stopped ${at1[2].toFixed(2)} m from his middle)`);
+    }
+    await open('hour=22.5&season=winter&x=6.2&z=-8.6');
+    await b.waitFor('__av.corgi.state === "lie" || __av.corgi.state === "sleep"', 45000, 'the dog to lie down for the night');
+    await b.waitFor('__av.cat.state === "loaf" || __av.cat.state === "sleep"', 45000, 'the cat to settle for the night');
+    const bed = await b.eval('({ dog: Math.hypot(__av.corgi.x - __av.snowman.shelter.x, __av.corgi.z - __av.snowman.shelter.z), cat: Math.hypot(__av.cat.x - __av.snowman.shelter.x, __av.cat.z - __av.snowman.shelter.z) })');
+    check(bed.dog < 0.7 && bed.cat < 1.2, `on a winter night Bơ and Choco sleep on the straw behind him (dog ${bed.dog.toFixed(2)} m, cat ${bed.cat.toFixed(2)} m from its middle)`);
     // the garden bench: sit, open the book, turn a page, close it
     await open('time=day&spot=bench');
     await sleep(1200);

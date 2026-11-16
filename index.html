@@ -180,7 +180,6 @@
     <section id="shelfView">
       <p class="shelf-head">Giá sách dưới gốc anh đào</p>
       <div id="shelf" class="shelf"></div>
-      <div class="shelf-board" aria-hidden="true"></div>
       <p id="shelfHint" class="shelf-hint">Chọn một cuốn để đọc · E để đứng dậy</p>
     </section>
     <section id="readView" class="hidden">
@@ -190,12 +189,14 @@
         <blockquote id="bookQuote" class="hidden"></blockquote>
         <p id="bookRef" class="sheet-ref hidden"></p>
         <div id="bookText"></div>
-        <footer class="sheet-foot"><span id="bookSrc"></span><span id="bookPage"></span></footer>
+        <p id="bookSrc" class="sheet-src"></p>
+        <footer class="sheet-foot"><span id="bookPage"></span><span id="bookProg" aria-hidden="true"><i></i></span></footer>
       </article>
       <div class="book-row">
         <button id="bookShelf" class="chip" type="button">‹ Giá sách</button>
         <button id="bookPrev" class="chip" type="button" aria-label="Trang trước">←</button>
         <button id="bookNext" class="chip" type="button" aria-label="Trang sau">→</button>
+        <select id="bookToc" class="chip hidden" aria-label="Mục lục"></select>
         <button id="bookClose" class="chip" type="button">Gấp sách · E</button>
       </div>
     </section>

@@ -27,6 +27,7 @@ import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt, sunA
 import { createCabinRoom, ROOM_LAYER } from './cabinroom.js';
 import { createCorgi } from './corgi.js';
 import { createCat } from './cat.js';
+import { createSnowman } from './snowman.js';
 import { MoverShadow } from './movers.js';
 
 const $ = (id) => document.getElementById(id);
@@ -552,6 +553,18 @@ cat.group.traverse((o) => {
 scene.add(cat.group);
 if (movers) movers.roots.push(cat.group);
 const catPrev = { x: 0, z: 0 };
+// Bấc, the winter snowman (snowman.js), with a crescent of packed snow and a straw bed behind the
+// fire. He stands only in winter (setWinter, from applySeason) and does not move, so he is in the
+// sun's static shadow map, not in movers. On winter nights the dog and the cat sleep on his straw.
+const SNOW_REST = { x: 2.9, z: -5.9 };
+const snowman = createSnowman({ rich: tier !== 'low', ground: terrainH, at: { x: 2.2, z: -6.6 }, shelter: SNOW_REST });
+snowman.group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = Q.shadow > 0; });
+for (const m of snowman.snowable) snowy(m);
+scene.add(snowman.group);
+BLOCKS.push(...snowman.blocks);
+/** where the animals lie down at night: the snowman's straw in winter, else the fire, else the porch */
+// (a is the animal asking: from behind the snow bank it is first sent round the end of it)
+const petRest = (a) => (clock.weights[3] > 0.6 ? snowman.entry(a.x, a.z) : fire.level > 0.06 ? DOG_FIRE : DOG_PORCH);
 // the cat keeps off the sitting logs too (circles along each log), as well as everything in BLOCKS
 const CAT_BLOCKS = [...BLOCKS, ...CAMP_SEATS.flatMap(([x, z, yaw, len]) => [-0.5, -0.25, 0, 0.25, 0.5]
   .map((t) => [x + Math.cos(yaw) * len * t, z - Math.sin(yaw) * len * t, 0.27]))];
@@ -876,6 +889,7 @@ function applySeason(w) {
   snow.material.uniforms.uAmount.value = w[3];
   cabin.sod.color.copy(SOD_GREEN).lerp(SOD_SNOW, w[3]);
   uSnowCover.value = w[3];
+  if (snowman.setWinter(w[3]) && Q.shadow) renderer.shadowMap.needsUpdate = true;
 }
 
 /* ------------------------------------------------------------ day and night */
@@ -889,6 +903,7 @@ const SUN = [2.9, 2.55, 1.95], DUSK_SUN = [3.4, 1.42, 0.50];
 // pale gold and rose, the shadows lilac; sunset is warm, dusty and orange.
 const DAWN_SUN = [3.1, 1.95, 1.20], DAWN_AMB = [0.30, 0.33, 0.48], DAWN_FOG = [0.50, 0.46, 0.58];
 let lanternOn = true;
+let benchLamp = 0, benchLampUi = -1;      // how brightly the lantern by the bench burns; what the open book last showed
 const _sunWas = new THREE.Vector3(), _seasonWas = new THREE.Vector4(-1, 0, 0, 0);
 let shadowSettle = 0;
 const ease = (t) => t * t * (3 - 2 * t);
@@ -1006,6 +1021,7 @@ function applyDay(dt) {
   bl.glass.emissiveIntensity = 1.4 * lv;
   bl.flame.visible = lv > 0.02;
   shared.uLampLight.value.w = 0.55 * lv;
+  benchLamp = lv;
   if (indoor.on) room.update(dt, time, { day: d, dusk: k, sunCol: sun, snow: w[3] });
   return d;
 }
@@ -1148,6 +1164,7 @@ function logText(id) {
   if (k === 'l') { const b = SHELF.find((x) => x.id === v); return b ? ['Giá sách', `Lần đầu mở cuốn “${b.title}” của ${b.author === 'Bạn' ? 'chính bạn' : b.author}.`] : ['', id]; }
   if (k === 'c') return ['Bơ', `Gãi tai cho Bơ, chú corgi của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Cái đuôi cộc vẫy không ngừng.`];
   if (k === 'm') return ['Choco', `Vuốt lưng Choco, con mèo nâu của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Nó rừ rừ mãi không thôi.`];
+  if (k === 's') return ['Bấc', 'Ghé chào Bấc, người tuyết đứng chắn gió sau đống lửa. Nó giơ cành cây lên vẫy, mũi cà rốt hếch về phía bạn.'];
   if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
   return ['', id];
 }
@@ -1317,7 +1334,15 @@ function petCorgi() {
   toast(wasAsleep ? 'Bơ đang ngủ thì mở mắt, đập đuôi xuống sàn mấy cái rồi đứng dậy đòi bạn gãi tiếp' : PET_WORDS[(corgi.petCount - 1) % PET_WORDS.length]);
   story.note(`c:${clock.seasonIndex}`);
 }
-/* the shelf on the garden bench: seven books (js/library.js); where you left each one is saved */
+/** a word with the snowman: he always has something to say, and the diary remembers the visit */
+function greetSnowman() {
+  if (!snowman.here || snowman.distanceTo(camBase.x, camBase.z) > 2.6) return;
+  audio.init();
+  audio.node(snowman.greeted + 3);
+  toast(snowman.greet());
+  story.note(`s:${clock.seasonIndex}`);
+}
+/* the shelf on the garden bench (js/library.js, plus the owner's own books when private/ is there); where you left each one is saved */
 const book = { open: false, id: '', pages: [], i: 0, turning: 0 };
 const bookEl = $('book');
 function shelfCtx() {
@@ -1346,28 +1371,144 @@ function savePage(id, n) {
   store.set('read.at', [`${id}:${n}`, ...store.get('read.at', []).filter((s) => !s.startsWith(`${id}:`))]);
   store.set('read.book', id);
 }
+/* The shelf is two boards; the books stand in four groups, each with a brass plate on the board. */
+const SHELF_GROUPS = { classic: 'Kinh điển', notes: 'Sổ ghi chép', vale: 'Sách của thung lũng', licensed: 'Sách riêng' };
+const SHELF_TIERS = [['classic', 'notes'], ['vale', 'licensed']];
+const SPINE_TILT = { notes: -4, sky: 3 };
+/** a spine's cloth and ornament, drawn once on a canvas: a weave, gilt rules, and a device by kind
+ *  (a lozenge for the classics, stitches and a label for the notebook, a picture of its own for
+ *  each book of the valley, a plain modern block for the owner's own books) */
+const spineArtCache = new Map();
+function spineArt(b) {
+  if (spineArtCache.has(b.id)) return spineArtCache.get(b.id);
+  let url = '';
+  try {
+    const W = 112, H = 400, cx = W / 2, cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d');
+    let seed = 7;
+    for (const ch of b.id) seed = (seed * 31 + ch.charCodeAt(0)) % 100003;
+    const r = makeRng(seed);
+    g.fillStyle = b.color; g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 3000; i++) {                       // the weave of the cloth
+      g.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.055)' : 'rgba(0,0,0,0.08)';
+      g.fillRect(r() * W, r() * H, 1 + r() * 3, 1);
+    }
+    const gold = 'rgba(238,208,142,0.92)';
+    const rule = (y, w) => { g.fillStyle = gold; g.fillRect(8, y, W - 16, w); };
+    g.lineJoin = g.lineCap = 'round';
+    if (b.kind === 'classic') {
+      rule(9, 3); rule(16, 1); rule(84, 1); rule(88, 3); rule(H - 22, 1); rule(H - 17, 3);
+      g.strokeStyle = gold; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(cx, 26); g.lineTo(cx + 21, 51); g.lineTo(cx, 76); g.lineTo(cx - 21, 51); g.closePath(); g.stroke();
+      g.beginPath(); g.moveTo(cx, 36); g.lineTo(cx + 12, 51); g.lineTo(cx, 66); g.lineTo(cx - 12, 51); g.closePath(); g.stroke();
+      g.fillStyle = gold; g.beginPath(); g.arc(cx, 51, 4, 0, 7); g.fill();
+    } else if (b.kind === 'notes') {
+      g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 2; g.setLineDash([7, 6]);
+      g.beginPath(); g.moveTo(11, 6); g.lineTo(11, H - 6); g.stroke(); g.setLineDash([]);
+      g.fillStyle = 'rgba(8,12,18,0.55)'; g.fillRect(W - 20, 0, 7, H);              // the elastic band
+      g.fillStyle = 'rgba(242,234,214,0.94)'; g.fillRect(24, 22, 56, 54);           // a paper label, three pencilled lines
+      g.strokeStyle = 'rgba(60,60,70,0.55)'; g.lineWidth = 1.5;
+      for (const y of [38, 49, 60]) { g.beginPath(); g.moveTo(31, y); g.lineTo(31 + 26 + r() * 16, y + (r() - 0.5) * 2); g.stroke(); }
+    } else if (b.kind === 'licensed') {
+      g.fillStyle = 'rgba(255,255,255,0.15)';
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(W, 0); g.lineTo(W, 72 + r() * 16); g.lineTo(0, 92 + r() * 16); g.closePath(); g.fill();
+      g.strokeStyle = b.ink; g.lineWidth = 3; g.beginPath(); g.arc(cx, 46, 18, 0, 7); g.stroke();
+      const a = r() * 6.28;
+      g.beginPath(); g.moveTo(cx - Math.cos(a) * 18, 46 - Math.sin(a) * 18); g.lineTo(cx + Math.cos(a) * 18, 46 + Math.sin(a) * 18); g.stroke();
+      g.fillStyle = b.ink; g.fillRect(14, H - 14, W - 28, 3);
+    } else {
+      rule(8, 2); rule(88, 2); rule(H - 14, 2);
+      g.strokeStyle = b.ink; g.fillStyle = b.ink; g.lineWidth = 2.5;
+      if (b.id === 'legend') {                              // the ring of mountains, the fire in the middle
+        g.beginPath(); g.moveTo(14, 74); g.lineTo(30, 44); g.lineTo(42, 60); g.lineTo(56, 30); g.lineTo(72, 58); g.lineTo(84, 46); g.lineTo(98, 74); g.stroke();
+        g.fillStyle = 'rgba(255,196,110,0.95)';
+        g.beginPath(); g.moveTo(cx, 60); g.quadraticCurveTo(cx + 8, 70, cx, 78); g.quadraticCurveTo(cx - 8, 70, cx, 60); g.fill();
+      } else if (b.id === 'flowers') {                      // three flowers on their stalks
+        for (const [x, y, q] of [[34, 40, 9], [62, 32, 11], [82, 50, 8]]) {
+          g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + 3, 68, cx, 82); g.stroke();
+          for (let i = 0; i < 5; i++) { const t = i * 1.2566 + 0.3; g.beginPath(); g.ellipse(x + Math.cos(t) * q * 0.62, y + Math.sin(t) * q * 0.62, q * 0.55, q * 0.34, t, 0, 7); g.fill(); }
+          g.fillStyle = 'rgba(255,214,120,0.95)'; g.beginPath(); g.arc(x, y, q * 0.3, 0, 7); g.fill(); g.fillStyle = b.ink;
+        }
+      } else if (b.id === 'sky') {                          // a little dipper of its own, and loose stars
+        const pts = [[22, 36], [40, 30], [56, 38], [68, 52], [90, 50], [92, 70], [70, 72]];
+        g.lineWidth = 1.5; g.globalAlpha = 0.7;
+        g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.lineTo(68, 52); g.stroke();
+        g.globalAlpha = 1;
+        for (const [x, y] of pts) { g.beginPath(); g.arc(x, y, 3.2, 0, 7); g.fill(); }
+        for (let i = 0; i < 9; i++) { g.beginPath(); g.arc(12 + r() * 88, 22 + r() * 56, 1 + r(), 0, 7); g.fill(); }
+      } else {                                              // the diary: ruled lines, a pencil laid across
+        g.lineWidth = 1.5; g.globalAlpha = 0.75;
+        for (const y of [32, 44, 56, 68]) { g.beginPath(); g.moveTo(22, y); g.lineTo(90 - r() * 22, y); g.stroke(); }
+        g.globalAlpha = 1; g.lineWidth = 5; g.strokeStyle = 'rgba(214,160,60,0.95)';
+        g.beginPath(); g.moveTo(26, 76); g.lineTo(84, 26); g.stroke();
+        g.strokeStyle = 'rgba(40,30,20,0.9)'; g.beginPath(); g.moveTo(84, 26); g.lineTo(88, 22.5); g.stroke();
+      }
+    }
+    url = `url(${cv.toDataURL()})`;
+  } catch (e) { /* a plain cloth spine then */ }
+  spineArtCache.set(b.id, url);
+  return url;
+}
 function renderShelf() {
   const el = $('shelf');
   el.textContent = '';
-  const ctx = shelfCtx();
-  SHELF.forEach((b, k) => {
-    const n = pagesOf(b, ctx).length, at = savedPage(b.id);
-    const s = document.createElement('button');
-    s.type = 'button';
-    s.className = `spine spine-${b.kind}`;
-    s.style.setProperty('--c', b.color);
-    s.style.setProperty('--ink', b.ink);
-    s.style.setProperty('--h', b.h);
-    s.style.setProperty('--tilt', `${k === 2 ? -4 : k === 5 ? 3 : 0}deg`);
-    s.dataset.book = b.id;
-    s.setAttribute('aria-label', `${b.title}, ${b.author}`);
-    s.innerHTML = '<span class="spine-band"></span><span class="spine-title"></span><span class="spine-author"></span><span class="spine-mark"></span>';
-    s.querySelector('.spine-title').textContent = b.title;
-    s.querySelector('.spine-author').textContent = b.author;
-    s.querySelector('.spine-mark').textContent = at > 0 ? `tr. ${Math.min(at, n - 1) + 1}/${n}` : `${n} tr.`;
-    s.addEventListener('click', () => openVolume(b.id));
-    el.append(s);
-  });
+  const ctx = shelfCtx(), last = store.get('read.book', ''), hint = $('shelfHint');
+  const idle = 'Chọn một cuốn để đọc · E để đứng dậy';
+  hint.textContent = idle;
+  for (const kinds of SHELF_TIERS) {
+    const row = document.createElement('div');
+    row.className = 'shelf-row';
+    for (const kind of kinds) {
+      const books = SHELF.filter((b) => b.kind === kind);
+      if (!books.length) continue;
+      const group = document.createElement('div');
+      group.className = 'shelf-group';
+      group.dataset.kind = kind;
+      const stand = document.createElement('div');
+      stand.className = 'shelf-books';
+      for (const b of books) {
+        const n = pagesOf(b, ctx).length, at = savedPage(b.id);
+        const s = document.createElement('button');
+        s.type = 'button';
+        s.className = `spine spine-${b.kind}${b.id === last ? ' reading-now' : ''}`;
+        s.style.setProperty('--c', b.color);
+        s.style.setProperty('--ink', b.ink);
+        s.style.setProperty('--h', b.h);
+        s.style.setProperty('--tilt', `${SPINE_TILT[b.id] || 0}deg`);
+        const art = spineArt(b);
+        if (art) s.style.setProperty('--art', art);
+        s.dataset.book = b.id;
+        s.setAttribute('aria-label', `${b.title}, ${b.author}`);
+        s.innerHTML = '<span class="spine-title"></span><span class="spine-author"></span><span class="spine-mark"></span>';
+        s.querySelector('.spine-title').textContent = b.title;
+        s.querySelector('.spine-author').textContent = b.author;
+        s.querySelector('.spine-mark').textContent = at > 0 ? `tr. ${Math.min(at, n - 1) + 1}/${n}` : `${n} tr.`;
+        s.addEventListener('click', () => openVolume(b.id));
+        // the caption under the shelf names the book under the hand
+        const say = () => {
+          hint.textContent = '';
+          const t = document.createElement('b');
+          t.textContent = b.title;
+          hint.append(t, document.createElement('br'), `${b.author}${b.translator ? ` · ${b.translator} dịch` : ''} · ${at > 0 ? `đang đọc trang ${Math.min(at, n - 1) + 1}/${n}` : `${n} trang`}`);
+        };
+        s.addEventListener('pointerenter', say);
+        s.addEventListener('focus', say);
+        s.addEventListener('pointerleave', () => { hint.textContent = idle; });
+        stand.append(s);
+      }
+      const plate = document.createElement('span');
+      plate.className = 'shelf-plate';
+      plate.textContent = SHELF_GROUPS[kind];
+      group.append(stand, plate);
+      row.append(group);
+    }
+    if (!row.childElementCount) continue;
+    const tier = document.createElement('div');
+    tier.className = 'shelf-tier';
+    tier.append(row);
+    el.append(tier);
+  }
 }
 function showShelf() {
   book.id = '';
@@ -1375,9 +1516,10 @@ function showShelf() {
   $('shelfView').classList.remove('hidden');
   renderShelf();
   const last = store.get('read.book', '');
-  const btn = last && $('shelf').querySelector(`[data-book="${last}"]`);
-  (btn || $('shelf').firstChild).focus({ preventScroll: true });
+  const btn = (last && $('shelf').querySelector(`[data-book="${last}"]`)) || $('shelf').querySelector('.spine');
+  if (btn) btn.focus({ preventScroll: true });
 }
+const isCont = (p) => /\(tiếp\)\s*$/.test(p.h);
 function openVolume(id) {
   const b = bookOf(id);
   if (!b) return;
@@ -1391,6 +1533,17 @@ function openVolume(id) {
   sheet.classList.remove('turn-out', 'turn-in-next', 'turn-in-prev');
   void sheet.offsetWidth;
   sheet.classList.add('turn-in-next');
+  // the contents: every page that opens a heading of its own (long books only)
+  const toc = $('bookToc');
+  toc.textContent = '';
+  book.pages.forEach((p, i) => {
+    if (isCont(p)) return;
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = p.h.length > 46 ? `${p.h.slice(0, 44)}…` : p.h;
+    toc.append(o);
+  });
+  toc.classList.toggle('hidden', toc.options.length < 4);
   renderPage();
   savePage(id, book.i);
   story.note(`l:${id}`);
@@ -1400,13 +1553,18 @@ function renderPage() {
   $('bookRun').textContent = b.title;
   $('bookAuthor').textContent = b.translator ? `${b.author} · ${b.translator} dịch` : b.author;
   $('bookTitle').textContent = p.h;
+  $('bookSheet').classList.toggle('cont', isCont(p));
   const q = $('bookQuote'), ref = $('bookRef');
   q.classList.toggle('hidden', !p.q);
   q.textContent = p.q || '';
   ref.classList.toggle('hidden', !p.ref);
-  ref.textContent = p.ref ? `${p.ref}. ${b.kind === 'classic' ? 'Chuyển ý:' : ''}` : '';
+  ref.textContent = p.ref || '';
   const text = $('bookText');
   text.textContent = '';
+  text.classList.toggle('gloss', b.kind === 'classic' && !!p.q);     // under a classic's own words: our free rendering
+  // the valley's books and the notebooks are written in short blocks: keep a gap between them;
+  // a whole book runs on as a printed page does, paragraph after paragraph with a first-line indent
+  const blocks = b.kind !== 'licensed';
   for (const para of p.t.split('\n\n')) {
     // a whole book (private/): [[img:NN]] a picture, [[q]] a quoted passage, [[sub:…]] a chapter's subtitle
     const pic = /^\[\[img:(\d+)\]\]$/.exec(para);
@@ -1422,14 +1580,32 @@ function renderPage() {
     const sub = /^\[\[sub:(.*)\]\]$/.exec(para);
     if (sub) { e.className = 'book-sub'; e.textContent = sub[1]; }
     else if (para.startsWith('[[q]]')) { e.className = 'book-q'; e.textContent = para.slice(5); }
-    else e.textContent = para;
+    else { e.textContent = para; if (blocks && text.childElementCount) e.className = 'gap'; }
     text.append(e);
   }
   $('bookSrc').textContent = book.i === 0 ? b.src : '';
   $('bookPage').textContent = `${book.i + 1} / ${book.pages.length}`;
+  $('bookProg').style.setProperty('--p', (book.pages.length > 1 ? book.i / (book.pages.length - 1) : 1).toFixed(4));
   $('bookPrev').disabled = book.i === 0;
   $('bookNext').disabled = book.i === book.pages.length - 1;
+  // the contents list follows the page: the last heading at or before it
+  const toc = $('bookToc');
+  let cur = '';
+  for (const o of toc.options) if (Number(o.value) <= book.i) cur = o.value;
+  toc.value = cur;
   $('bookSheet').scrollTop = 0;
+}
+/** go straight to a page (the contents list): the same settling-in as a turned page */
+function jumpPage(to) {
+  if (!book.id || !(to >= 0 && to < book.pages.length) || to === book.i) return;
+  const dir = to > book.i ? 1 : -1, sheet = $('bookSheet');
+  book.i = to;
+  audio.page();
+  renderPage();
+  savePage(book.id, book.i);
+  sheet.classList.remove('turn-out', 'turn-in-next', 'turn-in-prev');
+  void sheet.offsetWidth;
+  sheet.classList.add(dir > 0 ? 'turn-in-next' : 'turn-in-prev');
 }
 /** turn a page slowly: the sheet lifts away, the next settles in */
 function turnPage(dir) {
@@ -1492,6 +1668,7 @@ function openBook(open) {
   bookEl.classList.toggle('hidden', !open);
   document.body.classList.toggle('reading', open);
   if (!open) { book.id = ''; return; }
+  benchLampUi = -1;
   setStroll(false);
   goSpot(SPOTS.findIndex((sp) => sp.id === 'bench'));
   showShelf();
@@ -1501,6 +1678,7 @@ function openBook(open) {
 $('bookPrev').addEventListener('click', () => turnPage(-1));
 $('bookNext').addEventListener('click', () => turnPage(1));
 $('bookShelf').addEventListener('click', showShelf);
+$('bookToc').addEventListener('change', (e) => { jumpPage(Number(e.target.value)); e.target.blur(); });
 $('bookClose').addEventListener('click', () => openBook(false));
 // a swipe across the page turns it (phones)
 {
@@ -1511,6 +1689,8 @@ $('bookClose').addEventListener('click', () => openBook(false));
 const actBtn = $('actBtn');
 let actKind = '';
 function updateActions() {
+  // the bench lantern lights the shelf and the page too (a CSS variable, set only when it changes)
+  if (book.open && Math.abs(benchLamp - benchLampUi) > 0.02) { benchLampUi = benchLamp; bookEl.style.setProperty('--lamp', benchLamp.toFixed(2)); }
   // what you can do right where you stand
   let kind = '';
   if (mode === 'view' && started && !rest.on && !indoor.leaving) {
@@ -1523,6 +1703,7 @@ function updateActions() {
     else if (nearBench(x, z, 2.2) && !book.open) kind = 'read';
     else if (kitty && !book.open) kind = 'petcat';
     else if (dog && !book.open) kind = 'pet';
+    else if (snowman.here && snowman.distanceTo(x, z) < 2.0 && !book.open) kind = 'snow';
   }
   if (book.open && (walker.on || mode !== 'view')) openBook(false);           // standing up closes the book
   if (kind !== actKind) {
@@ -1532,6 +1713,7 @@ function updateActions() {
     if (kind === 'read') actBtn.textContent = 'Ngồi đọc sách · E';
     if (kind === 'pet') actBtn.textContent = 'Vuốt ve corgi · E';
     if (kind === 'petcat') actBtn.textContent = 'Vuốt ve Choco · E';
+    if (kind === 'snow') actBtn.textContent = 'Chào Bấc · E';
     if (kind === 'leave') actBtn.textContent = 'Rời nhà · E';
   }
 }
@@ -1540,6 +1722,7 @@ function doAction() {
   else if (actKind === 'read') openBook(true);
   else if (actKind === 'pet') petCorgi();
   else if (actKind === 'petcat') petCat();
+  else if (actKind === 'snow') greetSnowman();
   else if (actKind === 'leave') leaveCabin();
 }
 actBtn.addEventListener('click', doAction);
@@ -2498,7 +2681,7 @@ function savePhoto() {
 if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, petCat, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
+    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, petCat, snowman, greetSnowman, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
     actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
     setPixelRatio: (p) => { pixelRatio = p; resize(); },
@@ -2728,7 +2911,7 @@ function frame() {
   corgi.update(dt, time, {
     px: camBase.x, pz: camBase.z, camY: indoor.on ? walker.eye : camBase.y - terrainH(camBase.x, camBase.z),
     night: clock.day < 0.3, indoor: indoor.on, room,
-    rest: fire.level > 0.06 ? DOG_FIRE : DOG_PORCH,
+    rest: petRest(corgi),
     ground: terrainH, blocks: BLOCKS,
   });
   {
@@ -2738,7 +2921,7 @@ function frame() {
       px: camBase.x, pz: camBase.z, camY: indoor.on ? walker.eye : camBase.y - terrainH(camBase.x, camBase.z),
       cam: camera.position, moving,
       night: clock.day < 0.3, light: indoor.on ? (clock.day < 0.35 ? 0.15 : 0.5) : dayAmt, indoor: indoor.on, room,
-      rest: fire.level > 0.06 ? DOG_FIRE : DOG_PORCH,
+      rest: petRest(cat),
       ground: terrainH, blocks: CAT_BLOCKS, buddy: corgi,
     });
   }

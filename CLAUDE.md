@@ -23,6 +23,9 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
   if it is there and adds it to the bench shelf (kind `licensed`, `imgBase` for its pictures);
   without it the shelf has its usual seven books. In the text, `[[img:NN]]` is a picture,
   `[[q]]` a quoted passage, `[[sub:…]]` a chapter subtitle (`renderPage`).
+  The owner also asked for two more whole books (Kerry Patterson, Chris Voss; the files are in their
+  Downloads folder). They were **not** converted: Claude declined to copy whole commercial books on
+  an unverifiable say-so. The shelf's notebook (`notes`) got a reading note for each instead.
 - **GitHub:** the owner pushed the repo to GitHub (branch `main`). Do not push more, or deploy,
   without asking. `.github/workflows/keep-alive.yml` pings Supabase every three days (the owner
   set its two secrets; leave it alone).
@@ -80,7 +83,8 @@ js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sun
 js/library.js         the seven books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
 js/cabinroom.js       the room inside the cabin (its own render layer), its lights, and what you can walk through in it
 js/corgi.js           Bơ the camp corgi: capsule model, vertex-colour coat, four-beat gait, a small mind of its own
-js/cat.js             Choco the camp cat: one skinned mesh, fur shells up close, eyes with lids and pupils, a cat's habits
+js/cat.js             Choco the camp cat: one skinned mesh, a tabby coat in vertex colours, fur shells up close, a cat's habits
+js/snowman.js         Bấc the winter snowman (an original character), his snow bank and the straw bed the animals sleep on
 js/movers.js          the per-frame shadow map for things that move (the corgi, companions)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
 js/cloud.js           a copy of the save on Supabase (anonymous user, RLS), and the opt-in telemetry line
@@ -257,6 +261,20 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   go at 2, the gold hint at 4, wrong strokes unravel the weave from 3, a dawn bonus clock from 5,
   hidden stars from 7. `WEAVE_ORDER` runs simplest first. Each woven figure leaves a keepsake
   star above it for good. `?debug=1&stage=N` starts N figures in.
+- **The shelf and the page, as drawn** (`renderShelf`, `spineArt`, `renderPage`, `jumpPage` in `main.js`;
+  CSS under "the shelf" in `style.css`): two boards, the books in four groups by `kind` with a
+  brass plate each (`SHELF_GROUPS`, `SHELF_TIERS`); the shelf scrolls if it outgrows the panel. Each
+  spine's cloth and device is painted once on a canvas (`spineArt`: lozenge for classics, stitches and
+  a label for the notebook, a picture per valley book, a plain block for `licensed`); the caption
+  under the shelf names the book under the pointer; a ribbon marks the one last read. The page:
+  running head, centred chapter heading with an ornament (a quiet one on "(tiếp)" pages, class
+  `cont`), a drop cap, `licensed` books set like print (first-line indents), the others in spaced
+  blocks (`p.gap`); quotations (`#bookQuote`, `[[q]]`) in a tinted panel with a rule in the book's
+  colour; a folio and a thin progress line; a contents list (`#bookToc`, books with 4+ headings).
+  `--lamp` on `#book` is the bench lantern's level (`benchLamp`, set in `applyDay`, pushed from
+  `updateActions`): a warm light on the shelf and the page at night. Keys, `audio.page()`, the save
+  (`read.at`, `read.book`) and the ids `check.mjs` reads (`#shelf .spine[data-book]`, `.spine-mark`)
+  are unchanged.
 - **The bench shelf** (`js/library.js`, UI in `main.js` around `renderShelf`/`openVolume`/`turnPage`):
   seven books, three kinds, and the owner's copyright rules decide what each may contain:
   - `classic` (Walden; Meditations in George Long's 1862 English): authors long dead, public
@@ -314,12 +332,36 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   within 2 m: hops, wags, a synthesised bark and pant (`audio.bark`), a diary line `c:<season>`.
   On low its pose is worked out at half the frame rate and the coat has no sheen. Test hooks:
   `?room=1` starts inside, `?dog=run` keeps it trotting to and fro; `__av.corgi.walkTo/hold/free`.
+- **Bấc, the snowman** (`snowman.js`, wired in `main.js` after the cat): the owner asked for Olaf
+  from Frozen; that is someone else's character, so this is **an original one** and must stay so (no
+  name, look or lines borrowed from a film). Three lumpy snowballs (vertex colours, a canvas-drawn
+  bump map on medium/high), pebble eyes and smile, a carrot, twig arms, a knitted scarf (canvas),
+  an upturned terracotta pot of bà Vân's for a hat. Named after the north wind he stands against
+  (gió bấc); cheerful, proud of the job, loses count of snowflakes, "goes to work as the stream" in
+  spring. He stands behind the fire at (2.2, -6.6) with a low crescent of packed snow and a straw
+  bed (`SNOW_REST`), inside the 3.6 m ring round the fire where no bed is planted. `setWinter(w)`
+  (from `applySeason`) shows him when the winter weight is over 0.5, grows him as it settles, and
+  switches his entries in `BLOCKS` on and off (radius -9 = off; `CAT_BLOCKS` shares the same arrays).
+  He does not move: he is in the sun's static shadow map, **not** in `movers.roots` (if he is ever
+  animated, move him there). On winter nights `petRest(animal)` hands the dog and the cat his straw
+  as `rest` instead of the fire: nothing in `corgi.js`/`cat.js` changed for it. `snowman.entry(x, z)`
+  first sends an animal that is behind the bank round the end of it (their walking is straight-line
+  and they stuck on the bank before). "Chào Bấc · E" within 2 m: one of six lines, a chime, diary line
+  `s:<season>`. There is no weather system: "wind or snow" in the request became "winter weight > 0.6".
+  Test hook `__av.snowman`; `check.mjs story` covers summer/winter, the greeting, the block, the bed.
 - **Choco, the cat** (`cat.js`, wired in `main.js` next to the corgi): the owner asked for a cat
   with Bơ, "thực tế 100%". Built the most realistic way this project allows (code only, no image
   or model files, no new library): **one `SkinnedMesh`** merged from pieces hung on 34 bones
   (two spine bones, chest and loin, so the back rounds when it sits; 3-joint legs; nine tail
   bones); at each joint the skin is shared half and half between the bones, so it bends as one.
-  Chocolate coat (darker spine, ghost tabby barring) in vertex colours; on medium/high a faint
+  The coat was repainted after a photo of the owner's real cat: a plump grey-brown mackerel tabby
+  (taupe ground `BASE`, brown-black stripes down the flanks, a line along the spine, ringed legs and
+  tail, mask lines on crown and cheeks, pale bib, belly, muzzle and feet; amber eyes greenish at
+  the rim, pink nose), all in `coat()` as vertex colours. Vertex colours only show a stripe where
+  there are vertices, so the trunk's profile is resampled (61 rings) and limbs are lathed capsules
+  with rings every 8 mm (`capsule`); the colours are darker than they look in a picker because
+  the sun lifts them. Plumper: wider trunk, fuller cheeks, ruff and haunches, legs set wider,
+  loaf/sleep 5 mm higher; same 34 bones. on medium/high a faint
   sheen and **fur shells** (6 on high, 3 on medium, 2.7 mm, strands hashed from the rest position)
   shown only within 2.6 m / 1.8 m. Eyes: painted iris, a pupil that is a slit by day and round at
   night (`ctx.light`), an additive cornea and a glint, lids that blink, slow-blink at you, close
@@ -509,6 +551,16 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 - Grass: looking straight down, the gaps between blades now show a painted undercoat of short
   shoots, not bare earth; it is flat paint (it does not move with the wind and has no depth),
   and on `low` the real blades over it are still sparse.
+- Frame rate for the snowman and the plumper, finer-meshed cat was **not measured**: an interleaved old/new run (three tiers, three views) was started and the machine ran short of memory before it printed anything. Measure before trusting either on weak hardware (the cat gained vertices in every fur shell).
+- Bấc: he stands quite still (no blink, no wave); by firelight his snow goes orange-pink, which is
+  the fire's light but reads oddly; the straw bed is a flat textured disc with a faceted edge; the
+  snow bank is four mounds, not a drift. On `low` his snow has no bump map. His lines are six and
+  come round again. The animals' way in round the bank is one waypoint, watched in test runs only.
+- Choco's stripes are as fine as the mesh allows: soft-edged up close, and the mask on the face is
+  a few lines, not a real tabby's. The plumper trunk was checked in sit, loaf, sleep and stand at
+  all three tiers from two sides; the stretch and groom poses were not looked at again.
+- The redesigned shelf and page were looked at in desktop Chrome at 1280x800, by day and by night;
+  the narrow (phone) layout was changed blind. The contents list is the browser's own select.
 - Winter: snow on built things is a colour by surface angle, not a layer with thickness (no
   overhanging edge, nothing is buried); the corgi, companions, flowers and cherry limbs carry
   none. Ice cracks are a noise pattern and can look like jigsaw lines. Fire and smoke unchanged.

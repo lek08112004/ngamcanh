@@ -1,17 +1,17 @@
-// Choco, the camp cat: a chocolate-brown shorthair who keeps Bơ company.
+// Choco, the camp cat: a plump grey-brown tabby (after the owner's own cat) who keeps Bơ company.
 //
 // Unlike the corgi (rigid capsules on pivots), the cat is ONE skinned mesh: the body, legs, head,
 // ears and tail are modelled as pieces, each hung on a bone, then merged; where two pieces meet
 // at a joint their vertices are shared half and half between the two bones, so an elbow, a
 // neck or a curling tail bends as one skin instead of showing the seams. The spine has two
 // bones (chest and loin), so the back can round when it sits and dip when it stretches; the
-// tail has nine. The coat is painted into vertex colours (a warm chocolate, darker down the
-// spine, a ghost of tabby barring as solid cats have); up close on medium and high a few shells
+// tail has nine. The coat is painted into vertex colours (a taupe mackerel tabby: dark stripes,
+// a line down the spine, ringed legs and tail, a pale chest and belly); up close on medium and high a few shells
 // of short fur stand off the skin (strands hashed from the skin's rest position, so they stay
 // put as it moves). No image files, no models loaded: everything is built here.
 //
-// The face: green eyes under real lids, with pupils that are slits by day and round at night;
-// a rosy-brown nose, a mouth line, whiskers, ears that turn and twitch on their own.
+// The face: amber eyes (greenish at the rim) under real lids, with pupils that are slits by day and round at night;
+// a pale pink nose, a mouth line, whiskers, ears that turn and twitch on their own.
 //
 // What it does (all calm): wanders near the dog, sits with its tail round its feet, grooms (licks
 // a forepaw, wipes its face), loafs with its paws tucked under, naps, stretches after a nap,
@@ -27,34 +27,44 @@ const wrap = (a) => ((a + Math.PI) % TAU + TAU) % TAU - Math.PI;
 const BODY_Y = 0.205;
 
 /* ---------- the coat ---------- */
-const BASE = new THREE.Color('#4b2a1b'), DARK = new THREE.Color('#2f190f'), LIGHT = new THREE.Color('#62392a');
-const EAR_IN = new THREE.Color('#a07264'), EAR_TIP = new THREE.Color('#2f1a12');
+// A grey-brown mackerel tabby, after the owner's own cat: a taupe ground, brown-black stripes down
+// the flanks, a dark line along the spine, rings round the legs and tail, the lines of a tabby's
+// mask on the crown and cheeks, and a much paler chest, belly, muzzle and feet.
+const BASE = new THREE.Color('#5b4f42'), DARK = new THREE.Color('#15100c'), LIGHT = new THREE.Color('#a39480'), WARM = new THREE.Color('#6b563f');
+const EAR_IN = new THREE.Color('#b08478'), EAR_TIP = new THREE.Color('#231b15');
+const stripe = (v, lo, hi) => smooth(lo, hi, 0.5 + 0.5 * Math.sin(v));
 /** colour of the coat at p (cat space at rest: x right, y up, z forward; metres above the ground) */
 function coat(p, part, out) {
   out.copy(BASE);
+  const ax = Math.abs(p.x);
   if (part === 'torso' || part === 'neck') {
-    out.lerp(DARK, 0.5 * smooth(0.235, 0.268, p.y));                          // down the spine
-    out.lerp(LIGHT, 0.45 * smooth(0.165, 0.14, p.y));                         // the belly, a shade lighter
-    const bar = 0.5 + 0.5 * Math.sin(p.z * 92 + Math.sin(p.y * 37) * 1.6);   // ghost tabby on the flanks
-    out.lerp(DARK, 0.11 * smooth(0.55, 1, bar) * smooth(0.02, 0.05, Math.abs(p.x)));
+    out.lerp(WARM, 0.3 * smooth(0.25, 0.18, p.y));                              // warmer low on the flanks
+    // mackerel stripes: down the flanks, wavering, fading out toward the belly
+    const s = stripe(p.z * 118 + Math.sin(p.y * 60 + p.z * 23) * 1.1 + ax * 14, 0.42, 0.78);
+    out.lerp(DARK, 0.86 * s * smooth(0.16, 0.205, p.y));
+    out.lerp(DARK, 0.85 * smooth(0.017, 0.006, ax) * smooth(0.24, 0.262, p.y));    // the line down the spine
+    out.lerp(LIGHT, 0.8 * smooth(0.172, 0.14, p.y));                           // the belly
+    out.lerp(LIGHT, 0.7 * smooth(0.12, 0.19, p.z) * smooth(0.255, 0.2, p.y));     // the bib
   }
   if (part === 'head') {
-    out.lerp(DARK, 0.35 * smooth(0.315, 0.335, p.y));                         // the crown
-    out.lerp(LIGHT, 0.5 * smooth(0.268, 0.255, p.y) * smooth(0.25, 0.27, p.z));   // chin and throat
-    // the faint "M" of a tabby above the eyes, barely there in a solid coat
-    const m = Math.abs(Math.sin((p.x) * 140)) * smooth(0.305, 0.32, p.y) * smooth(0.27, 0.285, p.z);
-    out.lerp(DARK, 0.18 * m);
+    const hy = p.y - 0.299, hz = p.z - 0.196;                                    // from the middle of the skull
+    // the mask: dark lines running back over the crown from the brow (the "M"), bars across the cheeks
+    out.lerp(DARK, 0.75 * smooth(0.012, 0.03, hy) * stripe(ax * 330 + 1.57, 0.45, 0.8));
+    out.lerp(DARK, 0.55 * stripe(hy * 420 - ax * 120, 0.5, 0.82) * smooth(0.026, 0.036, ax) * smooth(-0.034, -0.02, hy) * smooth(0.012, 0.0, hy) * smooth(0.06, 0.035, hz));
+    for (const sx of [-1, 1]) {                                                  // pale rims round the eyes
+      const d = Math.hypot(p.x - sx * 0.0205, hy + 0.0035, hz - 0.0395);
+      out.lerp(LIGHT, 0.42 * smooth(0.021, 0.013, d));
+    }
+    out.lerp(WARM, 0.5 * smooth(0.012, 0.004, ax) * smooth(0.03, 0.042, hz) * smooth(-0.02, -0.008, hy));   // the bridge of the nose
+    out.lerp(LIGHT, 0.85 * smooth(0.03, 0.042, hz) * smooth(-0.016, -0.026, hy));   // muzzle and chin
+    out.lerp(LIGHT, 0.7 * smooth(-0.03, -0.042, hy));                            // the throat
   }
   if (part === 'legF' || part === 'legH' || part === 'paw') {
-    const bar = 0.5 + 0.5 * Math.sin(p.y * 118 + p.z * 20);
-    out.lerp(DARK, 0.10 * smooth(0.6, 1, bar));
-    if (part === 'legH') out.lerp(DARK, 0.15 * smooth(0.03, -0.01, p.x * Math.sign(p.x || 1) - 0.035));
+    out.lerp(DARK, 0.7 * stripe(p.y * 150 + p.z * 25, 0.5, 0.8) * smooth(0.035, 0.07, p.y));   // rings
+    out.lerp(LIGHT, 0.55 * smooth(0.06, 0.02, p.y));                             // pale feet
   }
-  if (part === 'tail') {
-    const ring = 0.5 + 0.5 * Math.sin(p.z * 105);
-    out.lerp(DARK, 0.12 * smooth(0.55, 1, ring) + 0.25 * smooth(-0.40, -0.47, p.z));   // rings, a darker tip
-  }
-  if (part === 'ear') out.lerp(EAR_TIP, 0.45 * smooth(0.36, 0.385, p.y));
+  if (part === 'tail') out.lerp(DARK, Math.max(0.8 * stripe(p.z * 120, 0.45, 0.75), smooth(-0.43, -0.46, p.z)));   // rings, a dark tip
+  if (part === 'ear') out.lerp(EAR_TIP, 0.5 + 0.4 * smooth(0.36, 0.385, p.y));
   if (part === 'earIn') out.copy(EAR_IN);
   return out;
 }
@@ -87,7 +97,7 @@ function shellMaterial(base, s, len) {
 /* ---------- the model ---------- */
 function build(rich, furShells) {
   const fur = rich
-    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.78, sheen: 0.3, sheenRoughness: 0.5, sheenColor: new THREE.Color(0.36, 0.24, 0.17) })
+    ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.78, sheen: 0.3, sheenRoughness: 0.5, sheenColor: new THREE.Color(0.4, 0.36, 0.3) })
     : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82 });
   const root = new THREE.Group();
   root.name = 'cat';
@@ -100,11 +110,21 @@ function build(rich, furShells) {
   // a limb or tail segment from bone b's origin to (dx, dy, dz): makes the bone at the far end;
   // the skin near each end is shared with the bone on the other side of that joint
   const _up = new THREE.Vector3(0, 1, 0);
+  // a capsule with rings along its length as well (the coat's bars are vertex colours: a limb
+  // with one long quad from end to end could not carry them)
+  const capsule = (r, len) => {
+    const pts = [], n = Math.max(2, Math.round(len / 0.008));
+    for (let i = 0; i <= 5; i++) { const a = -Math.PI / 2 + (i / 5) * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r, -len / 2 + Math.sin(a) * r)); }
+    for (let i = 1; i < n; i++) pts.push(new THREE.Vector2(r, -len / 2 + (i / n) * len));
+    for (let i = 0; i <= 5; i++) { const a = (i / 5) * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r, len / 2 + Math.sin(a) * r)); }
+    pts[0].x = 0; pts[pts.length - 1].x = 0;
+    return new THREE.LatheGeometry(pts, 14);
+  };
   const seg = (b, dx, dy, dz, r, part, name) => {
     const end = bone(b, dx, dy, dz, name);
     const dir = new THREE.Vector3(dx, dy, dz), L = dir.length();
     dir.normalize();
-    const geo = new THREE.CapsuleGeometry(r, Math.max(0.001, L - r * 0.4), 5, 14);
+    const geo = capsule(r, Math.max(0.001, L - r * 0.4));
     geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(_up, dir));
     geo.translate(dx / 2, dy / 2, dz / 2);
     const par = b.parent;
@@ -124,16 +144,20 @@ function build(rich, furShells) {
   const loin = bone(body, 0, 0, 0, 'loin');
 
   // the trunk: one lathe, deep at the chest, a slight waist, round haunches; narrow side to side
-  const prof = [[-0.216, 0], [-0.206, 0.03], [-0.188, 0.05], [-0.155, 0.06], [-0.105, 0.06], [-0.045, 0.054], [0.015, 0.053],
-    [0.075, 0.058], [0.128, 0.061], [0.168, 0.056], [0.198, 0.043], [0.214, 0.022], [0.22, 0]];
-  const torso = new THREE.LatheGeometry(prof.map(([z, r]) => new THREE.Vector2(r * 1.05, z * 0.86)), 30).rotateX(Math.PI / 2);
+  const prof = [[-0.216, 0], [-0.206, 0.03], [-0.188, 0.05], [-0.155, 0.064], [-0.105, 0.067], [-0.045, 0.066], [0.015, 0.065],
+    [0.075, 0.065], [0.128, 0.064], [0.168, 0.057], [0.198, 0.043], [0.214, 0.022], [0.22, 0]];
+  // (the profile is resampled finely along the body, so the stripes have vertices to sit on)
+  const profPts = new THREE.SplineCurve(prof.map(([z, r]) => new THREE.Vector2(r * 1.05, z * 0.86))).getPoints(60);
+  for (const q of profPts) q.x = Math.max(0, q.x);
+  profPts[0].x = 0; profPts[profPts.length - 1].x = 0;
+  const torso = new THREE.LatheGeometry(profPts, 36).rotateX(Math.PI / 2);
   {
     const pos = torso.attributes.position, v = new THREE.Vector3();
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos, i);
       // (rotateX(+90deg) sent the lathe's axis, the profile's z, to +z: tail at -z, chest at +z)
-      v.x *= 0.80; v.y *= 1.2;
-      if (v.y < -0.03) v.y -= 0.009 * smooth(-0.14, -0.05, v.z) * smooth(0.035, -0.025, v.z);   // the loose belly
+      v.x *= 0.96; v.y *= 1.12;                                   // round, not deep: a well-fed cat
+      if (v.y < -0.03) v.y -= 0.011 * smooth(-0.15, -0.05, v.z) * smooth(0.035, -0.025, v.z);   // the loose belly
       if (v.y > 0) v.y += 0.006 * smooth(-0.05, -0.14, v.z);                                 // the haunches sit a little higher
       pos.setXYZ(i, v.x, v.y, v.z);
     }
@@ -143,13 +167,13 @@ function build(rich, furShells) {
 
   // neck and head
   const neckBase = bone(chest, 0, 0.03, 0.142, 'neck');
-  blob(neckBase, 0.046, 0, 0.004, 0.0, 0.92, 1.0, 1.05, 'neck', halfParent(neckBase, 0.55));     // the ruff where neck meets chest
+  blob(neckBase, 0.052, 0, 0.0, 0.0, 1.0, 1.0, 1.05, 'neck', halfParent(neckBase, 0.55));     // the ruff where neck meets chest
   const head = seg(neckBase, 0, 0.052, 0.042, 0.034, 'neck', 'head');
   head.rotation.order = 'YXZ';
   neckBase.rotation.order = 'YXZ';
   const H = (r, x, y, z, sx, sy, sz) => blob(head, r, x, y, z, sx, sy, sz, 'head', null, 24, 16);
   H(0.046, 0, 0.012, 0.012, 1.0, 0.9, 1.05);            // cranium
-  H(0.040, 0, -0.008, 0.030, 1.28, 0.82, 0.85);         // cheeks, wide as a cat's are
+  H(0.043, 0, -0.009, 0.029, 1.36, 0.84, 0.86);         // cheeks, wide as a cat's are
   H(0.0145, 0, 0.0, 0.056, 0.95, 0.8, 1.0);             // the short nose
   for (const sx of [-1, 1]) H(0.0155, sx * 0.0125, -0.018, 0.061, 1, 0.85, 0.9);   // whisker pads
   H(0.0125, 0, -0.031, 0.055, 1, 0.75, 1);              // chin
@@ -175,17 +199,17 @@ function build(rich, furShells) {
   const legs = [];
   for (const [sx, front] of [[-1, true], [1, true], [-1, false], [1, false]]) {
     if (front) {
-      const sh = bone(chest, sx * 0.038, -0.025, 0.106, 'shoulder');
-      blob(sh, 0.024, 0, -0.014, 0.0, 0.66, 1.2, 1.0, 'legF', halfParent(sh, 0.6));
-      const el = seg(sh, 0, -0.075, -0.012, 0.0235, 'legF', 'elbow');
-      const wr = seg(el, 0, -0.072, 0.008, 0.0172, 'legF', 'wrist');
+      const sh = bone(chest, sx * 0.045, -0.025, 0.106, 'shoulder');
+      blob(sh, 0.027, 0, -0.014, 0.0, 0.72, 1.2, 1.0, 'legF', halfParent(sh, 0.6));
+      const el = seg(sh, 0, -0.075, -0.012, 0.0255, 'legF', 'elbow');
+      const wr = seg(el, 0, -0.072, 0.008, 0.0186, 'legF', 'wrist');
       const pw = seg(wr, 0, -0.016, 0.006, 0.0128, 'legF', 'paw');
       toes(pw, true);
       legs.push({ front, side: sx, a: sh, b: el, c: wr, paw: pw });
     } else {
-      const hp = bone(loin, sx * 0.036, -0.005, -0.115, 'hip');
-      blob(hp, 0.041, 0, -0.026, 0.012, 0.58, 1.12, 1.05, 'legH', halfParent(hp, 0.5));   // the haunch
-      const st = seg(hp, 0, -0.062, 0.035, 0.025, 'legH', 'stifle');
+      const hp = bone(loin, sx * 0.044, -0.005, -0.115, 'hip');
+      blob(hp, 0.046, 0, -0.026, 0.012, 0.66, 1.12, 1.05, 'legH', halfParent(hp, 0.5));   // the haunch
+      const st = seg(hp, 0, -0.062, 0.035, 0.027, 'legH', 'stifle');
       blob(st, 0.019, 0, -0.022, -0.02, 0.72, 1.3, 1.0, 'legH', halfParent(st, 0.3));   // calf
       const ho = seg(st, 0, -0.062, -0.05, 0.0172, 'legH', 'hock');
       const pw = seg(ho, 0, -0.058, -0.004, 0.0122, 'legH', 'paw');
@@ -198,7 +222,7 @@ function build(rich, furShells) {
   let tb = bone(loin, 0, 0.035, -0.172, 'tail');
   for (let i = 0; i < 9; i++) {
     tail.push(tb);
-    tb = seg(tb, 0, 0, -0.034, mix(0.0158, 0.0092, i / 8), 'tail', 'tail');
+    tb = seg(tb, 0, 0, -0.034, mix(0.0172, 0.0098, i / 8), 'tail', 'tail');
   }
 
   /* merge every piece into one skinned geometry */
@@ -271,17 +295,17 @@ function build(rich, furShells) {
     const R = 0.0116;
     const ball = new THREE.SphereGeometry(R, 32, 24);
     const ic = new Float32Array(ball.attributes.position.count * 3), q = new THREE.Vector3(), c = new THREE.Color();
-    const GOLD = new THREE.Color('#b9a845'), GREEN = new THREE.Color('#6a9a3a'), RIM = new THREE.Color('#33521f'), BACK = new THREE.Color('#1c120c');
+    const GOLD = new THREE.Color('#d9981c'), GREEN = new THREE.Color('#a9a53c'), RIM = new THREE.Color('#4b4a1c'), BACK = new THREE.Color('#1c120c');
     for (let i = 0; i < ball.attributes.position.count; i++) {
       q.fromBufferAttribute(ball.attributes.position, i).normalize();
       const a = Math.acos(clamp(q.z, -1, 1));
       const fib = 0.92 + 0.16 * (0.5 + 0.5 * Math.sin(Math.atan2(q.y, q.x) * 23 + a * 9));    // the iris' radial fibres
-      c.copy(GOLD).lerp(GREEN, smooth(0.15, 0.5, a)).lerp(RIM, smooth(0.62, 0.9, a)).multiplyScalar(fib);
+      c.copy(GOLD).lerp(GREEN, smooth(0.3, 0.62, a)).lerp(RIM, smooth(0.62, 0.9, a)).multiplyScalar(fib);
       if (a > 0.98) c.copy(BACK);
       ic[i * 3] = c.r; ic[i * 3 + 1] = c.g; ic[i * 3 + 2] = c.b;
     }
     ball.setAttribute('color', new THREE.BufferAttribute(ic, 3));
-    g.add(new THREE.Mesh(ball, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: 0x081005 })));
+    g.add(new THREE.Mesh(ball, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: 0x120c02 })));
     const pupil = new THREE.Mesh(new THREE.SphereGeometry(R * 0.62, 18, 12), new THREE.MeshStandardMaterial({ color: 0x030202, roughness: 0.3 }));
     pupil.position.z = R * 0.8;
     pupil.scale.set(0.2, 1, 0.42);
@@ -296,7 +320,7 @@ function build(rich, furShells) {
     g.add(upper, lower);
     return { g, pupil, upper, lower, glint };
   });
-  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.0068, 14, 10), new THREE.MeshStandardMaterial({ color: 0x7a4a44, roughness: 0.42 }));
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.0068, 14, 10), new THREE.MeshStandardMaterial({ color: 0xd29a94, roughness: 0.42 }));
   nose.position.set(0, -0.0035, 0.0705);
   nose.scale.set(1.4, 0.85, 0.62);
   head.add(nose);
@@ -335,7 +359,7 @@ function build(rich, furShells) {
   }
   const whGeo = new THREE.BufferGeometry();
   whGeo.setAttribute('position', new THREE.Float32BufferAttribute(wh, 3));
-  const whMat = new THREE.LineBasicMaterial({ color: 0xdccdb8, transparent: true, opacity: 0.75 });
+  const whMat = new THREE.LineBasicMaterial({ color: 0xf2ede4, transparent: true, opacity: 0.75 });
   head.add(new THREE.LineSegments(whGeo, whMat));
 
   const meshes = [];
@@ -351,8 +375,8 @@ function build(rich, furShells) {
 const POSES = {
   stand: { h: BODY_Y, pitch: 0, roll: 0, chest: 0, loin: 0, neck: 0, head: 0.05, fa: 0, fb: 0, fc: 0, ha: 0, hb: 0, hc: 0, flat: 1, tLift: 0.35, tBend: 0.1, tCurl: 0.1, tTip: -0.06, tWrap: 0, ear: 0 },
   sit: { h: 0.158, pitch: -1.0, roll: 0, chest: 0.45, loin: 0.35, neck: 0.25, head: 0.14, fa: 0.55, fb: 0, fc: 0, ha: 0, hb: 0.96, hc: -1.95, flat: 1, tLift: -0.2, tBend: 0.8, tCurl: 0.0, tTip: 0.0, tWrap: -0.32, ear: 0 },
-  loaf: { h: 0.088, pitch: 0.02, roll: 0, chest: 0, loin: 0, neck: 0.04, head: -0.02, fa: 1.32, fb: -2.5, fc: 1.05, ha: -1.0, hb: 2.28, hc: -1.5, flat: 0.2, tLift: -0.18, tBend: 0.05, tCurl: 0.0, tTip: 0.0, tWrap: -0.32, ear: 0 },
-  sleep: { h: 0.084, pitch: 0.04, roll: 0.12, chest: 0.04, loin: 0, neck: 0.5, head: 0.32, fa: 1.36, fb: -2.55, fc: 1.1, ha: -1.0, hb: 2.3, hc: -1.5, flat: 0.2, tLift: -0.2, tBend: 0.05, tCurl: 0.0, tTip: 0.0, tWrap: -0.38, ear: 0.22 },
+  loaf: { h: 0.093, pitch: 0.02, roll: 0, chest: 0, loin: 0, neck: 0.04, head: -0.02, fa: 1.32, fb: -2.5, fc: 1.05, ha: -1.0, hb: 2.28, hc: -1.5, flat: 0.2, tLift: -0.18, tBend: 0.05, tCurl: 0.0, tTip: 0.0, tWrap: -0.32, ear: 0 },
+  sleep: { h: 0.089, pitch: 0.04, roll: 0.12, chest: 0.04, loin: 0, neck: 0.5, head: 0.32, fa: 1.36, fb: -2.55, fc: 1.1, ha: -1.0, hb: 2.3, hc: -1.5, flat: 0.2, tLift: -0.2, tBend: 0.05, tCurl: 0.0, tTip: 0.0, tWrap: -0.38, ear: 0.22 },
   stretch: { h: 0.14, pitch: 0.42, roll: 0, chest: 0.18, loin: -0.2, neck: -0.5, head: -0.38, fa: -1.4, fb: 0.3, fc: -0.2, ha: 0.25, hb: 0, hc: 0, flat: 1, tLift: 1.15, tBend: 0.06, tCurl: 0.06, tTip: 0.04, tWrap: 0, ear: 0.1 },
 };
 const KEYS = Object.keys(POSES.stand);
@@ -661,7 +685,7 @@ export function createCat(opts = {}) {
       const near = dc < (opts.furNear || 2.6);
       for (const s of m.shells) s.visible = near;
       m.whMat.opacity = clamp(1.7 - dc * 0.45, 0, 0.75);
-      m.whMat.color.setHex(0xdccdb8).multiplyScalar(0.18 + 0.82 * clamp(ctx.light ?? 1, 0, 1));   // whiskers are lit like the rest of it
+      m.whMat.color.setHex(0xf2ede4).multiplyScalar(0.18 + 0.82 * clamp(ctx.light ?? 1, 0, 1));   // whiskers are lit like the rest of it
     }
   }
 
