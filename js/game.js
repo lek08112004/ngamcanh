@@ -58,6 +58,32 @@ export const CONSTELLATIONS = [
   },
 ];
 
+// The constellations of the myth chapters only (myths.js). They are kept out of CONSTELLATIONS so
+// that the labels, the journal's seven stories, the keepsakes and the classic weave order stay as
+// they were. Positions checked against Wikipedia (J2000).
+export const MYTH_CONS = [
+  {
+    id: 'cep', name: 'Tiên Vương', latin: 'Cepheus', myth: true,
+    stars: [[21.310, 62.59], [21.478, 70.56], [23.656, 77.63], [22.828, 66.20], [22.181, 58.20]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0], [0, 3]],
+  },
+  {
+    id: 'and', name: 'Tiên Nữ', latin: 'Andromeda', myth: true,
+    stars: [[0.140, 29.09], [0.655, 30.86], [1.162, 35.62], [2.065, 42.33], [0.946, 38.50], [0.830, 41.08]],
+    edges: [[0, 1], [1, 2], [2, 3], [2, 4], [4, 5]],
+  },
+  {
+    id: 'per', name: 'Anh Tiên', latin: 'Perseus', myth: true,
+    stars: [[2.845, 55.90], [3.080, 53.51], [3.405, 49.86], [3.715, 47.79], [3.964, 40.01], [3.902, 31.88], [3.136, 40.96]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [2, 6]],
+  },
+  {
+    id: 'cet', name: 'Kình Ngư', latin: 'Cetus', myth: true,
+    stars: [[3.038, 4.09], [2.722, 3.24], [2.658, 0.33], [2.322, -2.98], [1.858, -10.34], [1.735, -15.94], [0.726, -17.99], [0.324, -8.82], [1.143, -10.18], [1.400, -8.18]],
+    edges: [[0, 1], [1, 2], [2, 0], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 4]],
+  },
+];
+
 // The order the sky is woven in, simplest first: a five-star chain, then the shapes with a
 // loop, then the big ones with many branches. CONSTELLATIONS keeps its own order (the labels
 // and the journal use it); only the game walks this list.
@@ -83,7 +109,7 @@ export function weaveRules(stage) {
 }
 
 // Project each constellation onto a local tangent plane, normalised to a unit box.
-for (const c of CONSTELLATIONS) {
+for (const c of [...CONSTELLATIONS, ...MYTH_CONS]) {
   const ra0 = c.stars.reduce((s, p) => s + p[0], 0) / c.stars.length;
   const de0 = c.stars.reduce((s, p) => s + p[1], 0) / c.stars.length;
   const pts = c.stars.map(([ra, de]) => [-(ra - ra0) * 15 * Math.cos(de0 * DEG), de - de0]);
@@ -155,7 +181,7 @@ export class StardustGame {
     this.sparks = [];
     this.maxSparks = lowPower ? 320 : 760;
 
-    this.cons = CONSTELLATIONS.map((def) => ({
+    const make = (def) => ({
       def,
       dirs: def.local.map(() => new THREE.Vector3()),
       lit: def.local.map(() => false),
@@ -165,7 +191,11 @@ export class StardustGame {
       done: false,
       perfect: true,
       appear: 0,
-    }));
+    });
+    this.cons = CONSTELLATIONS.map(make);
+    this.mythCons = MYTH_CONS.map(make);
+    this.myth = null;               // { line, ch, id, relaxed, group: [cons] } while a myth chapter is woven
+    this.onMyth = () => {};
 
     // --- render objects ---
     this.group = new THREE.Group();
@@ -233,9 +263,44 @@ export class StardustGame {
   get multiplier() { return Math.min(5, 1 + 0.5 * Math.floor(this.combo / 4)); }
   get comboFraction() { return this.combo > 0 ? Math.max(0, this.comboTimer / COMBO_WINDOW) : 0; }
   get auroraTarget() { return 1.0 + 0.07 * Math.min(this.completed, 7) + this.surge + (this.storm > 0 ? 0.35 : 0); }
-  get current() { return this.byId(WEAVE_ORDER[this.index]); }
-  byId(id) { return this.cons.find((c) => c.def.id === id); }
-  get rules() { return weaveRules(this.stage); }
+  get current() { return this.byId(this.myth ? this.myth.id : WEAVE_ORDER[this.index]); }
+  byId(id) { return this.cons.find((c) => c.def.id === id) || this.mythCons.find((c) => c.def.id === id); }
+  // a myth chapter in the relaxed way: guide lines, the gold hint, no slips, no dawn clock
+  /** how far the chapter left this visit got: lit stars of all, or null */
+  mythProgress(line, ch, id) { const k = this.mythKept && this.mythKept[`${line}:${ch}`]; return k ? [k.filter(Boolean).length, k.length] : null; }
+  get rules() { return this.myth && this.myth.relaxed ? { ...weaveRules(0), slips: Infinity, dawn: 0 } : weaveRules(this.stage); }
+
+  /**
+   * weave one chapter of a myth line: `ids` are the line's constellations (laid out together, as
+   * they sit on the real sky), `id` the one to weave now. Old progress is untouched: the classic
+   * order (index, stage) is not moved by myth chapters.
+   */
+  startMyth(line, ch, id, ids, relaxed) {
+    if (this.myth) this.endMyth(true);
+    const group = ids.map((x) => this.byId(x)).filter(Boolean);
+    this.myth = { line, ch, id, ids, relaxed, group };
+    for (const c of group) { c.lit.fill(false); c.edgeP.fill(0); c.done = false; c.perfect = true; c.shown = c.def.id === id; c.appear = 0; }
+    // a chapter left half woven (this visit) picks up where it was
+    const kept = this.mythKept && this.mythKept[`${line}:${ch}`];
+    if (kept) { const c = this.byId(id); kept.forEach((v, k) => { c.lit[k] = v; }); c.def.edges.forEach(([a, b], e) => { c.edgeP[e] = c.lit[a] && c.lit[b] ? 1 : 0; }); }
+    this.slips = 0; this.dawn = 0; this.nextTimer = -1;
+    this.layout();
+    this._begin();
+    this.onChange(this.state());
+  }
+  /** back to the classic weave (the figures of the chapter are set back as they were) */
+  endMyth(quiet) {
+    if (!this.myth) return;
+    const cur = this.byId(this.myth.id);
+    this.mythKept = this.mythKept || {};
+    const key = `${this.myth.line}:${this.myth.ch}`;
+    if (cur && !cur.done && cur.lit.some(Boolean)) this.mythKept[key] = [...cur.lit]; else delete this.mythKept[key];
+    for (const c of this.myth.group) { c.lit.fill(false); c.edgeP.fill(0); c.done = false; c.shown = false; c.perfect = true; c.appear = 0; }
+    this.myth = null;
+    this.layout();
+    if (!quiet && this.mode === 'play') this._begin();
+    this.onChange(this.state());
+  }
   /** where the stars woven so far hang: one new star sits just above each woven figure */
   keepsakes() {
     const out = [];
@@ -324,6 +389,35 @@ export class StardustGame {
       });
     });
     this.fovBounds = { hHalf, elMin: 7, elMax: elMax + 4 };
+    if (this.myth) this._layoutMyth(hHalf, elMax);
+  }
+  /** the chapter's constellations together on one tangent plane: their real places relative to each other */
+  _layoutMyth(hHalf, elMax) {
+    const group = this.myth.group;
+    const all = group.flatMap((c) => c.def.stars);
+    // the mean direction (ra in hours wraps at 24: unwrap round the first star)
+    const r0 = all[0][0];
+    const un = (ra) => ra - 24 * Math.round((ra - r0) / 24);
+    const ra0 = all.reduce((s, p) => s + un(p[0]), 0) / all.length, de0 = all.reduce((s, p) => s + p[1], 0) / all.length;
+    const toXY = ([ra, de]) => {
+      // gnomonic projection about (ra0, de0), x toward the east on the sky shown to the left (as seen)
+      const a = (un(ra) - ra0) * 15 * DEG, d = de * DEG, d0 = de0 * DEG;
+      const cosc = Math.sin(d0) * Math.sin(d) + Math.cos(d0) * Math.cos(d) * Math.cos(a);
+      return [-(Math.cos(d) * Math.sin(a)) / cosc / DEG, (Math.cos(d0) * Math.sin(d) - Math.sin(d0) * Math.cos(d) * Math.cos(a)) / cosc / DEG];
+    };
+    const pts = group.map((c) => c.def.stars.map(toXY));
+    // the scale is set by the figure being woven and its near neighbours (within 40°): the line can
+    // span half the sky (Cetus to Cepheus), and squeezing all of it in would make every star tiny
+    const cen = (P) => [P.reduce((a, p) => a + p[0], 0) / P.length, P.reduce((a, p) => a + p[1], 0) / P.length];
+    const ci = group.findIndex((c) => c.def.id === this.myth.id), cc = cen(pts[ci]);
+    const near = pts.filter((P, i) => i === ci || Math.hypot(cen(P)[0] - cc[0], cen(P)[1] - cc[1]) < 40);
+    const xs = near.flat().map((p) => p[0]), ys = near.flat().map((p) => p[1]);
+    const mx = (Math.max(...xs) + Math.min(...xs)) / 2, my = (Math.max(...ys) + Math.min(...ys)) / 2;
+    const ex = Math.max(1e-3, Math.max(...xs) - Math.min(...xs)), ey = Math.max(1e-3, Math.max(...ys) - Math.min(...ys));
+    const boxW = hHalf * 1.6, boxH = Math.max(10, elMax - 12);
+    const s = Math.min(boxW / ex, boxH / ey, 1.6);
+    const elMid = 12 + boxH / 2;
+    group.forEach((c, i) => pts[i].forEach(([x, y], k) => dirFrom((x - mx) * s, elMid + (y - my) * s, c.dirs[k])));
   }
 
   /** Embers from the campfire rise and turn into stardust. `dir` points at the fire. */
@@ -472,7 +566,7 @@ export class StardustGame {
   _finish(c) {
     c.done = true;
     this.completed++;
-    this.stage++;
+    if (!this.myth) this.stage++;
     const first = !this.woven.has(c.def.id);
     this.woven.add(c.def.id);
     this.surge = Math.min(0.9, this.surge + 0.6);
@@ -489,6 +583,7 @@ export class StardustGame {
     if (first) msg += ' · đã ghi vào sổ tay';
     this.onToast(msg);
     this.onComplete(c, first);
+    if (this.myth) { this.nextTimer = -1; this.onMyth(this.myth, c); return; }
     this.nextTimer = 4.5;
   }
 
@@ -507,7 +602,7 @@ export class StardustGame {
 
   _advance() {
     this.index++;
-    if (this.index >= this.cons.length) {
+    if (this.index >= WEAVE_ORDER.length) {
       this.index = 0;
       this.cycle++;
       for (const c of this.cons) {
@@ -663,7 +758,7 @@ export class StardustGame {
     const lineLit = [0.60, 0.85, 1.0];
     const cur = this.current;
     const rules = this.rules;
-    for (const c of this.cons) {
+    for (const c of this.myth ? this.myth.group : this.cons) {
       const past = !c.shown && this.woven.has(c.def.id);      // woven in an earlier visit
       if (!c.shown && !past) continue;
       if (past) {

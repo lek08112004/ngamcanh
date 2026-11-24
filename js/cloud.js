@@ -27,6 +27,8 @@ const URL_ = 'https://koycwvchywvfstxtuujs.supabase.co';
 const KEY = 'sb_publishable_YZGsEC4x3Q2K0ybeJikmig_teuxDySx';
 
 const query = new URLSearchParams(location.search);
+// ?debug=1 counts only on this machine (as in main.js): on a public copy the cloud behaves as usual
+if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) query.delete('debug');
 // the test tools run with ?debug=1: they leave the project alone unless asked (?cloud=1)
 export const enabled = query.get('cloud') !== '0' && !(query.has('debug') && query.get('cloud') !== '1');
 
@@ -175,7 +177,7 @@ export function start() {
   addEventListener('online', () => schedule(800));
   addEventListener('offline', () => setStatus('offline', 'Ngoại tuyến · tiến độ vẫn lưu trên máy này'));
   if (!navigator.onLine) setStatus('offline', 'Ngoại tuyến · tiến độ vẫn lưu trên máy này');
-  else if (hasSession() && status.state === 'idle') setStatus('ok', 'Tiến độ được sao lưu lên mây');
+  else if (hasSession() && status.state === 'idle') setStatus('idle', 'Có bản sao trên mây từ lần trước · thay đổi mới sẽ được gửi khi bạn chơi');
   else if (status.state === 'idle') setStatus('idle', 'Tiến độ sẽ được sao lưu lên mây khi bạn bắt đầu chơi');
 }
 

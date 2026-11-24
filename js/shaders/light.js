@@ -36,11 +36,22 @@ float moverShadow(vec3 w){
   vec3 p = sc.xyz / sc.w;
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
   // the receivers (ground, grass, flowers) never draw into this map, so there is no acne to
-  // hide and no bias to push the shadow off the paws: it starts where the foot stands
+  // hide and no bias to push the shadow off the paws: it starts where the foot stands.
+  // Four bilinear lookups (each blends the four texels round it by where the point falls):
+  // a ramp about two texels wide. It was four plain taps, which drew the cat's and the dog's
+  // shadows as visible squares up close (the map's texels are 2 cm), and long evening shadows,
+  // where each texel lies stretched along the sun, as staircases: the ramp widens with that.
   float z = p.z - 0.0004, T = uMoverTexel, s = 0.0;
+  float tz = max(uSunFlat.z, 0.05);
+  float spread = 0.6 * clamp(0.55 + 0.45 * sqrt(1.0 + 1.0 / (tz * tz)), 1.0, 3.0);
   for (int k = 0; k < 4; k++) {
-    vec2 o = vec2(k == 0 || k == 3 ? -0.6 : 0.6, k < 2 ? -0.6 : 0.6) * T * 1.6;
-    s += step(z, textureLod(uMoverMap, p.xy + o, 0.0).r);
+    vec2 o = vec2(k == 0 || k == 3 ? -1.0 : 1.0, k < 2 ? -1.0 : 1.0) * T * spread;
+    vec2 st = (p.xy + o) / T - 0.5;
+    vec2 f = fract(st);
+    vec2 b = (floor(st) + 0.5) * T;
+    float s00 = step(z, textureLod(uMoverMap, b, 0.0).r), s10 = step(z, textureLod(uMoverMap, b + vec2(T, 0.0), 0.0).r);
+    float s01 = step(z, textureLod(uMoverMap, b + vec2(0.0, T), 0.0).r), s11 = step(z, textureLod(uMoverMap, b + vec2(T, T), 0.0).r);
+    s += mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
   }
   return s * 0.25;
 }
@@ -112,7 +123,13 @@ float sunShadowSoftMap(vec3 w){
   // light through leaves makes round dapples, not the squares of the map). The depth range of
   // the sun's shadow camera is 340 m.
   float gap = (p.z - zb) * 340.0;
-  float r = T * clamp(1.1 + gap * 1.15, 1.1, 5.0);
+  // A texel of the map lies on the ground stretched along the sun by 1/sin(elevation): about
+  // 1.3x at noon, 5x or more an hour before sunset. Filtered over 1.1 texels as before, the edges
+  // of long evening shadows came out as staircases of those stretched texels; the narrowest filter
+  // now grows with the stretch (an evening shadow is softer in life too).
+  float tz = max(uSunFlat.z, 0.05);
+  float rMin = clamp(0.55 + 0.45 * sqrt(1.0 + 1.0 / (tz * tz)), 1.1, 3.4);
+  float r = T * clamp(rMin + gap * 1.15, rMin, 5.0);
   float s = 0.0;
   for (int k = 0; k < 8; k++) {
     float a = float(k) * 0.7854 + 0.3;

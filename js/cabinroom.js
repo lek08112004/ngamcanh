@@ -12,6 +12,7 @@ import { woodTexture, stoneTexture } from './world.js';
 
 export const ROOM_LAYER = 1;
 const IW = 2.18, IL = 3.08, WALL = 2.3, RIDGE = 3.62;     // inner half-width, half-length, wall height, ridge (cabin frame)
+const CAT_BED = { x: 1.74, z: 1.62 };                     // Choco's basket, in the cabin's frame
 const TAU = Math.PI * 2;
 
 /* ---------- canvas textures ---------- */
@@ -180,6 +181,7 @@ export function createCabinRoom(cabin, rng, opts = {}) {
   const shadows = !!opts.shadows;
   const room = new THREE.Group();
   room.name = 'cabin-room';
+  let rocker = null;                             // the rocking chair's group (built below)
   cabin.group.add(room);
 
   const woodMap = woodTexture(rng);
@@ -447,8 +449,10 @@ export function createCabinRoom(cabin, rng, opts = {}) {
     // rocking chair: two rockers, a slatted seat and back, turned toward the stove
     const rg = new THREE.Group();
     rg.position.set(1.62, 0, 0.42);
+    rg.rotation.order = 'YXZ';                     // pitch about the chair's own side-to-side axis
     rg.rotation.y = 2.5;
     room.add(rg);
+    rocker = rg;
     for (const sx of [-1, 1]) {
       const rk = put(new THREE.TorusGeometry(0.75, 0.018, 6, 24, 0.9), dark, sx * 0.22, 0.78, 0, rg);
       rk.rotation.set(0, Math.PI / 2, -Math.PI / 2 - 0.45);
@@ -464,6 +468,29 @@ export function createCabinRoom(cabin, rng, opts = {}) {
     cushion.rotation.x = -Math.PI / 2;
     cushion.scale.set(1, 1.25, 0.8);
     put(new THREE.CircleGeometry(0.30, 24).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x9a7a5c, roughness: 1 }), 0.15, 0.05, -0.62);
+    // Choco's own bed, under the shelf against the wall: a low wicker basket (a ring of woven
+    // cane, darker bands where the weave turns) with a folded bit of the quilt in it
+    const cane = new THREE.MeshStandardMaterial({ color: 0xa47a48, roughness: 0.9 });
+    const weave = new THREE.TorusGeometry(0.205, 0.042, 10, 30);
+    {
+      const pos = weave.attributes.position, col = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i++) {
+        const a = Math.atan2(pos.getY(i), pos.getX(i)), z = pos.getZ(i);
+        const band = 0.82 + 0.18 * Math.sign(Math.sin(a * 22 + z * 60));
+        col[i * 3] = band; col[i * 3 + 1] = band * 0.97; col[i * 3 + 2] = band * 0.92;
+      }
+      weave.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    }
+    cane.vertexColors = true;
+    const basket = put(weave, cane, CAT_BED.x, 0.06, CAT_BED.z);
+    basket.rotation.x = -Math.PI / 2;
+    basket.scale.set(1, 1, 1.25);
+    const base = put(new THREE.CylinderGeometry(0.205, 0.19, 0.035, 26), cane, CAT_BED.x, 0.02, CAT_BED.z);
+    const pad = put(new THREE.SphereGeometry(0.19, 22, 10), quilt, CAT_BED.x, 0.045, CAT_BED.z);
+    pad.scale.set(1, 0.16, 1);
+    // (a low basket throws almost no shadow, and the stove's cube map is redrawn every frame:
+    // it is left out of it)
+    for (const o of [basket, base, pad]) o.userData.noCast = true;
   }
 
   /* lights: the fire (the shadow caster), the candle, the daylight from each window, a little sky fill */
@@ -505,7 +532,7 @@ export function createCabinRoom(cabin, rng, opts = {}) {
   room.traverse((o) => {
     o.layers.set(ROOM_LAYER);
     if (o.isMesh && !o.userData.glow) {
-      o.castShadow = shadows && !o.userData.floor;
+      o.castShadow = shadows && !o.userData.floor && !o.userData.noCast;
       o.receiveShadow = shadows;
     }
   });
@@ -522,13 +549,16 @@ export function createCabinRoom(cabin, rng, opts = {}) {
     [-IW, TABLE.x + 0.46, TABLE.z - 0.66, TABLE.z + 0.66],   // table (the chair is pushed in under it as you pass)
     [STOVE.x - 0.62, STOVE.x + 1.15, STOVE.z - 0.55, STOVE.z + 0.55],   // stove, hearth, wood basket
     [1.30, IW, 0.05, 0.80],                            // rocking chair
+    [CAT_BED.x - 0.27, IW, CAT_BED.z - 0.27, CAT_BED.z + 0.27, true],   // the cat's basket (the cat may step in)
   ];
-  /** keep a point r metres clear of the walls and the furniture (world in, world out) */
-  function confine(x, z, r = 0.3) {
+  /** keep a point r metres clear of the walls and the furniture (world in, world out); `pet`:
+   *  the asker is the cat, which may step into its own basket */
+  function confine(x, z, r = 0.3, pet = false) {
     let [lx, lz] = toLocal(x, z);
     lx = Math.max(-IW + r, Math.min(IW - r, lx));
     lz = Math.max(-IL + r, Math.min(IL - r, lz));
-    for (const [x0, x1, z0, z1] of SOLID) {
+    for (const [x0, x1, z0, z1, petOk] of SOLID) {
+      if (pet && petOk) continue;
       const a = x0 - r, b = x1 + r, cc = z0 - r, d = z1 + r;
       if (lx > a && lx < b && lz > cc && lz < d) {
         const pushes = [[lx - a, a, lz], [b - lx, b, lz], [lz - cc, lx, cc], [d - lz, lx, d]];
@@ -588,7 +618,17 @@ export function createCabinRoom(cabin, rng, opts = {}) {
     // the cat: by night on the folded blanket of the rocking chair (seat top 0.53 m above the
     // floor, facing the way the chair faces), by day on the rug nearer the stove
     chair: (() => { const [x, z] = toWorld(1.62, 0.42); return { x, z, y: 0.528, yaw: g.rotation.y + 2.5 }; })(),
+    /** rock the chair by an angle (radians, + leans back): it turns about the centre of its
+     *  runners' arc (0.78 m up), so the runners roll on the boards instead of lifting off them */
+    rock(a) {
+      const H = 0.78, sy = Math.sin(2.5), cy = Math.cos(2.5);
+      rocker.rotation.x = a;
+      rocker.position.set(1.62 - H * Math.sin(a) * sy, H * (1 - Math.cos(a)), 0.42 - H * Math.sin(a) * cy);
+    },
     catSpot: (() => { const [x, z] = toWorld(0.78, -0.32); return { x, z }; })(),
+    // its own basket, and the spot under the end window where it sits and looks out
+    catBed: (() => { const [x, z] = toWorld(CAT_BED.x, CAT_BED.z); return { x, z, y: 0.035 }; })(),
+    catWindow: (() => { const [x, z] = toWorld(0.95, IL - 0.42); const [ax, az] = toWorld(0.95, IL + 1); return { x, z, yaw: Math.atan2(ax - x, az - z) }; })(),
     fire: { x: fx, z: fz },
     table: { x: tx, z: tz },
   };

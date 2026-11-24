@@ -1,7 +1,14 @@
 // Final display-space pass: soft vignette + animated film grain.
+// With TONE_AND_OUTPUT = 1 it is also the output pass: it reads the HDR buffer straight after the
+// bloom, maps it with the same ACES filmic curve and exposure three's OutputPass uses, encodes it
+// to sRGB, and then grades it, all in one full-screen pass instead of two (one read and one write
+// of a 1.9-megapixel half-float buffer fewer every frame). Each neighbour of the sharpen is mapped
+// the same way, so it works in display space as before.
 export const FinalShader = {
   name: 'FinalShader',
+  defines: { TONE_AND_OUTPUT: 1 },
   uniforms: {
+    uExposure: { value: 1 },
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uGrain: { value: 0.012 },
@@ -25,19 +32,38 @@ export const FinalShader = {
     uniform float uDay;
     uniform vec2 uTexel;
     uniform float uSharp;
+    uniform float uExposure;
     varying vec2 vUv;
+    // three.js r160's ACESFilmicToneMapping and sRGBTransferOETF, under our own names
+    vec3 rrtOdt(vec3 v){
+      vec3 a = v * (v + 0.0245786) - 0.000090537;
+      vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+      return a / b;
+    }
+    vec3 toDisplay(vec3 c){
+    #if TONE_AND_OUTPUT == 1
+      const mat3 inM = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
+      const mat3 outM = mat3(vec3(1.60475, -0.10208, -0.00327), vec3(-0.53108, 1.10813, -0.07276), vec3(-0.07367, -0.00605, 1.07602));
+      c *= uExposure / 0.6;
+      c = clamp(outM * rrtOdt(inM * c), 0.0, 1.0);
+      return mix(pow(c, vec3(0.41666)) * 1.055 - vec3(0.055), c * 12.92, vec3(lessThanEqual(c, vec3(0.0031308))));
+    #else
+      return c;
+    #endif
+    }
+    vec3 fetch(vec2 uv){ return toDisplay(texture2D(tDiffuse, uv).rgb); }
     float hash(vec2 p){
       vec3 p3 = fract(vec3(p.xyx) * 0.1031);
       p3 += dot(p3, p3.yzx + 33.33);
       return fract((p3.x + p3.y) * p3.z);
     }
     void main(){
-      vec4 c = texture2D(tDiffuse, vUv);
+      vec4 c = vec4(fetch(vUv), 1.0);
       if (uSharp > 0.0) {
         // unsharp mask: push each pixel away from the average of its neighbours, gently,
         // and never past them (no halos round bright edges)
-        vec3 n1 = texture2D(tDiffuse, vUv + vec2(uTexel.x, 0.0)).rgb, n2 = texture2D(tDiffuse, vUv - vec2(uTexel.x, 0.0)).rgb;
-        vec3 n3 = texture2D(tDiffuse, vUv + vec2(0.0, uTexel.y)).rgb, n4 = texture2D(tDiffuse, vUv - vec2(0.0, uTexel.y)).rgb;
+        vec3 n1 = fetch(vUv + vec2(uTexel.x, 0.0)), n2 = fetch(vUv - vec2(uTexel.x, 0.0));
+        vec3 n3 = fetch(vUv + vec2(0.0, uTexel.y)), n4 = fetch(vUv - vec2(0.0, uTexel.y));
         vec3 lo = min(c.rgb, min(min(n1, n2), min(n3, n4))), hi = max(c.rgb, max(max(n1, n2), max(n3, n4)));
         c.rgb = clamp(c.rgb + (c.rgb - (n1 + n2 + n3 + n4) * 0.25) * uSharp, lo, hi);
       }

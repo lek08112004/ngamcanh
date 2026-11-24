@@ -5,18 +5,22 @@
 // at a joint their vertices are shared half and half between the two bones, so an elbow, a
 // neck or a curling tail bends as one skin instead of showing the seams. The spine has two
 // bones (chest and loin), so the back can round when it sits and dip when it stretches; the
-// tail has nine. The coat is painted into vertex colours (a taupe mackerel tabby: dark stripes,
-// a line down the spine, ringed legs and tail, a pale chest and belly); up close on medium and high a few shells
-// of short fur stand off the skin (strands hashed from the skin's rest position, so they stay
-// put as it moves). No image files, no models loaded: everything is built here.
+// tail has nine; the chin hangs on a small jaw bone, so a yawn really opens the mouth. The coat
+// is painted into vertex colours (a taupe mackerel tabby: dark stripes, a line down the spine,
+// ringed legs and tail, a pale chest and belly); up close on medium and high a few shells of
+// short fur stand off the skin (strands hashed from the skin's rest position, so they stay put
+// as it moves; no fur on the thin ears, short fur on the face and feet). No image files, no
+// models loaded: everything is built here.
 //
-// The face: amber eyes (greenish at the rim) under real lids, with pupils that are slits by day and round at night;
-// a pale pink nose, a mouth line, whiskers, ears that turn and twitch on their own.
+// The face: amber eyes (greenish at the rim) under real lids, with pupils that are slits in
+// bright sun (never thinner than a soft oval) and round at night, wider when something has its
+// attention; a pale pink nose, a mouth line, fine whiskers, ears that turn and twitch on their
+// own, forward when it is curious, out to the side when it wants to be left alone.
 //
-// What it does (all calm): wanders near the dog, sits with its tail round its feet, grooms (licks
-// a forepaw, wipes its face), loafs with its paws tucked under, naps, stretches after a nap,
-// slow-blinks at you when you are near, now and then comes to sit by you, purrs when stroked.
-// At night it curls up by the fire next to Bơ; in the cabin it sleeps on the rocking chair.
+// This module is the body: poses (stand, sit, loaf, sleep, stretch, crouch to drink or sniff,
+// a low stalk, up on the scratching post), the walk and trot, kneading, a pounce, turning round
+// before lying down, a yawn, a head tilt, leaning into a rub, and steering round what is in the
+// way. What it decides to do is catmind.js.
 import * as THREE from 'three';
 
 const TAU = Math.PI * 2;
@@ -82,12 +86,12 @@ function shellMaterial(base, s, len) {
     sh.uniforms.uShell = m.userData.uShell;
     sh.uniforms.uLen = m.userData.uLen;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uShell;\nuniform float uLen;\nvarying vec3 vFurP;')
+      .replace('#include <common>', '#include <common>\nuniform float uShell;\nuniform float uLen;\nattribute float furK;\nvarying vec3 vFurP;\nvarying float vFurK;')
       .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvec3 furN = objectNormal;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += furN * uLen * uShell + vec3(0.0, -0.25, -0.35) * uLen * uShell * uShell;\nvFurP = position * 640.0;');
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += (furN * uLen * uShell + vec3(0.0, -0.25, -0.35) * uLen * uShell * uShell) * furK;\nvFurP = position * 640.0;\nvFurK = furK;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uShell;\nvarying vec3 vFurP;\nfloat furHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }')
-      .replace('#include <color_fragment>', '#include <color_fragment>\nif (furHash(floor(vFurP)) < 0.12 + 0.82 * uShell) discard;\ndiffuseColor.rgb *= mix(0.84, 1.0, uShell);')
+      .replace('#include <common>', '#include <common>\nuniform float uShell;\nvarying vec3 vFurP;\nvarying float vFurK;\nfloat furHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }')
+      .replace('#include <color_fragment>', '#include <color_fragment>\nif (vFurK < 0.05 || furHash(floor(vFurP)) < 0.12 + 0.82 * uShell) discard;\ndiffuseColor.rgb *= mix(0.84, 1.0, uShell);')
       .replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (any(isnan(gl_FragColor)) || any(isinf(gl_FragColor))) discard;');
   };
   m.customProgramCacheKey = () => 'cat-fur-shell';
@@ -176,7 +180,9 @@ function build(rich, furShells) {
   H(0.043, 0, -0.009, 0.029, 1.36, 0.84, 0.86);         // cheeks, wide as a cat's are
   H(0.0145, 0, 0.0, 0.056, 0.95, 0.8, 1.0);             // the short nose
   for (const sx of [-1, 1]) H(0.0155, sx * 0.0125, -0.018, 0.061, 1, 0.85, 0.9);   // whisker pads
-  H(0.0125, 0, -0.031, 0.055, 1, 0.75, 1);              // chin
+  // the chin hangs on its own little jaw bone, so a yawn really opens the mouth
+  const jaw = bone(head, 0, -0.02, 0.03, 'jaw');
+  blob(jaw, 0.0125, 0, -0.011, 0.025, 1, 0.75, 1, 'head', null, 24, 16);   // chin
   // ears: thin, wide-based, rounded at the tip; a pinkish inside with a little hair
   const ears = [-1, 1].map((sx) => {
     const e = bone(head, sx * 0.029, 0.041, 0.004, 'ear');
@@ -228,7 +234,9 @@ function build(rich, furShells) {
   /* merge every piece into one skinned geometry */
   root.updateMatrixWorld(true);
   const index = new Map(bones.map((b, i) => [b, i]));
-  const P = [], N = [], C = [], SI = [], SW = [], IDX = [];
+  const P = [], N = [], C = [], SI = [], SW = [], IDX = [], FK = [];
+  // how long the fur is on each part (the shells): none on the thin ears, short on face and feet
+  const FUR = { ear: 0, earIn: 0, paw: 0.45, head: 0.6, neck: 0.9, legF: 0.75, legH: 0.85, tail: 1, torso: 1 };
   const v = new THREE.Vector3(), w = new THREE.Vector3(), col = new THREE.Color();
   let k = 0;
   for (const pc of pieces) {
@@ -254,6 +262,7 @@ function build(rich, furShells) {
       v.normalize();
       N.push(v.x, v.y, v.z);
       coat(w, pc.part, col);
+      FK.push(FUR[pc.part] ?? 1);
       const j = 0.95 + 0.10 * (Math.sin(w.x * 173 + w.y * 311 + w.z * 241 + k) * 0.5 + 0.5);
       C.push(col.r * j, col.g * j, col.b * j);
     }
@@ -267,6 +276,7 @@ function build(rich, furShells) {
   geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
   geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SI, 4));
   geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SW, 4));
+  geo.setAttribute('furK', new THREE.Float32BufferAttribute(FK, 1));
   geo.setIndex(IDX);
   geo.computeBoundingSphere();
   const skin = new THREE.SkinnedMesh(geo, fur);
@@ -289,13 +299,14 @@ function build(rich, furShells) {
   const lidMat = new THREE.MeshStandardMaterial({ color: BASE.clone().multiplyScalar(0.85), roughness: 0.8 });
   const eyes = [-1, 1].map((sx) => {
     const g = new THREE.Group();
-    g.position.set(sx * 0.0205, 0.0085, 0.0515);
+    g.position.set(sx * 0.0205, 0.0085, 0.0496);
     g.rotation.set(-0.06, sx * 0.21, sx * 0.16);
+    g.scale.set(1, 1, 0.9);
     head.add(g);
     const R = 0.0116;
     const ball = new THREE.SphereGeometry(R, 32, 24);
     const ic = new Float32Array(ball.attributes.position.count * 3), q = new THREE.Vector3(), c = new THREE.Color();
-    const GOLD = new THREE.Color('#d9981c'), GREEN = new THREE.Color('#a9a53c'), RIM = new THREE.Color('#4b4a1c'), BACK = new THREE.Color('#1c120c');
+    const GOLD = new THREE.Color('#c98a26'), GREEN = new THREE.Color('#9a9842'), RIM = new THREE.Color('#463f1a'), BACK = new THREE.Color('#1c120c');
     for (let i = 0; i < ball.attributes.position.count; i++) {
       q.fromBufferAttribute(ball.attributes.position, i).normalize();
       const a = Math.acos(clamp(q.z, -1, 1));
@@ -305,7 +316,7 @@ function build(rich, furShells) {
       ic[i * 3] = c.r; ic[i * 3 + 1] = c.g; ic[i * 3 + 2] = c.b;
     }
     ball.setAttribute('color', new THREE.BufferAttribute(ic, 3));
-    g.add(new THREE.Mesh(ball, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: 0x120c02 })));
+    g.add(new THREE.Mesh(ball, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, emissive: 0x070401 })));
     const pupil = new THREE.Mesh(new THREE.SphereGeometry(R * 0.62, 18, 12), new THREE.MeshStandardMaterial({ color: 0x030202, roughness: 0.3 }));
     pupil.position.z = R * 0.8;
     pupil.scale.set(0.2, 1, 0.42);
@@ -325,10 +336,17 @@ function build(rich, furShells) {
   nose.scale.set(1.4, 0.85, 0.62);
   head.add(nose);
   const tongue = new THREE.Mesh(new THREE.SphereGeometry(0.0075, 12, 8), new THREE.MeshStandardMaterial({ color: 0xc8707a, roughness: 0.45 }));
-  tongue.position.set(0, -0.027, 0.064);
+  tongue.position.set(0, -0.007, 0.034);           // (on the jaw: at rest just behind the lip)
   tongue.scale.set(0.9, 0.32, 1.35);
   tongue.visible = false;
-  head.add(tongue);
+  jaw.add(tongue);
+  // the inside of the mouth: a dark lining between the whisker pads and the chin, as thin as a
+  // line until the jaw drops (a yawn), so it never shows when the mouth is shut
+  const maw = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 16, 10), new THREE.MeshStandardMaterial({ color: 0x3b1416, roughness: 0.7 }));
+  maw.position.set(0, -0.027, 0.0585);
+  maw.scale.set(1.0, 0.05, 0.35);
+  maw.visible = false;
+  head.add(maw);
   // the mouth: the line down from the nose and the two curves of the lip
   const mouth = [];
   const line = (pts) => { for (let i = 0; i < pts.length - 1; i++) mouth.push(...pts[i], ...pts[i + 1]); };
@@ -359,12 +377,12 @@ function build(rich, furShells) {
   }
   const whGeo = new THREE.BufferGeometry();
   whGeo.setAttribute('position', new THREE.Float32BufferAttribute(wh, 3));
-  const whMat = new THREE.LineBasicMaterial({ color: 0xf2ede4, transparent: true, opacity: 0.75 });
+  const whMat = new THREE.LineBasicMaterial({ color: 0xe8e0d4, transparent: true, opacity: 0.4 });
   head.add(new THREE.LineSegments(whGeo, whMat));
 
   const meshes = [];
   root.traverse((o) => { if (o.isMesh) meshes.push(o); });
-  return { root, body, chest, loin, neck: neckBase, head, ears, legs, tail, eyes, tongue, shells, whMat, meshes, skin };
+  return { root, body, chest, loin, neck: neckBase, head, jaw, maw, ears, legs, tail, eyes, tongue, shells, whMat, meshes, skin };
 }
 
 /* ---------- poses ---------- */
@@ -378,41 +396,53 @@ const POSES = {
   loaf: { h: 0.093, pitch: 0.02, roll: 0, chest: 0, loin: 0, neck: 0.04, head: -0.02, fa: 1.32, fb: -2.5, fc: 1.05, ha: -1.0, hb: 2.28, hc: -1.5, flat: 0.2, tLift: -0.18, tBend: 0.05, tCurl: 0.0, tTip: 0.0, tWrap: -0.32, ear: 0 },
   sleep: { h: 0.089, pitch: 0.04, roll: 0.12, chest: 0.04, loin: 0, neck: 0.5, head: 0.32, fa: 1.36, fb: -2.55, fc: 1.1, ha: -1.0, hb: 2.3, hc: -1.5, flat: 0.2, tLift: -0.2, tBend: 0.05, tCurl: 0.0, tTip: 0.0, tWrap: -0.38, ear: 0.22 },
   stretch: { h: 0.14, pitch: 0.42, roll: 0, chest: 0.18, loin: -0.2, neck: -0.5, head: -0.38, fa: -1.4, fb: 0.3, fc: -0.2, ha: 0.25, hb: 0, hc: 0, flat: 1, tLift: 1.15, tBend: 0.06, tCurl: 0.06, tTip: 0.04, tWrap: 0, ear: 0.1 },
+  // low over a bowl (or nose to a hand): forelegs bent, hindquarters folded, head down
+  crouch: { h: 0.128, pitch: 0.2, roll: 0, chest: 0.16, loin: -0.12, neck: 0.5, head: 0.42, fa: 0.5, fb: -1.0, fc: 0.55, ha: -0.7, hb: 1.6, hc: -1.05, flat: 1, tLift: -0.15, tBend: 0.05, tCurl: 0.02, tTip: 0.05, tWrap: -0.22, ear: 0 },
+  // stalking: belly low, legs bent, head level and forward, tail low and straight
+  stalk: { h: 0.128, pitch: 0.06, roll: 0, chest: 0.06, loin: -0.02, neck: -0.42, head: 0.36, fa: 0.5, fb: -1.05, fc: 0.62, ha: -0.58, hb: 1.3, hc: -0.85, flat: 1, tLift: -0.12, tBend: 0.0, tCurl: 0.0, tTip: 0.1, tWrap: 0, ear: -0.25 },
+  // up on the hind legs, forepaws on the scratching post
+  scratch: { h: 0.205, pitch: -0.62, roll: 0, chest: -0.12, loin: 0.08, neck: 0.32, head: 0.36, fa: -1.6, fb: 0.3, fc: -0.35, ha: 0.62, hb: 0.42, hc: -0.75, flat: 1, tLift: 0.25, tBend: 0.12, tCurl: 0.08, tTip: -0.05, tWrap: 0, ear: 0 },
 };
 const KEYS = Object.keys(POSES.stand);
-const POSE_OF = { idle: 'stand', walk: 'stand', sit: 'sit', groom: 'sit', loaf: 'loaf', sleep: 'sleep', stretch: 'stretch', happy: 'loaf' };
+const POSE_OF = {
+  idle: 'stand', walk: 'stand', curl: 'stand', rub: 'stand', sit: 'sit', groom: 'sit', watch: 'sit', knead: 'sit', loaf: 'loaf',
+  sleep: 'sleep', stretch: 'stretch', happy: 'loaf', drink: 'crouch', sniff: 'crouch', stalk: 'stalk', pounce: 'stalk', scratch: 'scratch',
+};
 
 /**
  * opts: { rich, low, fur: number of fur shells (0 = none), home: {x, z, r} }
  * update(dt, time, ctx) where ctx = { px, pz, camY, cam: camera position, moving, night, light (0..1),
  *   indoor, room, rest: {x, z} the dog's place by the fire, ground(x, z), blocks, buddy: the corgi }
+ * What it decides to do comes from outside (`cat.brain(dt, ctx)`, see catmind.js); this module is
+ * the body: it walks where it is sent, holds the pose of its state and keeps its face alive.
  */
 export function createCat(opts = {}) {
   const m = build(!!opts.rich, opts.fur || 0);
   const home = opts.home || { x: 0, z: 0, r: 7 };
   const cat = {
-    group: m.root, meshes: m.meshes, name: 'Choco',
+    group: m.root, meshes: m.meshes, name: 'Choco', home,
     x: home.x + 1.2, z: home.z + 0.6, y: 0, heading: 1, speed: 0, perch: 0,
-    state: 'sit', timer: 4, target: null, run: 0, after: '',
+    state: 'sit', timer: 4, target: null, path: null, run: 0, after: '',
     phase: 0, happy: 0, petCount: 0, wasAsleep: false,
     blink: 3, slow: 0, lid: 0, look: 0, lookPitch: 0, tilt: 0, twitch: [0, 0], twitchT: 2,
     pupil: 0.3, groomT: 0, swish: 0, annoyed: 0, curious: 0,
-    pose: { ...POSES.sit }, frame: 0,
+    // set by the mind: a point to look at, the face it wears, short gestures
+    attend: null, expr: { ear: 0, away: 0, lid: 0, tailUp: 0 }, slowOk: false,
+    yawnT: 0, tiltT: 0, tiltSide: 1, lean: 0, wiggle: 0, turnRate: 0, pounceT: 0, pounceV: 0, onLand: null,
+    stuck: 0, blocked: false, onScreen: true, inside: false,
+    pose: { ...POSES.sit }, frame: 0, brain: null,
   };
   const groundY = (ctx, x, z) => (ctx.indoor && ctx.room ? ctx.room.floorY : ctx.ground(x, z));
-  const goTo = (x, z, run) => { cat.target = { x, z }; cat.run = run; };
+  const goTo = (x, z, run = 0) => { cat.path = null; cat.target = { x, z }; cat.run = run; cat.blocked = false; prog.t = 0; prog.d = 1e9; prog.tries = 0; prog.all = 0; };
   const setState = (s, t) => { cat.state = s; cat.timer = t; if (s === 'groom') cat.groomT = 0; };
   const clear = (ctx, x, z) => !ctx.blocks.some(([bx, bz, br]) => Math.hypot(x - bx, z - bz) < br + 0.35);
-  function spotNear(ctx, cx, cz, r0, r1) {
-    for (let i = 0; i < 14; i++) {
-      const a = Math.random() * TAU, r = mix(r0, r1, Math.random());
-      const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
-      if (clear(ctx, x, z) && Math.hypot(x - home.x, z - home.z) < home.r + 2) return [x, z];
-    }
-    return null;
-  }
-  // a resting place beside the dog's: to its side, facing the same way
-  function besideDog(ctx) {
+  cat.goTo = goTo;
+  cat.setState = setState;
+  cat.clear = clear;
+  /** walk a list of waypoints ([x, z] pairs), the last one being where it means to stop */
+  cat.follow = (pts, run = 0) => { goTo(pts[0][0], pts[0][1], run); cat.path = pts.slice(1).map(([x, z]) => ({ x, z })); };
+  /** a resting place beside the dog's: to its side, facing the same way */
+  cat.besideDog = (ctx) => {
     const r = ctx.rest, d = ctx.buddy;
     // once the dog has settled, beside the dog itself; until then, beside its place
     const at = d && Math.hypot(d.x - r.x, d.z - r.z) < 1.2 ? d : r;
@@ -423,122 +453,102 @@ export function createCat(opts = {}) {
     if (!sides.length) return [at.x - Math.sin(ang) * 0.75, at.z - Math.cos(ang) * 0.75];   // behind it, then
     sides.sort((a, b) => Math.hypot(a[0] - cat.x, a[1] - cat.z) - Math.hypot(b[0] - cat.x, b[1] - cat.z));
     return sides[0];
-  }
-
-  /** stroked: it leans into your hand, purrs, eyes half shut, tail straight up */
-  cat.pet = () => {
-    cat.wasAsleep = cat.state === 'sleep' || cat.state === 'loaf';
-    cat.happy = 3.2; cat.petCount++; cat.target = null;
-    setState('happy', 3.2);
-    if (!cat.wasAsleep) cat.pose.h = Math.max(cat.pose.h, 0.1);
   };
   cat.distanceTo = (x, z) => Math.hypot(x - cat.x, z - cat.z);
   /** put it somewhere at once (through a door, under a fade); perch: height above the floor (a chair) */
   cat.place = (x, z, heading, state = 'sit', t = 4, perch = 0) => {
-    cat.x = x; cat.z = z; cat.heading = heading; cat.speed = 0; cat.target = null; cat.perch = perch;
+    cat.x = x; cat.z = z; cat.heading = heading; cat.speed = 0; cat.target = null; cat.path = null; cat.perch = perch;
+    cat.pounceT = 0; cat.turnRate = 0; cat.wiggle = 0; cat.lean = 0; cat.yawnT = 0; cat.blocked = false;
     setState(state, t);
     Object.assign(cat.pose, POSES[POSE_OF[state] || 'stand']);
   };
-  function nextRest() {
-    const r = Math.random();
-    if (r < 0.4) setState('sit', 6 + Math.random() * 6);
-    else if (r < 0.62) setState('groom', 5 + Math.random() * 4);
-    else if (r < 0.9) setState('loaf', 10 + Math.random() * 10);
-    else setState('idle', 2 + Math.random() * 2);
-  }
-
-  /* ---------- deciding what to do ---------- */
-  function think(dt, ctx) {
-    const dP = Math.hypot(ctx.px - cat.x, ctx.pz - cat.z);
-    cat.timer -= dt;
-    if (cat.happy > 0) {
-      cat.happy -= dt;
-      if (cat.happy <= 0) setState(cat.wasAsleep ? 'loaf' : 'sit', 8 + Math.random() * 6);
-      return dP;
-    }
-    if (cat.state === 'stretch') { if (cat.timer <= 0) setState('idle', 1.5); return dP; }
-    const wake = () => { setState('stretch', 2.2); };
-    if (ctx.indoor) {
-      // in the cabin it does not roam: on the chair (night) or the rug (day), sitting, washing, dozing
-      if (ctx.night) {
-        if (cat.state !== 'sleep' && cat.state !== 'loaf') setState('loaf', 4);
-        else if (cat.state === 'loaf' && cat.timer <= 0) setState('sleep', 999);
-      } else if (cat.timer <= 0) {
-        if (cat.state === 'sleep') wake();
-        else if (cat.state === 'loaf' && Math.random() < 0.4) setState('sleep', 20 + Math.random() * 20);
-        else nextRest();
-      }
-      return dP;
-    }
-    if (cat.perch) cat.perch = 0;
-    if (ctx.night) {
-      // curled up by the fire beside Bơ (or on the porch with it, when the fire is out)
-      const [rx, rz] = besideDog(ctx);
-      const dR = Math.hypot(rx - cat.x, rz - cat.z);
-      // (if something keeps it from the very spot, near enough will do)
-      const settled = dR <= 0.45 || (cat.state === 'walk' && !cat.target && dR < 1.0);
-      if (!settled) { if (cat.state !== 'walk' || !cat.target) { goTo(rx, rz, dR > 6 ? 1 : 0); setState('walk', 30); } }
-      else if (cat.state === 'walk' || cat.state === 'idle' || cat.state === 'sit' || cat.state === 'groom') {
-        if (ctx.buddy) cat.heading = ctx.buddy.heading;
-        setState('loaf', 6);
-        cat.target = null;
-      } else if (cat.state === 'loaf' && cat.timer <= 0 && dP > 1.6) setState('sleep', 999);
-      else if (cat.state === 'sleep' && dP < 1.3) setState('loaf', 8);         // it hears you and lifts its head
-      return dP;
-    }
-    // by day: near the dog, on its own terms
-    if (cat.state === 'walk') {
-      if (!cat.target) { if (cat.after) { setState(cat.after, 8 + Math.random() * 6); cat.after = ''; } else nextRest(); }
-      return dP;
-    }
-    // now and then, if you stay still nearby, it comes and sits by you
-    cat.curious = ctx.moving ? 0 : cat.curious + dt;
-    if (cat.curious > 8 && dP < 6 && dP > 1.4 && cat.state !== 'sleep' && Math.random() < dt / 20) {
-      const k = 0.9 / dP;
-      goTo(ctx.px + (cat.x - ctx.px) * k, ctx.pz + (cat.z - ctx.pz) * k, 0);
-      setState('walk', 15); cat.after = 'sit'; cat.curious = -30;
-      return dP;
-    }
-    if (cat.timer > 0) return dP;
-    if (cat.state === 'sleep') { wake(); return dP; }
-    if (cat.state === 'loaf' && Math.random() < 0.4) { setState('sleep', 20 + Math.random() * 15); return dP; }
-    const r = Math.random();
-    const d = ctx.buddy;
-    let to = null;
-    if (r < 0.35 && d) to = spotNear(ctx, d.x, d.z, 0.8, 2.2);
-    else if (r < 0.55) to = spotNear(ctx, home.x, home.z, 0, home.r);
-    if (to) { goTo(to[0], to[1], 0); setState('walk', 25); cat.after = ''; } else nextRest();
-    return dP;
-  }
+  /** gestures the mind can ask for */
+  cat.yawn = () => { if (cat.yawnT <= 0) cat.yawnT = 1.9; };
+  cat.tiltHead = (side = 1) => { cat.tiltT = 1.3; cat.tiltSide = side; };
+  cat.slowBlink = () => { cat.slow = 1.7; };
+  /** a short leap of `dist` metres along its heading (onto a toy); onLand is called when it lands */
+  cat.pounce = (dist, onLand) => { setState('pounce', 0.5); cat.pounceT = 0.46; cat.pounceV = clamp(dist, 0.15, 0.7) / 0.46; cat.onLand = onLand || null; cat.target = null; cat.path = null; };
 
   /* ---------- moving ---------- */
+  // Steering: straight for the target, swinging round any obstacle circle that lies across the
+  // way (always round the same side of the same obstacle, so it does not dither), a detour when
+  // it stops getting closer, and after two failed detours it gives up and says so (`blocked`),
+  // for the mind to choose somewhere else.
+  const prog = { t: 0, d: 1e9, tries: 0, all: 0 };
+  let avoidIdx = -1, avoidSide = 1;
+  function steer(ctx, ang, d) {
+    if (ctx.indoor) return ang;
+    const fx = Math.sin(ang), fz = Math.cos(ang), look = Math.min(d, 1.4);
+    let best = -1, bestT = 1e9;
+    for (let i = 0; i < ctx.blocks.length; i++) {
+      const [bx, bz, br] = ctx.blocks[i];
+      const ox = bx - cat.x, oz = bz - cat.z, t = ox * fx + oz * fz;
+      if (t <= 0 || t > look + br) continue;
+      const side = Math.abs(ox * fz - oz * fx);
+      if (side < br + 0.22 && t < bestT) { bestT = t; best = i; }
+    }
+    if (best < 0) { avoidIdx = -1; return ang; }
+    const [bx, bz, br] = ctx.blocks[best];
+    const ox = bx - cat.x, oz = bz - cat.z, dist = Math.hypot(ox, oz);
+    if (best !== avoidIdx) { avoidIdx = best; avoidSide = (ox * fz - oz * fx) > 0 ? -1 : 1; }
+    const off = Math.asin(clamp((br + 0.3) / Math.max(dist, 1e-3), 0, 1)) + 0.08;
+    return Math.atan2(ox, oz) + avoidSide * off;
+  }
   function move(dt, ctx) {
     let want = 0;
-    if (cat.target && !cat.perch) {
+    if (!cat.target && cat.path && cat.path.length) { cat.target = cat.path.shift(); prog.d = 1e9; prog.t = 0; prog.all = 0; }
+    if (cat.pounceT > 0) {
+      cat.pounceT -= dt;
+      want = cat.pounceV;
+      cat.speed = want;
+      if (cat.pounceT <= 0) { cat.pounceT = 0; cat.speed = 0; want = 0; const f = cat.onLand; cat.onLand = null; if (f) f(); }
+    } else if (cat.target && !cat.perch) {
       const dx = cat.target.x - cat.x, dz = cat.target.z - cat.z, d = Math.hypot(dx, dz);
-      if (d < 0.1) cat.target = null;
+      const via = cat.path && cat.path.length;
+      if (d < (via ? 0.35 : 0.1)) { cat.target = null; if (!via) cat.path = null; }
       else {
-        const turn = wrap(Math.atan2(dx, dz) - cat.heading);
+        const ang = steer(ctx, Math.atan2(dx, dz), d);
+        const turn = wrap(ang - cat.heading);
         cat.heading = wrap(cat.heading + clamp(turn, -3.6 * dt, 3.6 * dt));
-        want = mix(0.5, 1.3, cat.run) * clamp(d / 0.6, 0.3, 1) * (1 - 0.75 * smooth(0.5, 1.5, Math.abs(turn)));
+        const top = cat.state === 'stalk' ? 0.22 : mix(0.5, 1.3, cat.run);
+        want = top * clamp(d / 0.6, via ? 1 : 0.3, 1) * (1 - 0.75 * smooth(0.5, 1.5, Math.abs(turn)));
+        // not getting any closer: try a detour, then give up (the clock only runs while it is
+        // pointed the right way and under way: turning round to set off is not being stuck)
+        if (Math.abs(turn) < 0.6 && cat.speed > 0.15) prog.t += dt;
+        // (and however it is turning, a minute on one leg of the way is too long: it gives up)
+        prog.all += dt;
+        if (prog.all > 60) { cat.target = null; cat.path = null; cat.blocked = true; prog.all = 0; }
+        if (prog.t > 1.8) {
+          if (d > prog.d - 0.12) {
+            if (prog.tries < 2) {
+              prog.tries++;
+              const s = prog.tries % 2 ? 1 : -1, px = -dz / d, pz = dx / d;
+              let wx = cat.x + px * s * 1.3 + (dx / d) * 0.4, wz = cat.z + pz * s * 1.3 + (dz / d) * 0.4;
+              if (ctx.indoor && ctx.room) [wx, wz] = ctx.room.confine(wx, wz, 0.2, true);
+              cat.path = [cat.target, ...(cat.path || [])];
+              cat.target = { x: wx, z: wz };
+            } else { cat.target = null; cat.path = null; cat.blocked = true; }
+          }
+          prog.d = d; prog.t = 0;
+        }
       }
     }
-    cat.speed += (want - cat.speed) * (1 - Math.exp(-dt * (want > cat.speed ? 3.5 : 6)));
+    if (cat.pounceT <= 0) cat.speed += (want - cat.speed) * (1 - Math.exp(-dt * (want > cat.speed ? 3.5 : 6)));
     if (cat.speed < 0.01) cat.speed = 0;
+    if (cat.turnRate) cat.heading = wrap(cat.heading + cat.turnRate * dt);
     if (cat.perch) return;
     let nx = cat.x + Math.sin(cat.heading) * cat.speed * dt, nz = cat.z + Math.cos(cat.heading) * cat.speed * dt;
-    if (ctx.indoor && ctx.room) [nx, nz] = ctx.room.confine(nx, nz, 0.2);
+    if (ctx.indoor && ctx.room) [nx, nz] = ctx.room.confine(nx, nz, 0.2, true);
     else for (const [bx, bz, br] of ctx.blocks) {
       const ox = nx - bx, oz = nz - bz, d = Math.hypot(ox, oz), rr = br + 0.12;
       if (d < rr && d > 1e-4) { nx = bx + (ox / d) * rr; nz = bz + (oz / d) * rr; }
     }
     // never underfoot, never inside the dog
     const push = (cx, cz, r) => { const ox = nx - cx, oz = nz - cz, d = Math.hypot(ox, oz); if (d < r && d > 1e-4) { nx = cx + (ox / d) * r; nz = cz + (oz / d) * r; } };
-    push(ctx.px, ctx.pz, 0.6);
+    push(ctx.px, ctx.pz, 0.48);
     if (ctx.buddy) push(ctx.buddy.x, ctx.buddy.z, 0.42);
-    if (cat.target && Math.hypot(nx - cat.x, nz - cat.z) < cat.speed * dt * 0.2 && cat.speed > 0.25) cat.stuck = (cat.stuck || 0) + dt;
-    else cat.stuck = 0;
-    if (cat.stuck > 1.2) { cat.target = null; cat.stuck = 0; }
+    // the stream's edge: it stops short (but if it is already in the water, any step is allowed)
+    if (ctx.safe && !ctx.safe(nx, nz) && ctx.safe(cat.x, cat.z)) { nx = cat.x; nz = cat.z; }
     cat.x = nx; cat.z = nz;
   }
 
@@ -546,24 +556,26 @@ export function createCat(opts = {}) {
   function animate(dt, time, ctx, dP) {
     const p = cat.pose;
     let want = POSE_OF[cat.state] || 'stand';
-    if (cat.speed > 0.06) want = 'stand';
+    if (cat.speed > 0.06 && want !== 'stalk') want = 'stand';
     if (cat.state === 'happy' && !cat.wasAsleep) want = 'sit';
     const tgt = POSES[want];
-    const k = 1 - Math.exp(-dt * (want === 'stand' ? 5 : want === 'stretch' ? 3 : 2.6));
+    const k = 1 - Math.exp(-dt * (want === 'stand' ? 5 : want === 'stretch' || want === 'scratch' ? 3 : want === 'stalk' ? 4 : 2.6));
     for (const key of KEYS) p[key] += (tgt[key] - p[key]) * k;
 
-    const move = clamp(cat.speed / 0.4, 0, 1);
+    // turning on the spot (before lying down) steps as walking does
+    const stepSpeed = Math.max(cat.speed, Math.abs(cat.turnRate) * 0.11);
+    const move = cat.pounceT > 0 ? 0 : clamp(stepSpeed / 0.4, 0, 1);
     const run = clamp((cat.speed - 0.7) / 0.6, 0, 1);
-    const stride = mix(0.30, 0.5, run);
-    cat.phase = (cat.phase + dt * cat.speed / stride) % 1;
+    const stride = cat.state === 'stalk' ? 0.16 : mix(0.30, 0.5, run);
+    cat.phase = (cat.phase + dt * stepSpeed / stride) % 1;
     const duty = mix(0.64, 0.5, run);
-    const A = mix(0.36, 0.5, run) * move;
+    const A = mix(0.36, 0.5, run) * move * (cat.state === 'stalk' ? 0.6 : 1);
     const offs = [[0.25, 0], [0.75, 0.5], [0, 0.5], [0.5, 0]];   // LF, RF, LH, RH : [walk, trot]
     // the body's pitch and the spine, so the paws can be kept flat
     const ahead = groundY(ctx, cat.x + Math.sin(cat.heading) * 0.18, cat.z + Math.cos(cat.heading) * 0.18);
     const behind = groundY(ctx, cat.x - Math.sin(cat.heading) * 0.18, cat.z - Math.cos(cat.heading) * 0.18);
     const slope = cat.perch ? 0 : Math.atan2(ahead - behind, 0.36);
-    const pitch = p.pitch - slope * (want === 'stand' ? 1 : 0.4);
+    const pitch = p.pitch - slope * (want === 'stand' || want === 'stalk' ? 1 : 0.4);
     // grooming: one forepaw up to the mouth, licked, then drawn over the face
     let gA = 0, gB = 0, gC = 0, gHead = 0, gTurn = 0, gTilt = 0, licking = false;
     if (cat.state === 'groom' && cat.speed < 0.05) {
@@ -576,6 +588,12 @@ export function createCat(opts = {}) {
       gTurn = mix(0.22, 0.42, wipe) * up; gTilt = mix(0.0, 0.32, wipe) * up;
       if (wipe > 0.4) gA += 0.12 * Math.sin(time * 4) * up;
     }
+    // kneading: the forepaws press down in turn, slowly, as if into a blanket
+    const kneading = cat.state === 'knead' && cat.speed < 0.05 ? 1 : 0;
+    // scratching: the forepaws rake down the post in turn
+    const scratching = cat.state === 'scratch' && cat.speed < 0.05 ? 1 : 0;
+    // the leap: front legs reach, hind legs push out behind, the body lifts on an arc
+    const leap = cat.pounceT > 0 ? Math.sin(Math.PI * clamp(1 - cat.pounceT / 0.46, 0, 1)) : 0;
     m.legs.forEach((leg, i) => {
       const s = (cat.phase + mix(offs[i][0], offs[i][1], run)) % 1;
       let ang, bend = 0;
@@ -583,132 +601,183 @@ export function createCat(opts = {}) {
       else { const u = (s - duty) / (1 - duty); ang = mix(A, -A, u * u * (3 - 2 * u)); bend = Math.sin(u * Math.PI) * move; }
       const groomLeg = leg.front && leg.side === 1;
       if (leg.front) {
-        leg.a.rotation.x = p.fa + ang + (groomLeg ? gA : 0);
-        leg.b.rotation.x = p.fb - 0.55 * bend + (groomLeg ? gB : 0);
-        leg.c.rotation.x = p.fc + 1.2 * bend + (groomLeg ? gC : 0);
-        leg.paw.rotation.x = -(pitch + p.chest + leg.a.rotation.x + leg.b.rotation.x + leg.c.rotation.x) * p.flat * (groomLeg && gA < -0.1 ? 0 : 1);
+        const press = kneading * Math.max(0, Math.sin(time * 4.2 + (leg.side > 0 ? 0 : Math.PI)));
+        const rake = scratching * Math.sin(time * 7 + (leg.side > 0 ? 0 : Math.PI));
+        leg.a.rotation.x = p.fa + ang + (groomLeg ? gA : 0) - 0.32 * press + 0.22 * rake - 0.9 * leap;
+        leg.b.rotation.x = p.fb - 0.55 * bend + (groomLeg ? gB : 0) - 0.55 * press - 0.15 * rake;
+        leg.c.rotation.x = p.fc + 1.2 * bend + (groomLeg ? gC : 0) + 0.65 * press;
+        leg.paw.rotation.x = -(pitch + p.chest + leg.a.rotation.x + leg.b.rotation.x + leg.c.rotation.x) * p.flat * (groomLeg && gA < -0.1 ? 0 : 1) * (1 - leap);
       } else {
-        leg.a.rotation.x = p.ha + ang;
-        leg.b.rotation.x = p.hb + 0.6 * bend;
-        leg.c.rotation.x = p.hc - 0.85 * bend;
-        leg.paw.rotation.x = -(pitch + p.loin + leg.a.rotation.x + leg.b.rotation.x + leg.c.rotation.x) * p.flat;
+        leg.a.rotation.x = p.ha + ang + 0.75 * leap;
+        leg.b.rotation.x = p.hb + 0.6 * bend - 0.4 * leap;
+        leg.c.rotation.x = p.hc - 0.85 * bend + 0.3 * leap;
+        leg.paw.rotation.x = -(pitch + p.loin + leg.a.rotation.x + leg.b.rotation.x + leg.c.rotation.x) * p.flat * (1 - leap);
       }
     });
     const bob = -0.007 * Math.cos(cat.phase * TAU * 2) * move;
-    m.body.position.y = p.h + bob;
-    m.body.rotation.x = pitch;
-    m.body.rotation.z = p.roll + 0.02 * Math.sin(cat.phase * TAU) * move;
+    // the butt wiggle before a pounce, and a lean into you when it rubs past
+    cat.wiggle = Math.max(0, cat.wiggle - dt);
+    const wig = cat.wiggle > 0 ? Math.sin(time * 26) * smooth(0, 0.3, cat.wiggle) : 0;
+    m.body.position.y = p.h + bob + 0.075 * leap;
+    m.body.rotation.x = pitch - 0.25 * leap * (1 - 2 * clamp(1 - cat.pounceT / 0.46, 0, 1));
+    m.body.rotation.z = p.roll + 0.02 * Math.sin(cat.phase * TAU) * move - 0.16 * cat.lean + 0.025 * wig;
     m.chest.rotation.x = p.chest + 0.02 * Math.sin(cat.phase * TAU * 2) * move;
     m.loin.rotation.x = p.loin - 0.02 * Math.sin(cat.phase * TAU * 2 + 1) * move;
-    m.loin.rotation.y = 0.04 * Math.sin(cat.phase * TAU) * move;         // the hips swing as it walks
+    m.loin.rotation.y = 0.04 * Math.sin(cat.phase * TAU) * move + 0.14 * wig;         // the hips swing as it walks
     // breath: the chest rises and falls, slower asleep
     const br = Math.sin(time * (cat.state === 'sleep' ? 1.6 : 2.6)) * 0.008;
     m.chest.scale.set(1 + br, 1 + br, 1);
 
-    // the head: on you when you are near, otherwise watching things; a slow blink at you
+    // the head: on whatever it is attending to (sent by the mind), else on you when you are
+    // near, otherwise watching things; turned away when it wants to be left alone
     let look = 0, lookUp = 0;
-    const calm = cat.state === 'sit' || cat.state === 'loaf' || cat.state === 'idle' || cat.state === 'happy';
-    if (dP < 6 && cat.state !== 'sleep' && cat.state !== 'groom') {
+    const calm = cat.state === 'sit' || cat.state === 'loaf' || cat.state === 'idle' || cat.state === 'happy' || cat.state === 'watch' || cat.state === 'knead';
+    const busy = cat.state === 'sleep' || cat.state === 'groom' || cat.state === 'drink' || cat.state === 'scratch' || cat.state === 'curl';
+    if (cat.attendYou && !busy && cat.expr.away < 0.5) {
+      // you called, held out a hand, blinked at it: it looks at you, ears forward
+      look = wrap(Math.atan2(ctx.px - cat.x, ctx.pz - cat.z) - cat.heading);
+      lookUp = -Math.atan2((ctx.camY || 1.6) - 0.3 - cat.perch, Math.max(dP, 0.4)) * 0.8;
+      if (Math.abs(look) > 1.3 && cat.speed < 0.05 && calm) cat.heading = wrap(cat.heading + clamp(look, -1, 1) * dt * 1.6);
+      look = clamp(look, -1.25, 1.25);
+    } else if (cat.attend && !busy) {
+      const a = cat.attend;
+      look = wrap(Math.atan2(a.x - cat.x, a.z - cat.z) - cat.heading);
+      lookUp = -Math.atan2((a.y ?? cat.y + 0.3) - cat.y - 0.3 - cat.perch, Math.max(Math.hypot(a.x - cat.x, a.z - cat.z), 0.3)) * 0.8;
+      if (Math.abs(look) > 1.3 && cat.speed < 0.05 && calm) cat.heading = wrap(cat.heading + clamp(look, -1, 1) * dt * 1.4);
+      look = clamp(look, -1.25, 1.25);
+    } else if (dP < 6 && !busy && cat.expr.away < 0.5) {
       look = wrap(Math.atan2(ctx.px - cat.x, ctx.pz - cat.z) - cat.heading);
       lookUp = -Math.atan2((ctx.camY || 1.6) - 0.3 - cat.perch, Math.max(dP, 0.4)) * 0.8;
       if (Math.abs(look) > 1.4 && cat.speed < 0.05 && calm) cat.heading = wrap(cat.heading + clamp(look, -1, 1) * dt * 1.2);
       look = clamp(look, -1.2, 1.2);
-    } else if (calm) {
+    } else if (calm || cat.expr.away >= 0.5) {
       look = Math.sin(time * 0.29 + 0.7) * 0.8 + Math.sin(time * 1.13) * 0.15;
       lookUp = -0.15 * Math.max(0, Math.sin(time * 0.21));
+      if (cat.expr.away >= 0.5) {                       // its head turned from you, not at you
+        const toYou = wrap(Math.atan2(ctx.px - cat.x, ctx.pz - cat.z) - cat.heading);
+        look = clamp(-Math.sign(toYou || 1) * 0.9 + 0.15 * Math.sin(time * 0.4), -1.2, 1.2);
+      }
     }
+    if (cat.lean) look = clamp(look + cat.lean * 0.5, -1.2, 1.2);
     cat.look += (look - cat.look) * (1 - Math.exp(-dt * 3.5));
     cat.lookPitch += (lookUp - cat.lookPitch) * (1 - Math.exp(-dt * 3.5));
-    const headBack = -(pitch + p.chest) * (want === 'stand' ? 0.6 : 0);  // keep the eyes level on a slope
+    const headBack = -(pitch + p.chest) * (want === 'stand' || want === 'stalk' ? 0.6 : 0);  // keep the eyes level on a slope
+    // a yawn: the head goes back, the eyes shut, the jaw drops wide, then it all closes again
+    cat.yawnT = Math.max(0, cat.yawnT - dt);
+    const yu = 1 - cat.yawnT / 1.9;
+    const yawn = cat.yawnT > 0 ? smooth(0.05, 0.35, yu) * (1 - smooth(0.7, 0.98, yu)) : 0;
     m.neck.rotation.y = cat.look * 0.45 + gTurn * 0.4;
-    m.neck.rotation.x = p.neck + gHead * 0.5;
+    m.neck.rotation.x = p.neck + gHead * 0.5 - 0.15 * yawn;
     m.head.rotation.y = cat.look * 0.55 + gTurn * 0.6;
-    m.head.rotation.x = p.head + headBack + cat.lookPitch * (cat.state === 'groom' ? 0 : 1) + gHead + 0.04 * Math.sin(cat.phase * TAU * 2 + 0.5) * move;
-    const tiltWant = cat.state === 'happy' ? 0.35 : gTilt;
+    m.head.rotation.x = p.head + headBack + cat.lookPitch * (cat.state === 'groom' ? 0 : 1) + gHead + 0.04 * Math.sin(cat.phase * TAU * 2 + 0.5) * move - 0.32 * yawn;
+    m.jaw.rotation.x = 0.62 * yawn + (cat.state === 'drink' ? 0.08 * Math.max(0, Math.sin(time * 7)) : 0);
+    m.maw.visible = yawn > 0.02;
+    m.maw.scale.y = 0.05 + 1.05 * yawn;
+    // the tilt of a head at a sound or a question; held still, not wobbled
+    cat.tiltT = Math.max(0, cat.tiltT - dt);
+    const tiltWant = cat.state === 'happy' ? 0.35 : cat.tiltT > 0 ? 0.3 * cat.tiltSide * smooth(0, 0.25, cat.tiltT) : gTilt;
     cat.tilt += (tiltWant - cat.tilt) * (1 - Math.exp(-dt * 4));
     m.head.rotation.z = cat.tilt;
-    m.tongue.visible = licking && Math.sin(time * 9) > -0.2;
+    const lapping = cat.state === 'drink' && Math.sin(time * 7) > 0.2;
+    m.tongue.visible = (licking && Math.sin(time * 9) > -0.2) || lapping || yawn > 0.45;
 
-    // ears: each turns on its own now and then; back when the dog bustles past or it runs
+    // ears: each turns on its own now and then; back when the dog bustles past or it runs;
+    // forward when something has its attention, out to the side when it wants to be left alone
     cat.twitchT -= dt;
     if (cat.twitchT < 0) { cat.twitchT = 2 + Math.random() * 6; cat.twitch[Math.random() < 0.5 ? 0 : 1] = 1; }
     if (ctx.buddy && ctx.buddy.speed > 1.2 && Math.hypot(ctx.buddy.x - cat.x, ctx.buddy.z - cat.z) < 1.4) cat.annoyed = 2.5;
     cat.annoyed = Math.max(0, cat.annoyed - dt);
-    const back = p.ear + 0.3 * run + 0.6 * smooth(0, 0.6, cat.annoyed);
+    const back = p.ear + 0.3 * run + 0.6 * smooth(0, 0.6, cat.annoyed) + cat.expr.ear + 0.3 * yawn - (cat.attendYou ? 0.18 : 0);
+    const side = 0.35 * smooth(0.3, 0.8, cat.expr.away);
     m.ears.forEach((e, i) => {
       cat.twitch[i] = Math.max(0, cat.twitch[i] - dt * 4);
       const tw = Math.sin(cat.twitch[i] * Math.PI) * 0.5;
       const sx = e.userData.side, b = e.userData.base;
-      e.rotation.set(b.x - 0.5 * back, b.y + sx * (0.55 * back + tw) + clamp(cat.look * 0.3, -0.3, 0.3), b.z - sx * 0.25 * back);
+      e.rotation.set(b.x - 0.5 * back, b.y + sx * (0.55 * back + tw) + clamp(cat.look * 0.3, -0.3, 0.3), b.z - sx * (0.25 * back + side));
     });
 
     // the tail: up with a hook at the tip when it walks, round its feet when it sits, swishing
-    // at the tip when it is annoyed, straight up and quivering when it is stroked
+    // at the tip when it is annoyed, straight up and quivering when it is stroked or greeting you
     const up = want === 'stand' ? smooth(0.0, 0.25, cat.speed) : 0;
-    const happyUp = cat.state === 'happy' && !cat.wasAsleep ? 1 : 0;
+    const happyUp = Math.max(cat.state === 'happy' && !cat.wasAsleep ? 1 : 0, cat.expr.tailUp);
     const lift = mix(p.tLift, 1.05, Math.max(up, happyUp));
     const curl = mix(p.tCurl, happyUp ? 0.2 : 0.17, Math.max(up, happyUp));
     const bend1 = mix(p.tBend, happyUp ? 0.2 : 0.17, Math.max(up, happyUp));
     const tip = mix(p.tTip, happyUp ? 0.05 : -0.3, Math.max(up, happyUp));
-    cat.swish += dt * (cat.annoyed > 0 ? 7 : cat.state === 'sleep' ? 0.6 : 2.2);
-    const swAmp = cat.annoyed > 0 ? 0.22 : cat.state === 'sleep' ? 0.02 : up > 0.5 ? 0.08 : 0.06;
+    const flick = cat.annoyed > 0 || cat.expr.away > 0.5 || cat.state === 'stalk';
+    cat.swish += dt * (flick ? 7 : cat.state === 'sleep' ? 0.6 : 2.2);
+    const swAmp = flick ? 0.22 : cat.state === 'sleep' ? 0.02 : up > 0.5 ? 0.08 : 0.06;
     m.tail.forEach((t, i) => {
       const along = i / 8;
       t.rotation.x = i === 0 ? lift : i === 1 ? bend1 : i < 6 ? curl : tip;
-      t.rotation.y = p.tWrap * smooth(0, 0.3, along) + swAmp * Math.sin(cat.swish - i * 0.7) * smooth(0.2, 1, along)
-        + (happyUp ? 0.03 * Math.sin(time * 30) * along : 0);
+      // (a flick moves only the end of the tail; the root stays where the pose put it)
+      t.rotation.y = p.tWrap * smooth(0, 0.3, along) + swAmp * Math.sin(cat.swish - i * 0.7) * smooth(flick ? 0.5 : 0.2, 1, along)
+        + (happyUp > 0.5 ? 0.03 * Math.sin(time * 30) * along : 0);
     });
 
-    // eyes: pupils follow the light; a blink every few seconds; a slow blink when you are near and it is content
-    const pupilWant = mix(0.95, 0.16, clamp(ctx.light ?? 1, 0, 1)) * (cat.state === 'happy' ? 0.85 : 1);
-    cat.pupil += (pupilWant - cat.pupil) * (1 - Math.exp(-dt * 2));
+    // eyes: pupils follow the light (wider when something has its attention); a blink every few
+    // seconds; a slow blink at you only when it is at ease with you (the mind says when)
+    const pupilWant = mix(0.95, 0.3, clamp(ctx.light ?? 1, 0, 1)) * (cat.state === 'happy' ? 0.85 : 1) * ((cat.attend && cat.state === 'stalk') || cat.attendYou ? 1.35 : 1);
+    cat.pupil += (clamp(pupilWant, 0.12, 1) - cat.pupil) * (1 - Math.exp(-dt * 2));
     cat.blink -= dt;
     if (cat.blink < 0) {
       cat.blink = 3 + Math.random() * 4;
-      cat.slow = dP < 3.5 && calm ? 1.6 : 0.16;
+      cat.slow = dP < 3.5 && calm && cat.slowOk ? 1.6 : 0.16;
     }
     cat.slow = Math.max(0, cat.slow - dt);
-    let lidWant = cat.state === 'sleep' ? 1 : cat.state === 'happy' ? 0.7 : cat.slow > 0 ? (cat.slow > 0.4 ? 1 : 0.2) : cat.state === 'loaf' ? 0.35 : 0.08;
+    let lidWant = cat.state === 'sleep' ? 1 : cat.state === 'happy' ? 0.62 : cat.slow > 0 ? (cat.slow > 0.4 ? 1 : 0.2) : cat.state === 'loaf' ? 0.35 : cat.state === 'knead' ? 0.55 : 0.08;
+    if (cat.state !== 'sleep' && cat.slow <= 0) lidWant = clamp(lidWant + cat.expr.lid, 0, 0.85);
     if (licking) lidWant = 0.6;
+    if (yawn > 0.2) lidWant = 1;
     cat.lid += (lidWant - cat.lid) * (1 - Math.exp(-dt * (cat.slow > 0.4 && cat.slow < 1.5 ? 3 : 12)));
     for (const e of m.eyes) {
       e.pupil.scale.x = cat.pupil;
-      e.upper.rotation.x = mix(-0.08, 1.32, cat.lid);
+      e.upper.rotation.x = mix(-0.42, 1.32, cat.lid);
       e.lower.rotation.x = mix(0.05, -0.32, cat.lid);
       e.glint.visible = cat.lid < 0.7;
       e.glint.material.opacity = 0.35 + 0.45 * clamp(ctx.light ?? 1, 0, 1);
     }
 
-    // fur shells and whiskers: only where you can see them
+    // fur shells and whiskers: only where you can see them (with a little slack, so the fur
+    // does not pop on and off as you sway at the edge of the distance)
     if (ctx.cam) {
       const dc = Math.hypot(ctx.cam.x - cat.x, ctx.cam.y - (cat.y + 0.2), ctx.cam.z - cat.z);
-      const near = dc < (opts.furNear || 2.6);
-      for (const s of m.shells) s.visible = near;
-      m.whMat.opacity = clamp(1.7 - dc * 0.45, 0, 0.75);
-      m.whMat.color.setHex(0xf2ede4).multiplyScalar(0.18 + 0.82 * clamp(ctx.light ?? 1, 0, 1));   // whiskers are lit like the rest of it
+      const nearAt = opts.furNear || 2.6;
+      const near = m.shells.length && (m.shells[0].visible ? dc < nearAt + 0.25 : dc < nearAt);
+      for (const s of m.shells) s.visible = !!near;
+      m.whMat.opacity = clamp(1.1 - dc * 0.35, 0, 0.4);
+      m.whMat.color.setHex(0xe8e0d4).multiplyScalar(0.18 + 0.74 * clamp(ctx.light ?? 1, 0, 1));   // whiskers are lit like the rest of it
     }
   }
 
+  /** where its head is, in the world (for the name card); a point lifted above the skull */
+  cat.headPos = (out) => { m.head.getWorldPosition(out); return out; };
+
   /** for the test tools: walk (run 0) or trot (run 1) to a point; hold a state where it is */
   cat.walkTo = (x, z, run = 0) => { cat.scripted = true; goTo(x, z, run); setState('walk', 99); };
-  cat.hold = (state) => { cat.scripted = true; cat.target = null; setState(state, 99); };
+  cat.hold = (state) => { cat.scripted = true; cat.target = null; cat.path = null; setState(state, 99); };
   cat.free = () => { cat.scripted = false; setState('idle', 1); };
   cat.parts = m;
 
   cat.update = (dt, time, ctx) => {
-    let dP;
+    const dP = Math.hypot(ctx.px - cat.x, ctx.pz - cat.z);
+    cat.inside = !!ctx.indoor;
     if (cat.scripted) {
-      dP = Math.hypot(ctx.px - cat.x, ctx.pz - cat.z);
       if (cat.happy > 0) { cat.happy -= dt; if (cat.happy <= 0) setState('sit', 99); }
       if (cat.state === 'groom' && cat.timer < 1) cat.timer = 99;
-    } else dP = think(dt, ctx);
+    } else cat.timer -= dt;
+    // the mind always hears what is around it; it only decides when the cat is not held by a test
+    if (cat.brain) cat.brain(dt, ctx, dP, !!cat.scripted);
     move(dt, ctx);
     cat.y = groundY(ctx, cat.x, cat.z) + cat.perch;
     m.root.position.set(cat.x, cat.y, cat.z);
     m.root.rotation.y = cat.heading;
     cat.frame++;
     cat.acc = (cat.acc || 0) + dt;
-    if (opts.low && cat.frame % 2) return;
+    // the pose is worked out less often when it would not show: on low every other frame, and
+    // when it is off screen and not close, every third (it keeps living; only the bones wait)
+    const every = !cat.onScreen && dP > 3 ? 3 : opts.low ? 2 : 1;
+    if (cat.frame % every) return;
     animate(cat.acc, time, ctx, dP);
     cat.acc = 0;
   };

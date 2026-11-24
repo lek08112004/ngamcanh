@@ -12,6 +12,7 @@ import {
   makeRng, terrainH, mountainRise, createTerrain, createMountains, createCabin, createFence,
   createRocks, createGrass, createFireflies, createCamp, createSnow, streamX, streamW, ROCK_SPOTS, CAMP_SEATS,
 } from './world.js';
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 import { createGarden, createBeds, createSignposts, GARDEN_TREES, GARDEN_ARCH, GARDEN_BENCH, walkFlowerAt, nearBench, LOD_NEAR } from './flora.js';
 import { CABIN, CAMP, GARDEN, BOUNDS } from './layout.js';
 import { Party, cleanName, cleanCode } from './net.js';
@@ -27,11 +28,30 @@ import { WorldClock, SEASONS, PHASES, SEASON_LIGHT, clockText, bedFlowerAt, sunA
 import { createCabinRoom, ROOM_LAYER } from './cabinroom.js';
 import { createCorgi } from './corgi.js';
 import { createCat } from './cat.js';
+import { createMind, MARKS, HABITS, bondLevel } from './catmind.js';
+import { createCatProps, createToy } from './catprops.js';
+import { createNameTag } from './nametag.js';
 import { createSnowman } from './snowman.js';
 import { MoverShadow } from './movers.js';
+import { createPastimes, TEA_SEAT, DECOR } from './pastimes.js';
+import { createFishing } from './fishing.js';
+import { createFishUI } from './fishui.js';
+import { fishById, PARTS as FISH_PARTS } from './fishdata.js';
+import { createFishBook } from './fishbook.js';
+import { createJournalNav } from './journalnav.js';
+import { createTelescope, SCOPE } from './telescope.js';
+import { TARGETS } from './astro.js';
+import { createSkyBook } from './skybook.js';
+import { mythLine } from './myths.js';
+import { createOrrery } from './orrery.js';
+import { createMenu, popover, icon as menuIcon } from './menu.js';
+import { menuContent } from './menucontent.js';
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
+// the test hooks (?debug=1 and everything behind it) answer only on this machine: a public copy
+// ignores them (cloud.js does the same)
+if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) query.delete('debug');
 // test hook (?debug=1&eye=0.35): the walker's eye height, to look at the animals from their level
 const TEST_EYE = query.has('debug') && Number(query.get('eye')) > 0 ? Number(query.get('eye')) : 0;
 const DEG = Math.PI / 180;
@@ -271,8 +291,9 @@ function createStarPoints(count, rng) {
 const rng = makeRng(20261112);
 const starPoints = createStarPoints(Q.stars * 2, rng);
 scene.add(starPoints);
-scene.add(createMountains(shared, Q.mountains, Q.mtnMap, Q.mtnQ, SUN_DIR));
-scene.add(createTerrain(shared, Q.terrainQ));
+const mountainsMesh = createMountains(shared, Q.mountains, Q.mtnMap, Q.mtnQ, SUN_DIR);
+const terrainMesh = createTerrain(shared, Q.terrainQ);
+scene.add(mountainsMesh, terrainMesh);
 const cabin = createCabin(rng, shared);
 scene.add(cabin.group, cabin.smoke);
 shared.uCabinLight.value.copy(cabin.lightWorld);
@@ -333,6 +354,7 @@ const SHADOW_BOXES = [[-24, 12, -23, 4, 4, 15], [-1, 57, -12, 36, 4, 23]];      
 const SHADOW_PTS = [];
 for (const [x0, x1, z0, z1, y0, y1] of SHADOW_BOXES) for (const x of [x0, x1]) for (const z of [z0, z1]) for (const y of [y0, y1]) SHADOW_PTS.push(new THREE.Vector3(x, y, z));
 const _sx = new THREE.Vector3(), _sy = new THREE.Vector3(), _sz = new THREE.Vector3(), _sp = new THREE.Vector3();
+const fitSize = { w: 0, h: 0 };
 function fitSunShadow() {
   // the axes three.js gives the shadow camera (lookAt from the sun to the target, up = +y)
   _sz.copy(shared.uSunDir.value).normalize();
@@ -344,9 +366,17 @@ function fitSunShadow() {
     const u = _sp.dot(_sx), v = _sp.dot(_sy);
     l = Math.min(l, u); r = Math.max(r, u); b = Math.min(b, v); t = Math.max(t, v);
   }
-  // a metre of margin, and whole metres, so small sun steps rarely change the texel size
+  // A metre of margin. The width and height move in 4 m steps, and shrink only once the fit is a
+  // whole 8 m smaller (hysteresis), so the texel size stays put for long stretches of the day
+  // instead of changing whenever an edge crossed a metre (each change shifted every shadow edge
+  // by part of a texel at once). The centre is put on the texel grid of that size.
   const sc = sunLight.shadow.camera;
-  sc.left = Math.floor(l - 1); sc.right = Math.ceil(r + 1); sc.bottom = Math.floor(b - 1); sc.top = Math.ceil(t + 1);
+  const needW = r - l + 2, needH = t - b + 2;
+  if (needW > fitSize.w || needW < fitSize.w - 8) fitSize.w = Math.ceil(needW / 4) * 4;
+  if (needH > fitSize.h || needH < fitSize.h - 8) fitSize.h = Math.ceil(needH / 4) * 4;
+  const tw = fitSize.w / sunLight.shadow.mapSize.x, th = fitSize.h / sunLight.shadow.mapSize.y;
+  const cx = Math.round((l + r) / 2 / tw) * tw, cy = Math.round((b + t) / 2 / th) * th;
+  sc.left = cx - fitSize.w / 2; sc.right = cx + fitSize.w / 2; sc.bottom = cy - fitSize.h / 2; sc.top = cy + fitSize.h / 2;
   sc.updateProjectionMatrix();
   // the push along the normal against acne scales with the texel (it was 0.04 m at 104 m)
   sunLight.shadow.normalBias = 0.04 * Math.max(sc.right - sc.left, sc.top - sc.bottom) / 104;
@@ -439,15 +469,27 @@ class GrabDepth extends Pass {
 }
 composer.addPass(new GrabDepth());
 composer.addPass(lensPass);
-lensPass.enabled = Q.lens > 0 && query.get('lens') !== '0';
+lensPass.enabled = Q.lens > 0 && query.get('lens') !== '0' && store.get('settings.lens', true);
 lensPass.uniforms.uTaps.value = Q.lens;
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.72, 0.82);
+bloom.enabled = store.get('settings.bloom', true);
 composer.addPass(bloom);
-composer.addPass(new OutputPass());
+// The tone mapping and sRGB output are done by the final grade pass itself (TONE_AND_OUTPUT in
+// post.js): one full-screen pass fewer. three's OutputPass stays in the chain, switched off, so
+// the two can be compared (?debug=1: __av.mergeOutput(false) goes back to the separate passes).
+const outputPass = new OutputPass();
+outputPass.enabled = false;
+composer.addPass(outputPass);
 const finalPass = new ShaderPass(FinalShader);
+finalPass.material.toneMapped = false;
 finalPass.uniforms.uTexel.value = new THREE.Vector2(1 / innerWidth, 1 / innerHeight);
 finalPass.uniforms.uSharp.value = Q.sharp;
 composer.addPass(finalPass);
+function mergeOutput(on) {
+  outputPass.enabled = !on;
+  finalPass.material.defines.TONE_AND_OUTPUT = on ? 1 : 0;
+  finalPass.material.needsUpdate = true;
+}
 
 /* ------------------------------------------------------------ audio + game */
 const audio = new Soundscape();
@@ -588,6 +630,33 @@ const petRest = (a) => (clock.weights[3] > 0.6 ? snowman.entry(a.x, a.z) : fire.
 // the cat keeps off the sitting logs too (circles along each log), as well as everything in BLOCKS
 const CAT_BLOCKS = [...BLOCKS, ...CAMP_SEATS.flatMap(([x, z, yaw, len]) => [-0.5, -0.25, 0, 0.25, 0.5]
   .map((t) => [x + Math.cos(yaw) * len * t, z - Math.sin(yaw) * len * t, 0.27]))];
+// Choco's own things by the cabin (catprops.js): a shelter with straw, a scratching post, a water
+// bowl. You and the dog walk round all three; the cat walks round the post and the bowl, and
+// into its shelter. They stand still, so they are in the sun's static shadow map.
+const catThings = createCatProps({ rich: tier !== 'low', ground: terrainH });
+if (!Q.shadow) catThings.group.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = false; });
+for (const m of catThings.snowable) snowy(m);
+scene.add(catThings.group);
+BLOCKS.push(...catThings.blocks);
+CAT_BLOCKS.push(...catThings.catBlocks);
+// the ball of wool (one, reused); seen indoors as well as out
+const toy = createToy({ rich: tier !== 'low' });
+toy.mesh.traverse((o) => o.layers.enable(ROOM_LAYER));
+scene.add(toy.mesh);
+// Tea by the fire, and the decorations you may choose for the porch and the tent (pastimes.js).
+// They stand still: in the sun's static shadow map; you and the animals walk round the tray.
+const pastimes = createPastimes({ rich: tier !== 'low', shadows: Q.shadow > 0 });
+// fishing at the stream and the pond (fishing.js: tackle and states; fishui.js: what you see, the save)
+const fishing = createFishing({ scene, camera, audio, terrainH, streamX, streamW });
+// the telescope on the hill behind the camp (telescope.js); while you look through it the valley is not drawn
+let orreryRef = null;
+const orreryOpen = () => !!(orreryRef && orreryRef.active);
+const scope = createTelescope({ scene, terrainH, store, audio, toast: (t) => toast(t), note: (id) => story.note(id) });
+// ?debug=1&acts=0: the new activities' objects hidden, to measure what they cost when not in use
+if (query.has('debug') && query.get('acts') === '0') { scope.model.g.visible = false; fishing.group.visible = false; }
+scene.add(pastimes.group);
+BLOCKS.push(...pastimes.blocks);
+CAT_BLOCKS.push(...pastimes.blocks);
 const trek = { dist: 0, found: new Set(['camp']), saveAt: 0 };
 trek.dist = store.get('trek.dist', 0);
 for (const id of store.get('trek.found', [])) trek.found.add(id);
@@ -595,9 +664,11 @@ function saveTrek() { store.patch('trek', { dist: Math.round(trek.dist), found: 
 function inStream(x, z) { return z < -30 && Math.abs(x - streamX(z)) < streamW(z); }
 /** wading slows you and splashes; in winter the stream is frozen and you walk over the ice */
 function wetAt(x, z) { return inStream(x, z) && clock.weights[3] < 0.5; }
+/** sitting down where you are ("Ngồi cùng", for the cat): any step stands you up again */
+const seat = { on: false, was: false };
 function updateWalk(dt) {
   let fx = 0, fz = 0;
-  if (mode === 'view' && journal.classList.contains('hidden') && partyBox.classList.contains('hidden')) {
+  if (mode === 'view' && journal.classList.contains('hidden') && partyBox.classList.contains('hidden') && !(menuUi && menuUi.open)) {
     if (keys.has('w') || keys.has('arrowup')) fz += 1;
     if (keys.has('s') || keys.has('arrowdown')) fz -= 1;
     if (keys.has('a') || keys.has('arrowleft')) fx -= 1;
@@ -608,6 +679,9 @@ function updateWalk(dt) {
   walker.speed = 0;
   if (stroll.on) { if (mag > 0.08 || mode !== 'view') setStroll(false); else updateStroll(dt); }
   if (mag > 0.08) {
+    if (seat.on) setSeat(false);
+    if (pastime.kind) endPastime(true);
+    if (fishing.active) stopFishing(true);
     if (!walker.on) {
       // stand up from wherever you were sitting
       walker.on = true;
@@ -644,7 +718,9 @@ function updateWalk(dt) {
     if (walker.stepAcc > (run > 1 ? 1.15 : 0.82)) { walker.stepAcc = 0; audio.step(wet); }
   }
   if (walker.on) {
-    walker.eye += ((TEST_EYE || (indoor.on ? 1.6 : 1.7)) - walker.eye) * (1 - Math.exp(-dt * 4));
+    // sitting: about 1 m; beside Choco with its menu open you crouch a little, to see it better
+    const eyeWant = TEST_EYE || (seat.on ? (indoor.on ? 0.95 : 1.0) : !catMenu.classList.contains('hidden') ? CROUCH_EYE : indoor.on ? 1.6 : 1.7);
+    walker.eye = REDUCED ? eyeWant : walker.eye + (eyeWant - walker.eye) * (1 - Math.exp(-dt * 4));
     const bob = Math.sin(walker.bob) * 0.035 * Math.min(1, walker.speed / 3);
     camTarget.set(walker.x, (indoor.on ? room.floorY : terrainH(walker.x, walker.z)) + walker.eye + bob, walker.z);
   }
@@ -662,7 +738,7 @@ const stroll = { on: false, i: 0, pause: 0, look: 0 };
 function setStroll(on) {
   if (stroll.on === on || (on && indoor.on)) return;
   stroll.on = on;
-  $('qStroll').setAttribute('aria-pressed', String(on));
+  if (menuUi && menuUi.open) menuUi.refresh();
   if (!on) return;
   setTour(false);
   if (!walker.on) {
@@ -752,6 +828,25 @@ function resize() {
   syncKeepsakes();
 }
 addEventListener('resize', resize);
+// The window moved to a screen with another pixel density (or the browser zoom changed it): the
+// tier's ceiling is worked out again from the new density, and the ladder's step re-applied.
+function watchDensity() {
+  const now = window.devicePixelRatio || 1;
+  let mq;
+  try { mq = matchMedia(`(resolution: ${now}dppx)`); } catch (e) { return; }
+  const onChange = () => {
+    const d = window.devicePixelRatio || 1;
+    const cap = tier === 'high' ? Math.min(d, 2) : tier === 'medium' ? Math.min(d, 1.25) : 1;
+    const budget = Math.sqrt((tier === 'high' ? 4.6e6 : 2.6e6) / Math.max(1, innerWidth * innerHeight));
+    Q.maxPR = Math.max(Math.min(cap, budget), Math.min(d, tier === 'low' ? 0.8 : 1));
+    Q.minPR = Math.min(TIERS[tier].minPR, Q.maxPR);
+    pixelRatio = -1;                                   // make applyShed set it again
+    applyShed(adapt.shed);
+    watchDensity();
+  };
+  if (mq.addEventListener) mq.addEventListener('change', onChange, { once: true });
+}
+watchDensity();
 addEventListener('orientationchange', () => setTimeout(resize, 250));
 resize();
 
@@ -793,10 +888,10 @@ canvas.addEventListener('pointermove', (e) => {
   p.x = e.clientX; p.y = e.clientY;
   dragMoved += Math.abs(dx) + Math.abs(dy);
   if (pointers.size === 1) {
-    if (dragMoved > 4) { setTour(false); setStroll(false); }
+    if (dragMoved > 4) { setTour(false); setStroll(false); aim.userAt = performance.now(); aim.soft = 0; }
     const degPerPx = view.fov / innerHeight;
     view.yawT -= dx * degPerPx;
-    view.pitchT = clamp(view.pitchT + dy * degPerPx, LIMIT.pitchMin, LIMIT.pitchMax);
+    view.pitchT = clamp(view.pitchT + dy * degPerPx, Math.min(LIMIT.pitchMin, view.pitchT), LIMIT.pitchMax);
   } else if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
@@ -947,7 +1042,7 @@ function ridgeFor(sx, sz, out) {
   out.set(_ridge.h, _ridge.d);
 }
 function applyDay(dt) {
-  clock.hold = mode === 'play';             // the star game keeps its night
+  clock.hold = mode === 'play' || scope.active || orreryOpen();   // the star game, the telescope and the model keep the hour
   clock.update(dt);
   const d = clock.day, k = clock.dusk, w = clock.weights;
   uDay.value = d;
@@ -1142,7 +1237,7 @@ function starHint() {
   const left = CONSTELLATIONS.find((c) => !story.seen.has(c.id));
   return left ? left.id : '';
 }
-const consName = (id) => (CONSTELLATIONS.find((c) => c.id === id) || { name: id }).name;
+const consName = (id) => { const c = CONSTELLATIONS.find((x) => x.id === id) || (typeof game !== 'undefined' && game.byId(id) ? game.byId(id).def : null); return c ? c.name : id; };
 const flowerName = (id) => (FLOWERS.find((f) => f.id === id) || { name: id }).name;
 function renderStory(turned) {
   const ch = story.current;
@@ -1184,8 +1279,14 @@ function logText(id) {
   if (k === 'l') { const b = SHELF.find((x) => x.id === v); return b ? ['Giá sách', `Lần đầu mở cuốn “${b.title}” của ${b.author === 'Bạn' ? 'chính bạn' : b.author}.`] : ['', id]; }
   if (k === 'c') return ['Bơ', `Gãi tai cho Bơ, chú corgi của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Cái đuôi cộc vẫy không ngừng.`];
   if (k === 'm') return ['Choco', `Vuốt lưng Choco, con mèo nâu của trại, giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}. Nó rừ rừ mãi không thôi.`];
+  if (k === 'q') return MARKS[v] ? ['Choco', MARKS[v]] : ['', id];
   if (k === 's') return ['Bấc', 'Ghé chào Bấc, người tuyết đứng chắn gió sau đống lửa. Nó giơ cành cây lên vẫy, mũi cà rốt hếch về phía bạn.'];
   if (k === 'n') return ['Mầm', 'Ghé chào Mầm, người tuyết nhỏ giữ ghế đọc sách dưới gốc anh đào. Nó xin được nghe đọc ké một trang.'];
+  if (k === 'h') return ['Trà bên lửa', `Ngồi trên khúc gỗ bên lửa trại pha một ấm trà giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'trại'}, chờ nước reo rồi rót ra chén.`];
+  if (k === 'x') return ['Ghế bập bênh', `Ngồi ghế bập bênh bên lò sưởi trong nhà gỗ giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'năm'}, nghe củi tí tách.`];
+  if (k === 'y') { const m = /^([a-z]+)(\d+)$/.exec(v || ''); const line = m && mythLine(m[1]); const c = line && line.chapters[Number(m[2])]; return c ? ['Thần thoại', `Dệt xong chương “${c.title}” của tuyến ${line.vi}.`] : ['', id]; }
+  if (k === 'o') { const t = TARGETS.find((x) => x.id === v); return t ? ['Kính thiên văn', `Lần đầu ngắm ${t.vi} qua kính trên đồi sau trại.`] : ['', id]; }
+  if (k === 'a') { const f = fishById(v); return f ? ['Câu cá', `Lần đầu câu được ${f.vi.toLowerCase()} (${f.sci}). Ngắm một lúc rồi thả nó về nước.`] : ['', id]; }
   if (k === 'b') return ['Ghế dưới anh đào', `Ngồi đọc sách dưới cây anh đào giữa ${SEASONS[Number(v)] ? SEASONS[Number(v)].name.toLowerCase() : 'vườn'}, hoa nở quanh chân ghế.`];
   return ['', id];
 }
@@ -1225,6 +1326,7 @@ function readingFor() {
 }
 function restInCabin() {
   if (rest.on || mode !== 'view') return;
+  endPastime(true);
   rest.on = true;
   setStroll(false);
   const from = clock.hour;
@@ -1256,7 +1358,9 @@ function restInCabin() {
 /* inside: the room is its own layer; the camera switches to it, and walking keeps to the four walls */
 const indoor = { on: false, leaving: false };
 function enterRoom() {
+  endPastime(true);
   indoor.on = true;
+  audio.setIndoor(true);
   setStroll(false);
   setTour(false);
   camera.layers.set(ROOM_LAYER);
@@ -1275,15 +1379,24 @@ function enterRoom() {
     corgi.place(x, z, Math.atan2(walker.x - x, walker.z - z), 'sit', 5);
   }
   for (const o of corgi.meshes) o.castShadow = Q.shadow > 0;        // into the stove light's shadow
-  // Choco: asleep on the rocking chair's blanket at night, on the rug by the stove by day
-  if (sleepy) cat.place(room.chair.x, room.chair.z, room.chair.yaw, 'sleep', 999, room.chair.y);
-  else cat.place(room.catSpot.x, room.catSpot.z, Math.atan2(room.fire.x - room.catSpot.x, room.fire.z - room.catSpot.z), 'loaf', 12);
-  for (const o of cat.meshes) o.castShadow = Q.shadow > 0 && !o.userData.shell;
+  // Choco slips in with you if it was about the camp (not if it was off in the garden): by night
+  // asleep in its basket (or, some nights, on the rocking chair's blanket), by day on the rug
+  if (!cat.inside && cat.distanceTo(PORCH.x, PORCH.z) < 16) {
+    cat.inside = true;
+    if (sleepy && (CAT_SEED + Math.floor(clock.hour)) % 3 === 0) cat.place(room.chair.x, room.chair.z, room.chair.yaw, 'sleep', 999, room.chair.y);
+    else if (sleepy) cat.place(room.catBed.x, room.catBed.z, Math.atan2(room.fire.x - room.catBed.x, room.fire.z - room.catBed.z), 'sleep', 999);
+    else cat.place(room.catSpot.x, room.catSpot.z, Math.atan2(room.fire.x - room.catSpot.x, room.fire.z - room.catSpot.z), 'loaf', 12);
+    catMind.moved();
+  }
+  for (const o of cat.meshes) o.castShadow = cat.inside && Q.shadow > 0 && !o.userData.shell;
+  catLeftSpace();
   if (Q.shadow) renderer.shadowMap.needsUpdate = true;
 }
 function leaveRoom() {
   if (!indoor.on) return;
+  endPastime(true);
   indoor.on = false;
+  audio.setIndoor(false);
   camera.layers.set(0);
   document.body.classList.remove('indoor');
   walker.on = true;
@@ -1293,8 +1406,13 @@ function leaveRoom() {
   camBase.copy(camTarget);
   corgi.place(DOG_PORCH.x + 0.6, DOG_PORCH.z + 0.4, 2.2, 'idle', 2);   // it trots out after you
   for (const o of corgi.meshes) o.castShadow = false;               // outside it is in the movers' map instead
-  cat.place(DOG_PORCH.x - 0.5, DOG_PORCH.z + 0.9, 2.4, 'sit', 3);     // and the cat strolls out after it
+  if (cat.inside) {                                                  // and the cat strolls out after it
+    cat.inside = false;
+    catMind.moved();
+    cat.place(DOG_PORCH.x - 0.5, DOG_PORCH.z + 0.9, 2.4, 'sit', 3);
+  }
   for (const o of cat.meshes) o.castShadow = false;
+  catLeftSpace();
   shadowSettle = 2;                                                  // the sun may have moved while you were in
 }
 /** the veil after resting lifts on the room; inside, E (or the button) takes you back out onto the porch */
@@ -1326,29 +1444,355 @@ const PET_WORDS = [
   'Bơ thở hổn hển vì vui, lè lưỡi nhìn bạn như chờ thêm một lần nữa',
   'Bơ nghiêng đầu nhìn bạn rồi sủa khẽ một tiếng, mông lắc theo đuôi',
 ];
-const CAT_WORDS = [
-  'Choco nheo mắt, dụi đầu vào tay bạn rồi rừ rừ khe khẽ',
-  'Choco dựng thẳng đuôi, chóp đuôi run run, cọ má vào ngón tay bạn',
-  'Choco nằm yên cho bạn vuốt, mắt khép hờ, tiếng rừ rừ đều như máy khâu',
-  'Choco kêu “mrrr” một tiếng ngắn rồi ưỡn lưng theo bàn tay bạn',
-];
-/** a stroke along the cat's back: it purrs, and the diary remembers */
-function petCat() {
-  if (cat.distanceTo(camBase.x, camBase.z) > 2.0) return;
-  const wasAsleep = cat.state === 'sleep';
-  cat.pet();
+/* ---------- Choco: what you can do with it (catmind.js decides how it takes it) ---------- */
+const catMenu = $('catMenu');
+const catBtns = [...catMenu.querySelectorAll('button')];
+const catUi = { why: {}, sit: '' };
+function openCatMenu(on) {
+  const was = !catMenu.classList.contains('hidden');
+  catMenu.classList.toggle('hidden', !on);
+  if (on) { refreshCatMenu(); if (!was) aimAt(cat.x, cat.y + 0.2, cat.z); }
+}
+/* ---- keeping Choco (or Bơ) in the picture while you are doing something with it ----
+   The menu opens within 2.4 m, and at that distance a cat is a hand's height off the ground: with
+   your eyes level it was below the bottom edge of the screen, so you stroked an animal you could
+   not see. Now: opening the menu, each offer, sitting down with it and petting Bơ turn your eyes to
+   it (you also crouch a little while the menu is open), and while the menu is open or you sit
+   with it the view follows it gently when it walks out of the middle. A drag of yours wins for
+   2.5 s; it never fights you. */
+const aim = { soft: 0, userAt: -1e9 };
+const CROUCH_EYE = 1.3;
+function aimAngles(x, y, z) {
+  const ex = camTarget.x, ez = camTarget.z, d = Math.max(0.35, Math.hypot(x - ex, z - ez));
+  const yaw = Math.atan2(x - ex, -(z - ez)) / DEG;
+  // a little above the middle of the picture: the menu and the buttons sit in the lower part
+  const lift = catMenu.classList.contains('hidden') ? 2 : 0.11 * view.fov;
+  // from the height your eyes are going to (sitting, crouching), not where they are mid-way
+  const eyeY = !walker.on || TEST_EYE ? camTarget.y
+    : (indoor.on ? room.floorY : terrainH(ex, ez)) + (seat.on ? (indoor.on ? 0.95 : 1.0) : !catMenu.classList.contains('hidden') ? CROUCH_EYE : walker.eye);
+  const pitch = clamp(-Math.atan2(eyeY - y, d) / DEG - lift, -58, 12);
+  return [yaw, pitch];
+}
+function aimAt(x, y, z) {
+  if (mode !== 'view' || performance.now() - aim.userAt < 2500) return;
+  const [yaw, pitch] = aimAngles(x, y, z);
+  if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return;
+  setTour(false);
+  view.yawT = view.yaw + wrapYaw(yaw - view.yaw);
+  view.pitchT = pitch;
+  aim.soft = 1.6;                                  // turn the head slowly, not with a snap
+}
+/** each frame: while the menu is open (or you sit with it nearby), follow it only when it leaves the middle */
+function followCat(dt) {
+  aim.soft = Math.max(0, aim.soft - dt);
+  const menu = !catMenu.classList.contains('hidden');
+  const near = cat.inside === indoor.on && cat.distanceTo(camTarget.x, camTarget.z) < 6;
+  if (mode !== 'view' || !near || !(menu || seat.on) || performance.now() - aim.userAt < 2500) return;
+  const [yaw, pitch] = aimAngles(cat.x, cat.y + 0.2, cat.z);
+  if (!Number.isFinite(pitch)) return;
+  const dy = wrapYaw(yaw - view.yawT), dp = pitch - view.pitchT;
+  const k = 1 - Math.exp(-dt * 1.5);
+  // a dead zone round the middle, so the picture is not glued to the cat
+  if (Math.abs(dy) > 0.16 * view.fov) view.yawT += (dy - Math.sign(dy) * 0.12 * view.fov) * k;
+  if (Math.abs(dp) > 0.1 * view.fov) view.pitchT += (dp - Math.sign(dp) * 0.07 * view.fov) * k;
+  aim.soft = Math.max(aim.soft, 0.3);
+}
+/** the menu's buttons: greyed out (with the reason as a tooltip) when that cannot be done now */
+function refreshCatMenu() {
+  if (catMenu.classList.contains('hidden')) return;
+  for (const b of catBtns) {
+    const act = b.dataset.act;
+    const why = act === 'sit' ? '' : catMind.can(act);
+    if (why !== catUi.why[act]) { catUi.why[act] = why; b.disabled = !!why; b.title = why; }
+  }
+  const sitText = seat.on ? 'Đứng dậy' : 'Ngồi cùng';
+  if (sitText !== catUi.sit) { catUi.sit = sitText; catMenu.querySelector('[data-act="sit"] span').textContent = sitText; }
+}
+function catAct(act) {
+  if (act === 'sit') { setSeat(!seat.on); refreshCatMenu(); return; }
   audio.init();
+  aimAt(cat.x, cat.y + 0.2, cat.z);
+  const line = catMind.offer(act);
+  if (line) toast(line);
+  if (act === 'pet' && cat.state === 'happy') story.note(`m:${clock.seasonIndex}`);
+  refreshCatMenu();
+}
+catBtns.forEach((b) => b.addEventListener('click', () => catAct(b.dataset.act)));
+function setSeat(on, quiet) {
+  seat.on = on;
+  if (on) {
+    setStroll(false);
+    if (!walker.on) {
+      walker.on = true;
+      walker.x = camBase.x; walker.z = camBase.z;
+      walker.eye = camBase.y - (indoor.on ? room.floorY : terrainH(camBase.x, camBase.z));
+    }
+    const near = cat.inside === indoor.on && cat.distanceTo(camBase.x, camBase.z) < 6;
+    toast(near ? 'Bạn ngồi xuống cạnh Choco, không gọi, không với tay. Cứ để nó tự quyết' : 'Bạn ngồi xuống nghỉ một lát. Bước đi hoặc Esc để đứng dậy');
+    // sitting lowers the eye to 1 m: aim for where the cat will be in the picture from there
+    if (near) aimAt(cat.x, cat.y + 0.2, cat.z);
+  } else if (seat.was && !quiet) toast(indoor.on ? 'Bạn đứng dậy' : 'Bạn đứng dậy, phủi cỏ trên áo');
+  seat.was = on;
+}
+/* ------------------------------------------------ quiet things to do: tea, the rocking chair */
+// One at a time. You sit where it is done (the camera is set down there, not walked), and any
+// step, Esc, or the button gets you up again; nothing is lost by stopping. What is remembered:
+// a line in the camp diary once a season, and the first time (me.firsts).
+const pastime = { kind: '', t: 0, rock: 0, creakSide: 0, noted: false };
+function sitAt(x, z, eye, yaw, pitch, floorY) {
+  setStroll(false); setTour(false); openCatMenu(false);
+  if (seat.on) setSeat(false, true);
+  walker.on = false;
+  camTarget.set(x, (floorY === undefined ? terrainH(x, z) : floorY) + eye, z);
+  view.yawT = yaw; view.pitchT = pitch; view.fovT = baseFov;
+  [...$('spots').children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
+}
+function firstTime(id, line) {
+  const f = store.get('me.firsts', []);
+  if (f.includes(id)) return;
+  store.set('me.firsts', [...f, id]);
+  toast(line);
+}
+function startTea() {
+  audio.init();
+  sitAt(TEA_SEAT.x, TEA_SEAT.z, TEA_SEAT.eye, TEA_SEAT.yaw, TEA_SEAT.pitch);
+  pastime.kind = 'tea'; pastime.t = 0; pastime.noted = false;
+  const why = pastimes.brew(fire.level);
+  toast(why ? why + ' · Esc để đứng dậy' : 'Bạn bắc ấm nước lên hòn đá cạnh lửa, ngồi xuống ghế đẩu chờ nước reo · Esc để đứng dậy');
+}
+function startChair() {
+  if (cat.inside && cat.distanceTo(room.chair.x, room.chair.z) < 0.45) { toast('Choco đang cuộn tròn trên ghế bập bênh. Để nó ngủ nhé'); return; }
+  audio.init();
+  const yaw = Math.atan2(room.fire.x - room.chair.x, -(room.fire.z - room.chair.z)) / DEG;
+  sitAt(room.chair.x, room.chair.z, 1.02, yaw, -6, room.floorY);
+  pastime.kind = 'chair'; pastime.t = 0; pastime.noted = false; pastime.rock = 0;
+  toast('Bạn ngồi xuống ghế bập bênh cạnh lò. Lửa tí tách, ghế đưa nhè nhẹ');
+}
+/** get up; quiet: no line about it (a door, the star game) */
+function endPastime(quiet) {
+  if (!pastime.kind) return;
+  const was = pastime.kind;
+  pastime.kind = '';
+  if (was === 'tea') pastimes.stop();
+  if (was === 'chair') room.rock(0);
+  if (book.open) openBook(false);
+  if (!walker.on) {
+    walker.on = true;
+    walker.x = camBase.x; walker.z = camBase.z;
+    walker.eye = camBase.y - (indoor.on ? room.floorY : terrainH(camBase.x, camBase.z));
+  }
+  if (!quiet) toast(was === 'tea' ? 'Bạn đứng dậy, để lại khay trà gọn bên ghế đẩu' : 'Bạn rời ghế, ghế còn đưa thêm mấy nhịp');
+}
+// what the tea things report (one function, not a new closure every frame)
+let teaHear = 0;
+function teaEvent(ev, v) {
+    if (ev === 'kettle') { audio.kettle(v * teaHear, 0.2); return; }
+    if (ev === 'pour') { audio.pour(0.15); if (pastime.kind === 'tea') toast('Nước sôi. Bạn rót trà ra chén, hơi nóng bốc lên thơm phức'); }
+    if (ev === 'poured' && pastime.kind === 'tea') {
+      toast(TEA_LINES[clock.seasonIndex] || TEA_LINES[0]);
+      story.note(`h:${clock.seasonIndex}`);
+      firstTime('tea', 'Chén trà đầu tiên ở trại. Thung lũng này đã có một chỗ quen');
+    }
+    if (ev === 'cool' && pastime.kind === 'tea') toast('Chén trà nguội dần. Vẫn nhấp được, hoặc pha ấm mới cho nóng');
+    if (ev === 'sipped' && pastime.kind === 'tea') toast(SIP_LINES[(v - 1) % SIP_LINES.length]);
+    if (ev === 'empty' && pastime.kind === 'tea') toast('Chén cạn rồi. Pha thêm ấm nữa (E), hoặc cứ ngồi ngắm lửa');
+    if (ev === 'nofire' && pastime.kind === 'tea') toast('Lửa tàn mất rồi, ấm nước nguội dần. Thêm củi (Space) rồi pha lại nhé');
+}
+function updatePastime(dt) {
+  // the tea things run whether or not you sit there (the kettle cools, the steam thins out)
+  const dK = Math.hypot(camBase.x - TEA_SEAT.x, camBase.z - TEA_SEAT.z);
+  teaHear = indoor.on ? 0 : clamp(1.4 - dK / 8, 0, 1);
+  pastimes.update(dt, fire.level, teaEvent);
+  if (!pastime.kind) return;
+  pastime.t += dt;
+  if (pastime.kind === 'chair') {
+    // the chair rocks on its own once set going: about one slow swing every five seconds
+    pastime.rock = Math.sin(pastime.t * 1.25) * 0.07 * Math.min(1, pastime.t / 2);
+    room.rock(pastime.rock);
+    const sideNow = pastime.rock > 0.06 ? 1 : pastime.rock < -0.06 ? -1 : 0;
+    if (sideNow && sideNow !== pastime.creakSide) { pastime.creakSide = sideNow; if (Math.random() < 0.6) audio.creak(0.1); }
+    if (swayOn) camTarget.y = room.floorY + 1.02 + pastime.rock * 0.25;
+    if (pastime.t > 20 && !pastime.noted) {
+      pastime.noted = true;
+      story.note(`x:${clock.seasonIndex}`);
+      firstTime('fireside', 'Lần đầu ngồi ghế bập bênh bên lò. Căn nhà gỗ ấm hẳn lên');
+    }
+  }
+}
+const SIP_LINES = [
+  'Bạn nhấp một ngụm, hơi nóng phả lên mặt. Lửa nổ lách tách',
+  'Thêm một ngụm. Hai tay ôm chén, ấm lòng bàn tay',
+  'Bạn nhấp chậm, nhìn khói trà bay ngang qua ngọn lửa',
+];
+/** lift the cup to just below your eyes, a little in front, along where you are looking */
+const _sipDir = new THREE.Vector3(), _sip = new THREE.Vector3();
+function sipTea() {
+  camera.getWorldDirection(_sipDir);
+  _sipDir.y = Math.max(_sipDir.y, -0.35); _sipDir.normalize();
+  // a little below the middle of the view and to the right hand, at about 40 cm
+  _sip.copy(camera.position).addScaledVector(_sipDir, 0.42); _sip.y -= 0.12;
+  _sip.x += -_sipDir.z * 0.05; _sip.z += _sipDir.x * 0.05;
+  pastimes.sip(_sip, camera.position);
+}
+/* ------------------------------------------------ fishing (fishing.js, fishui.js, fishdata.js) */
+function startFishing() {
+  if (clock.weights[3] > 0.5) { toast('Mặt nước đóng băng rồi. Bản này chưa có câu cá qua lỗ băng; mùa xuân quay lại nhé'); return; }
+  const spot = fishing.near(camBase.x, camBase.z);
+  if (!spot) return;
+  audio.init();
+  setStroll(false); setTour(false); openCatMenu(false);
+  if (seat.on) setSeat(false, true);
+  if (pastime.kind) endPastime(true);
+  walker.on = false;
+  camTarget.set(spot.x, terrainH(spot.x, spot.z) + 1.62, spot.z);
+  view.yawT = spot.yaw; view.pitchT = -24; view.fovT = baseFov;
+  fishUI.begin(spot);
+  document.body.classList.add('fishing');
+  toast(`${spot.name}: ${spot.note} Kéo để chọn chỗ thả phao, E để quăng`);
+}
+/** put the rod away and stand where you are (quiet: no line, e.g. you walked off) */
+function stopFishing(quiet) {
+  document.body.classList.remove('fishing');
+  if (!fishing.active) return;
+  fishing.reel(false);
+  if (quiet) fishing.end(); else fishing.leave();
+  fishUI.hideCard();
+  if (!walker.on) {
+    walker.on = true;
+    walker.x = camBase.x; walker.z = camBase.z;
+    walker.eye = camBase.y - terrainH(camBase.x, camBase.z);
+  }
+}
+const fishUI = createFishUI({
+  fishing, toast,
+  note: (id) => story.note(id),
+  openBook: (id) => openJournal(true, `fish:${id}`),
+  getClock: () => ({ season: clock.seasonIndex, hour: clock.hour }),
+});
+
+const TEA_LINES = [
+  'Trà hoa anh đào: thoang thoảng, hơi chát ở cuối. Khói trà bay về phía vườn',
+  'Trà oải hương: thơm mát, uống chậm thì thấy ngọt hậu. Ve đã kêu ngoài vườn',
+  'Trà hoa cúc: vàng như nắng chiều, ấm từ bụng ấm ra',
+  'Trà gừng: cay ấm đầu lưỡi, hai tay ôm chén cho đỡ cóng',
+];
+
+/** its sounds: near you only, in the same place as you, never piled up */
+let purrUntil = 0, meowAt = -1e9;
+function catSound(kind, arg) {
+  if (!started || cat.inside !== indoor.on) return;
+  const d = cat.distanceTo(camBase.x, camBase.z);
+  if (d > 9) return;
   const rel = wrapYaw(Math.atan2(cat.x - camBase.x, -(cat.z - camBase.z)) / DEG - view.yaw);
-  const near = clamp(1.6 - cat.distanceTo(camBase.x, camBase.z) * 0.5, 0, 1);
-  audio.purr(clamp(rel / 60, -1, 1), near, 3.2);
-  if (!wasAsleep && cat.petCount % 3 === 1) audio.meow(clamp(rel / 60, -1, 1), near, cat.petCount % 2 === 1);
-  toast(wasAsleep ? 'Choco đang ngủ, chỉ hé một mắt nhìn bạn rồi bắt đầu rừ rừ' : CAT_WORDS[(cat.petCount - 1) % CAT_WORDS.length]);
-  story.note(`m:${clock.seasonIndex}`);
+  const pan = clamp(rel / 60, -1, 1), near = clamp(1.6 - d * 0.5, 0, 1);
+  const now = performance.now();
+  if (kind === 'purr') { audio.purr(pan, near, arg || 3); purrUntil = now + (arg || 3) * 1000; }
+  else if (kind === 'meow') { if (now - meowAt < 30000) return; meowAt = now; audio.meow(pan, near, arg !== false); }
+  else if (kind === 'tap') audio.tap(pan, near);
+}
+/** you and it are no longer in the same place (a door): the purr fades, the wool is put away */
+function catLeftSpace() {
+  audio.purrStop();
+  purrUntil = 0;
+  if (toy.active) { toy.active = false; toy.mesh.visible = false; }
+  setSeat(false, true);
+  openCatMenu(false);
+}
+let toyStowAt = 0;
+/** the ball of wool, rolled from your feet toward a spot a little in front of the cat */
+function throwToy() {
+  const sx = camBase.x, sz = camBase.z, d = Math.max(0.5, cat.distanceTo(sx, sz));
+  const ux = (cat.x - sx) / d, uz = (cat.z - sz) / d, side = (CAT_SEED & 1 ? 1 : -1) * 0.35;
+  const x0 = sx + ux * 0.45, z0 = sz + uz * 0.45;
+  const tx = cat.x - ux * 0.75 - uz * side, tz = cat.z - uz * 0.75 + ux * side;
+  const td = Math.hypot(tx - x0, tz - z0);
+  const v = clamp(0.6 + 0.9 * td, 0.5, 2.2);
+  toy.spawn(x0, z0, (tx - x0) / Math.max(td, 0.01) * v, (tz - z0) / Math.max(td, 0.01) * v, (sx + cat.x) / 2, (sz + cat.z) / 2);
+  toyStowAt = 0;
+}
+// Choco's mind: what it chooses to do, and how well it knows you (kept in the save)
+const benchAt = (lx, lz) => { const c = Math.cos(GARDEN_BENCH.yaw), s = Math.sin(GARDEN_BENCH.yaw); return [GARDEN_BENCH.x + lx * c + lz * s, GARDEN_BENCH.z - lx * s + lz * c]; };
+const CAT_SEED = query.has('debug') && query.has('seed') ? (Number(query.get('seed')) | 0) : (Date.now() & 0x7fffffff);
+const MARK_TOAST = {
+  hello: 'Choco ngửi tay bạn rồi tự cọ má vào. Một lời chào kiểu mèo',
+  sun: 'Hai bạn ngồi yên bên nhau một lúc lâu. Chẳng ai cần làm gì cả',
+  play: 'Choco vừa có một cuộc chơi thật sự: rình, vồ, rồi giả vờ như chưa có gì',
+  buddy: 'Choco chạm mũi chào Bơ rồi nằm xuống ngay cạnh nó',
+  place: 'Đó là chỗ của riêng Choco. Nó chọn chỗ của nó',
+  reading: 'Choco tự tìm ra ghế đọc, nằm xuống dưới chân bạn',
+  night: 'Choco chớp mắt thật chậm với bạn, rồi cuộn tròn ngủ ngay bên cạnh',
+};
+const catMind = createMind(cat, {
+  home: cat.home, seed: CAT_SEED,
+  bond: store.get('cat.bond', 0), marks: store.get('cat.marks', []), habits: store.get('cat.habits', []),
+  spots: {
+    shelter: catThings.shelter, post: catThings.post, bowl: catThings.bowl,
+    // open ground about the camp that the morning and afternoon sun reach
+    sunny: [[-3.6, -0.6], [0.6, -0.2], [-4.6, -6.4], [1.2, -8.2], [-0.6, 1.6]],
+    bench: { ...GARDEN_BENCH },
+    // to the reading bench along the gravel walk, under the rose arch, round the inner ring
+    benchRoute: [[-1.5, -3.5], [0.8, 3.0], [3.0, 9.5], [10, 10.4], [17, 11.2], [24, 12], [28.25, 12.0], benchAt(-0.6, 0.85)],
+  },
+  toy,
+  onBond: (v) => store.set('cat.bond', Math.round(v * 10) / 10),
+  onMark: (id) => { store.set('cat.marks', [...catMind.marks]); story.note(`q:${id}`); toast(MARK_TOAST[id]); },
+  onHabit: () => store.set('cat.habits', [...catMind.habits]),
+  say: (t) => toast(t),
+  sound: catSound,
+  throwToy,
+  onPlayEnd: () => { toyStowAt = performance.now() + 7000; },
+});
+const catTag = createNameTag($('catTag'));
+let catTagOn = store.get('settings.tags', true);
+$('tagBtn').setAttribute('aria-pressed', String(catTagOn));
+$('tagBtn').addEventListener('click', () => {
+  catTagOn = !catTagOn;
+  store.set('settings.tags', catTagOn);
+  $('tagBtn').setAttribute('aria-pressed', String(catTagOn));
+});
+/** is anything between your eye and the cat? the ground (a hill), the cabin's walls, the tent, a
+ *  boulder: a few sample points along the line, a few times a second, never per frame */
+function catHiddenFromYou() {
+  if (cat.inside !== indoor.on) return true;
+  if (indoor.on) return false;
+  const ax = camera.position.x, ay = camera.position.y, az = camera.position.z;
+  const bx = cat.x, by = cat.y + 0.28, bz = cat.z;
+  const c = Math.cos(-CABIN.yaw), s = Math.sin(-CABIN.yaw);
+  for (let i = 1; i < 12; i++) {
+    const t = i / 12, x = ax + (bx - ax) * t, y = ay + (by - ay) * t, z = az + (bz - az) * t;
+    if (y < terrainH(x, z) - 0.1) return true;
+    const dx = x - CABIN.x, dz = z - CABIN.z, lx = c * dx + s * dz, lz = -s * dx + c * dz;
+    if (y < terrainH(x, z) + 3.6 && Math.abs(lx) < 2.5 && lz > -3.4 && lz < 3.4) return true;
+    if (y < terrainH(x, z) + 1.6 && Math.hypot(x - CAMP.tent.x, z - CAMP.tent.z) < 1.7) return true;
+    for (const [rx, rz, size] of ROCK_SPOTS) if (y < terrainH(x, z) + size * 0.85 && Math.hypot(x - rx, z - rz) < size * 0.75) return true;
+  }
+  return false;
+}
+const catView = { hidden: false, at: 0, onScreen: true, still: 0, subNear: false };
+const _tagAt = new THREE.Vector3(), _catP = new THREE.Vector3();
+function updateCatTag(dt) {
+  const show = catTagOn && started && mode === 'view' && !zen && !book.open && journal.classList.contains('hidden') && !rest.on && !indoor.leaving && cat.inside === indoor.on;
+  if (!show) { catTag.hide(); return; }
+  const d = Math.hypot(camera.position.x - cat.x, camera.position.z - cat.z);
+  const far = 1 - clamp((d - 7) / 6, 0, 1);
+  cat.headPos(_tagAt);
+  _tagAt.y += 0.11 + 0.012 * Math.min(d, 8);           // just clear of its ear tips up close, a little more far off
+  // a little stronger when it is in the middle of your view, or when you can do something with it
+  _catP.copy(_tagAt).project(camera);
+  const centre = 1 - clamp((Math.hypot(_catP.x, _catP.y) - 0.2) / 0.5, 0, 1);
+  const near = actKind === 'cat' ? 1 : 0;
+  const want = far * (catView.hidden ? 0 : 1) * (0.78 + 0.22 * Math.max(centre, near));
+  // the second line (what it is up to) only close by, with a margin so it does not flick on and off
+  // as you sway on the edge of the distance
+  if (d < 3.2) catView.subNear = true; else if (d > 3.9) catView.subNear = false;
+  const line = catView.subNear || !catMenu.classList.contains('hidden') ? catMind.status() : '';
+  catTag.update(_tagAt, want, line, dt, camera, innerWidth, innerHeight);
 }
 function petCorgi() {
   if (corgi.distanceTo(camBase.x, camBase.z) > 2.4) return;
   const wasAsleep = corgi.state === 'sleep';
   corgi.pet();
+  aimAt(corgi.x, corgi.y + 0.3, corgi.z);
   audio.init();
   const rel = wrapYaw(Math.atan2(corgi.x - camBase.x, -(corgi.z - camBase.z)) / DEG - view.yaw);
   audio.bark(clamp(rel / 60, -1, 1), clamp(1.6 - corgi.distanceTo(camBase.x, camBase.z) * 0.4, 0, 1));
@@ -1382,6 +1826,16 @@ const bookOf = (id) => SHELF.find((b) => b.id === id);
 import('../private/money/book.js').then(({ default: b }) => {
   if (!b || !Array.isArray(b.pages) || SHELF.some((x) => x.id === b.id)) return;
   SHELF.push({ ...b, imgBase: 'private/money/img/' });
+  if (book.open && !book.id) renderShelf();
+}).catch(() => {});
+import('../private/negotiation1/book.js').then(({ default: b }) => {
+  if (!b || !Array.isArray(b.pages) || SHELF.some((x) => x.id === b.id)) return;
+  SHELF.push({ ...b, imgBase: 'private/negotiation1/img/' });
+  if (book.open && !book.id) renderShelf();
+}).catch(() => {});
+import('../private/negotiation2/book.js').then(({ default: b }) => {
+  if (!b || !Array.isArray(b.pages) || SHELF.some((x) => x.id === b.id)) return;
+  SHELF.push({ ...b, imgBase: 'private/negotiation2/img/' });
   if (book.open && !book.id) renderShelf();
 }).catch(() => {});
 /** the saved page of a book ('id:n' in read.at) */
@@ -1534,6 +1988,7 @@ function renderShelf() {
 }
 function showShelf() {
   book.id = '';
+  hideToc();
   $('readView').classList.add('hidden');
   $('shelfView').classList.remove('hidden');
   renderShelf();
@@ -1556,16 +2011,21 @@ function openVolume(id) {
   void sheet.offsetWidth;
   sheet.classList.add('turn-in-next');
   // the contents: every page that opens a heading of its own (long books only)
-  const toc = $('bookToc');
-  toc.textContent = '';
+  const tocPanel = $('bookTocPanel'), tocBtn = $('bookTocBtn');
+  tocPanel.textContent = '';
+  let chapCount = 0;
   book.pages.forEach((p, i) => {
     if (isCont(p)) return;
-    const o = document.createElement('option');
-    o.value = String(i);
-    o.textContent = p.h.length > 46 ? `${p.h.slice(0, 44)}…` : p.h;
-    toc.append(o);
+    chapCount++;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toc-item';
+    btn.dataset.page = String(i);
+    btn.textContent = p.h.length > 62 ? `${p.h.slice(0, 60)}…` : p.h;
+    btn.addEventListener('click', () => { jumpPage(i); hideToc(); });
+    tocPanel.append(btn);
   });
-  toc.classList.toggle('hidden', toc.options.length < 4);
+  tocBtn.classList.toggle('hidden', chapCount < 4);
   renderPage();
   savePage(id, book.i);
   story.note(`l:${id}`);
@@ -1610,16 +2070,30 @@ function renderPage() {
   $('bookProg').style.setProperty('--p', (book.pages.length > 1 ? book.i / (book.pages.length - 1) : 1).toFixed(4));
   $('bookPrev').disabled = book.i === 0;
   $('bookNext').disabled = book.i === book.pages.length - 1;
-  // the contents list follows the page: the last heading at or before it
-  const toc = $('bookToc');
-  let cur = '';
-  for (const o of toc.options) if (Number(o.value) <= book.i) cur = o.value;
-  toc.value = cur;
+  // highlight the current chapter in the TOC panel and show its name in the running head
+  const tocPanel = $('bookTocPanel');
+  let curChapTitle = '';
+  for (const btn of tocPanel.querySelectorAll('.toc-item')) {
+    const pi = Number(btn.dataset.page);
+    const active = pi <= book.i;
+    btn.classList.toggle('toc-active', false);
+    if (active) curChapTitle = btn.textContent.replace(/^▸\s+/, '');
+  }
+  // mark only the last chapter at or before current page
+  const items = tocPanel.querySelectorAll('.toc-item');
+  let lastActive = null;
+  for (const btn of items) { if (Number(btn.dataset.page) <= book.i) lastActive = btn; }
+  if (lastActive) lastActive.classList.add('toc-active');
+  // show chapter name in the middle of the running head (only for long books with many chapters)
+  const chapEl = $('bookChap');
+  const tocBtn = $('bookTocBtn');
+  if (chapEl) chapEl.textContent = (!tocBtn.classList.contains('hidden') && curChapTitle && curChapTitle !== p.h) ? curChapTitle : '';
   $('bookSheet').scrollTop = 0;
 }
 /** go straight to a page (the contents list): the same settling-in as a turned page */
 function jumpPage(to) {
   if (!book.id || !(to >= 0 && to < book.pages.length) || to === book.i) return;
+  hideToc();
   const dir = to > book.i ? 1 : -1, sheet = $('bookSheet');
   book.i = to;
   audio.page();
@@ -1683,7 +2157,8 @@ function paintPaper() {
     $('bookSheet').style.setProperty('--paper', `url(${cv.toDataURL()})`);
   } catch (e) { /* plain ivory then */ }
 }
-function openBook(open) {
+/** open (or close) the shelf; here: read where you sit (the rocking chair), not at the bench */
+function openBook(open, here = false) {
   if (open === book.open) return;
   paintPaper();
   book.open = open;
@@ -1692,16 +2167,37 @@ function openBook(open) {
   if (!open) { book.id = ''; return; }
   benchLampUi = -1;
   setStroll(false);
-  goSpot(SPOTS.findIndex((sp) => sp.id === 'bench'));
+  if (!here) {
+    goSpot(SPOTS.findIndex((sp) => sp.id === 'bench'));
+    story.mark('bench');
+    story.note(`b:${clock.seasonIndex}`);
+  }
   showShelf();
-  story.mark('bench');
-  story.note(`b:${clock.seasonIndex}`);
+}
+function hideToc() {
+  $('bookTocPanel').classList.add('hidden');
+  const btn = $('bookTocBtn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
 }
 $('bookPrev').addEventListener('click', () => turnPage(-1));
 $('bookNext').addEventListener('click', () => turnPage(1));
 $('bookShelf').addEventListener('click', showShelf);
-$('bookToc').addEventListener('change', (e) => { jumpPage(Number(e.target.value)); e.target.blur(); });
+$('bookTocBtn').addEventListener('click', (e) => {
+  const panel = $('bookTocPanel'), isOpen = !panel.classList.contains('hidden');
+  if (isOpen) { hideToc(); return; }
+  panel.classList.remove('hidden');
+  $('bookTocBtn').setAttribute('aria-expanded', 'true');
+  // scroll the active chapter into view
+  const active = panel.querySelector('.toc-active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
+  e.stopPropagation();
+});
 $('bookClose').addEventListener('click', () => openBook(false));
+// close the TOC panel when clicking anywhere outside it
+bookEl.addEventListener('click', (e) => {
+  if (!$('bookTocPanel').classList.contains('hidden') &&
+      !$('bookTocPanel').contains(e.target) && e.target !== $('bookTocBtn')) hideToc();
+});
 // a swipe across the page turns it (phones)
 {
   let x0 = null;
@@ -1712,43 +2208,108 @@ const actBtn = $('actBtn');
 let actKind = '';
 function updateActions() {
   // the bench lantern lights the shelf and the page too (a CSS variable, set only when it changes)
-  if (book.open && Math.abs(benchLamp - benchLampUi) > 0.02) { benchLampUi = benchLamp; bookEl.style.setProperty('--lamp', benchLamp.toFixed(2)); }
+  // (in the rocking chair it is the stove that lights the page: warm at night, a little by day)
+  const lampNow = indoor.on ? (clock.day < 0.35 ? 0.85 : 0.3) : benchLamp;
+  if (book.open && Math.abs(lampNow - benchLampUi) > 0.02) { benchLampUi = lampNow; bookEl.style.setProperty('--lamp', lampNow.toFixed(2)); }
   // what you can do right where you stand
   let kind = '';
   if (mode === 'view' && started && !rest.on && !indoor.leaving) {
     const x = camBase.x, z = camBase.z;
     const dog = corgi.distanceTo(x, z) < 2.0 && corgi.state !== 'happy';
     // the cat, when it is the nearer of the two (it does not come to you; you go to it)
-    const kitty = cat.distanceTo(x, z) < 1.7 && cat.state !== 'happy' && (!dog || cat.distanceTo(x, z) < corgi.distanceTo(x, z));
-    if (indoor.on) kind = Math.hypot(x - room.entry.x, z - room.entry.z) > 1.3 && dog ? 'pet' : 'leave';
-    else if (Math.hypot(x - PORCH.x, z - PORCH.z) < 3.6) kind = 'rest';
+    const same = cat.inside === indoor.on, dc = cat.distanceTo(x, z);
+    // the cat, when it is the nearer of the two (or the menu is already open)
+    const kitty = same && (dc < 2.4 && (!dog || dc < corgi.distanceTo(x, z) || !catMenu.classList.contains('hidden')));
+    // too far to touch, but near enough to call (and you can see it)
+    const callable = same && !kitty && dc < 14 && dc > 2.4 && catView.onScreen && !catView.hidden;
+    // sitting at something: the button is about that (get up, another pot, a book)
+    const fspot = !indoor.on && !fishing.active ? fishing.near(x, z) : null;
+    if (fishing.active) kind = fishUI.action()[0];
+    else if (pastime.kind === 'tea') {
+      const st = pastimes.tea.state;
+      kind = pastimes.canSip() ? 'sip' : pastimes.tea.sip >= 0 ? '' : st === 'idle' || st === 'cool' ? 'brew' : 'wait';
+    }
+    else if (pastime.kind === 'chair') kind = book.open ? '' : 'chairread';
+    else if (indoor.on) {
+      const chairNear = Math.hypot(x - room.chair.x, z - room.chair.z) < 1.25;
+      kind = Math.hypot(x - room.entry.x, z - room.entry.z) < 1.3 ? 'leave' : kitty ? 'cat' : chairNear ? 'chair' : dog ? 'pet' : 'leave';
+    } else if (Math.hypot(x - PORCH.x, z - PORCH.z) < 3.6) kind = 'rest';
     else if (nearBench(x, z, 2.2) && !book.open) kind = 'read';
-    else if (kitty && !book.open) kind = 'petcat';
+    else if (kitty && !book.open) kind = 'cat';
     else if (dog && !book.open) kind = 'pet';
     else if (snowmanNear(x, z, 2.0) && !book.open) kind = snowmanNear(x, z, 2.0) === snowman ? 'snow' : 'snow2';
+    else if (Math.hypot(x - TEA_SEAT.x, z - TEA_SEAT.z) < 1.6 && !book.open) kind = 'tea';
+    else if (fspot && !book.open) kind = 'fish';
+    else if (!indoor.on && scope.near(x, z) && !book.open) kind = 'scope';
+    else if (callable && !book.open) kind = 'callcat';
   }
+  if (kind !== 'cat' && !catMenu.classList.contains('hidden')) openCatMenu(false);
+  else refreshCatMenu();
   if (book.open && (walker.on || mode !== 'view')) openBook(false);           // standing up closes the book
+  // sitting anywhere: a small "get up" under the action button (not while a book covers the screen)
+  const sitting = mode === 'view' && started && (seat.on || !!pastime.kind || fishing.active) && !book.open && !rest.on;
+  if (sitting === upBtn.classList.contains('hidden')) upBtn.classList.toggle('hidden', !sitting);
+  const upText = fishing.active ? 'Cất cần câu' : 'Đứng dậy';
+  if (upLabel.textContent !== upText) upLabel.textContent = upText;
+  // while fishing the label follows the line (it changes within a kind: where the cast can go)
+  if (fishing.active) { const lab = fishUI.action()[1]; if (lab && actBtn.textContent !== lab) actBtn.textContent = lab; }
   if (kind !== actKind) {
     actKind = kind;
     actBtn.classList.toggle('hidden', !kind);
     if (kind === 'rest') actBtn.textContent = 'Vào nhà nghỉ · E';
     if (kind === 'read') actBtn.textContent = 'Ngồi đọc sách · E';
     if (kind === 'pet') actBtn.textContent = 'Vuốt ve corgi · E';
-    if (kind === 'petcat') actBtn.textContent = 'Vuốt ve Choco · E';
+    if (kind === 'cat') actBtn.textContent = 'Choco · E';
+    if (kind === 'callcat') actBtn.textContent = 'Gọi Choco · E';
     if (kind === 'snow') actBtn.textContent = 'Chào Bấc · E';
     if (kind === 'snow2') actBtn.textContent = 'Chào Mầm · E';
     if (kind === 'leave') actBtn.textContent = 'Rời nhà · E';
+    if (kind === 'tea') actBtn.textContent = 'Ngồi pha trà · E';
+    if (kind === 'brew') actBtn.textContent = pastimes.tea.sips || pastimes.tea.state === 'cool' ? 'Pha một ấm nữa · E' : 'Đun nước pha trà · E';
+    if (kind === 'sip') actBtn.textContent = 'Nhấp một ngụm · E';
+    if (kind === 'wait') actBtn.textContent = 'Đang đun nước…';
+    if (kind === 'getup') actBtn.textContent = 'Đứng dậy · E';
+    if (kind === 'chair') actBtn.textContent = 'Ngồi ghế bập bênh · E';
+    if (kind === 'chairread') actBtn.textContent = 'Đọc sách bên lò · E';
+    if (kind === 'fish') actBtn.textContent = clock.weights[3] > 0.5 ? 'Mặt nước đóng băng' : 'Câu cá · E';
+    if (kind === 'scope') actBtn.textContent = 'Nhìn qua kính · E';
+    if (kind.startsWith('f') && kind !== 'fish') actBtn.textContent = fishUI.action()[1];
   }
 }
 function doAction() {
   if (actKind === 'rest') restInCabin();
   else if (actKind === 'read') openBook(true);
   else if (actKind === 'pet') petCorgi();
-  else if (actKind === 'petcat') petCat();
+  else if (actKind === 'cat') openCatMenu(catMenu.classList.contains('hidden'));
+  else if (actKind === 'callcat') catAct('call');
   else if (actKind === 'snow' || actKind === 'snow2') greetSnowman();
   else if (actKind === 'leave') leaveCabin();
+  else if (actKind === 'tea') startTea();
+  else if (actKind === 'brew') { const why = pastimes.brew(fire.level); toast(why || 'Bạn bắc ấm nước lên lần nữa'); }
+  else if (actKind === 'getup') endPastime();
+  else if (actKind === 'sip') sipTea();
+  else if (actKind === 'wait') toast(pastimes.tea.state === 'pouring' ? 'Đang rót trà ra chén' : 'Nước đang reo dần, chờ chút nữa là sôi');
+  else if (actKind === 'chair') startChair();
+  else if (actKind === 'chairread') openBook(true, true);
+  else if (actKind === 'fish') startFishing();
+  else if (actKind === 'scope') { audio.init(); setStroll(false); setTour(false); scope.enter(clock.seasonIndex, clock.hour); }
+  else if (actKind === 'fcast') { const why = fishing.cast(); if (why) toast(why); }
+  else if (actKind === 'fstrike') { const why = fishing.strike(); if (why) toast(why); }
+  else if (actKind === 'freel') fishing.reel(true);
+  else if (actKind === 'frelease') fishing.release();
 }
-actBtn.addEventListener('click', doAction);
+actBtn.addEventListener('click', () => { if (actKind !== 'freel') doAction(); });
+// holding the button reels: the pointer is captured, so a finger that slides off the button keeps
+// reeling until it is lifted (or the browser cancels the touch, or the window loses focus)
+actBtn.addEventListener('pointerdown', (e) => {
+  if (actKind !== 'freel') return;
+  try { actBtn.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  fishing.reel(true);
+});
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) actBtn.addEventListener(ev, () => fishing.reel(false));
+const upBtn = $('upBtn');
+const upLabel = upBtn.querySelector('span');
+upBtn.addEventListener('click', () => { if (fishing.active) stopFishing(); else if (pastime.kind) endPastime(); else if (seat.on) setSeat(false); });
 
 // Pages are turned by what you actually do. Checked a few times a second, never per frame.
 const storyAcc = { walked: 0, bloom: 0, lie: 0, bench: 0, gaze: new Map(), flower: '', flowerT: 0 };
@@ -1870,7 +2431,7 @@ game.onToast = toast;
 game.onComplete = (c, first) => {
   meteor.wait = Math.min(meteor.wait, 1.2);
   story.mark('weave');
-  if (story.note(`w:${c.def.id}`)) {
+  if (story.note(`w:${c.def.id}`) && !game.myth) {
     syncKeepsakes();
     setTimeout(() => toast(`Một ngôi sao mới sẽ sáng mãi trên trời trại, ngay phía trên chòm ${c.def.name}. Sổ tay vừa mở thêm một chuyện chỉ người dệt mới biết`), 4200);
   }
@@ -1948,7 +2509,10 @@ function setMode(next) {
   document.body.classList.toggle('view', next === 'view');
   $('segPlay').setAttribute('aria-pressed', String(next === 'play'));
   $('segView').setAttribute('aria-pressed', String(next === 'view'));
-  if (next === 'play') { setTour(false); goSpot(0); view.yaw = wrapYaw(view.yaw); setDay(false, true); mood.auto = false; syncMoodChips(); }
+  if (next !== 'play' && game.myth) { game.endMyth(true); skyBook.hideCards(); }
+  if (next === 'play' && fishing.active) stopFishing(true);
+  if (next === 'play' && scope.active) scope.exit();
+  if (next === 'play') { endPastime(true); setTour(false); goSpot(0); view.yaw = wrapYaw(view.yaw); setDay(false, true); mood.auto = false; syncMoodChips(); }
   syncGameMode();
 }
 function setZen(on) {
@@ -1987,16 +2551,16 @@ $('photoBtn').addEventListener('click', () => { wantPhoto = true; });
 
 /* the control tray folds away so it never hides the view */
 $('dockToggle').addEventListener('click', () => {
+  if (menuUi) { menuUi.openMenu('settings'); return; }
   const min = document.body.classList.toggle('dock-min');
   $('dockToggle').textContent = 'Thu gọn';
   $('dockToggle').setAttribute('aria-expanded', String(!min));
 });
-$('dockToggle').click();                         // start with the quick bar only
-$('qMore').addEventListener('click', () => $('dockToggle').click());
-$('qPhoto').addEventListener('click', () => { wantPhoto = true; });
-$('qStroll').addEventListener('click', () => setStroll(!stroll.on));
+document.body.classList.add('dock-min');       // the old dock is only where the controls wait to be moved into the menu
+$('qMore').addEventListener('click', () => menuUi.openMenu('settings'));
 $('qJournal').addEventListener('click', () => openJournal(true));
-$('qTime').addEventListener('click', cyclePhase);
+
+$('qTime').addEventListener('click', () => timePop.toggle());
 
 /* picture quality: automatic by default, or pinned by the visitor */
 [['auto', 'Tự động'], ['low', 'Thấp'], ['medium', 'Vừa'], ['high', 'Cao']].forEach(([id, label]) => {
@@ -2015,6 +2579,66 @@ $('qTime').addEventListener('click', cyclePhase);
   $('qualityChips').appendChild(b);
 });
 
+/* how the picture is drawn: what the automatic quality aims for, and three things to switch off */
+let swayOn = store.get('settings.sway', true) && !REDUCED;
+[['smooth', 'Mượt', 'Giữ khung hình đều nhất: bớt cỏ, hoa, rồi giảm độ phân giải khi máy chậm'],
+  ['balanced', 'Cân bằng', 'Bớt chi tiết khi khung hình xuống dưới khoảng 42 mỗi giây'],
+  ['beauty', 'Đẹp', 'Chỉ bớt lớp cực quang và xoá phông; không bao giờ giảm cỏ, hoa hay độ phân giải']].forEach(([id, label, title]) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'chip';
+  b.dataset.priority = id;
+  b.textContent = label;
+  b.title = `${title}. Chỉ có tác dụng khi Chất lượng là Tự động.`;
+  b.setAttribute('aria-pressed', String(store.get('settings.priority', 'balanced') === id));
+  b.addEventListener('click', () => {
+    setPriority(id);
+    for (const c of $('priorityChips').children) c.setAttribute('aria-pressed', String(c.dataset.priority === id));
+  });
+  $('priorityChips').appendChild(b);
+});
+/* the "Trải nghiệm và hỗ trợ" group: the easy or hands-on way for each activity (saved; the activity's own card shows the same choice) */
+function optChips(boxId, key, def, opts, after) {
+  const box = $(boxId);
+  const sync = () => { for (const c of box.children) c.setAttribute('aria-pressed', String(c.dataset.v === store.get(key, def))); };
+  for (const [v, label, title] of opts) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.dataset.v = v; b.textContent = label; b.title = title;
+    b.addEventListener('click', () => { store.set(key, v); sync(); if (after) after(v); });
+    box.appendChild(b);
+  }
+  sync();
+  return sync;
+}
+const syncOptFish = optChips('optFish', 'fish.mode', 'relaxed', [['relaxed', 'Thư giãn', 'Tự giật khi lỡ nhịp, tự nhả dây khi cá vùng chạy, dây không đứt'], ['manual', 'Thủ công', 'Tự giật, tự giữ độ căng dây']], (v) => fishing.setMode(v));
+const syncOptScope = optChips('optScope', 'sky.scope', 'assist', [['assist', 'Hỗ trợ', 'Chọn mục tiêu, ống kính tự quay tới và tự lấy nét'], ['manual', 'Tự ngắm', 'Tự tìm bằng kính tìm và tự chỉnh nét']]);
+const syncOptWeave = optChips('optWeave', 'sky.weave', 'relax', [['relax', 'Thư giãn', 'Không giới hạn thời gian, có đường gợi ý'], ['challenge', 'Thử thách', 'Luật như trò dệt sao thường']]);
+$('resetHelp').addEventListener('click', () => {
+  store.set('fish.mode', 'relaxed'); store.set('sky.scope', 'assist'); store.set('sky.weave', 'relax'); fishing.setMode('relaxed');
+  syncOptFish(); syncOptScope(); syncOptWeave();
+  if (!catTagOn) $('tagBtn').click();
+  toast('Phần Trải nghiệm và hỗ trợ đã về mặc định. Tiến trình không đổi');
+});
+$('resetPic').addEventListener('click', () => {
+  for (const [id, key] of [['lensBtn', 'settings.lens'], ['bloomBtn', 'settings.bloom'], ['swayBtn', 'settings.sway']]) if (!store.get(key, true)) $(id).click();
+  const p = [...$('priorityChips').children].find((c) => c.dataset.priority === 'balanced'); if (p) p.click();
+  if (store.get('settings.quality', 'auto') !== 'auto') { toast('Hình ảnh về mặc định. Trang sẽ tải lại để dùng chất lượng Tự động'); setTimeout(() => $('qualityChips').children[0].click(), 900); }
+  else toast('Hình ảnh đã về mặc định');
+});
+$('resetSound').addEventListener('click', () => { ui.volume.value = '70'; ui.volume.dispatchEvent(new Event('input')); if (audio.muted) setMuted(false); toast('Âm thanh đã về mặc định'); });
+$('dockMute').addEventListener('click', () => { audio.init(); setMuted(!audio.muted); });
+$('dockBackup').addEventListener('click', () => openJournal(true, 'data'));
+function toggleChip(id, key, apply) {
+  const el = $(id);
+  const sync = () => el.setAttribute('aria-pressed', String(store.get(key, true)));
+  sync();
+  el.addEventListener('click', () => { store.set(key, !store.get(key, true)); sync(); apply(store.get(key, true)); });
+}
+toggleChip('lensBtn', 'settings.lens', () => { lens.user = lensWanted(); });
+toggleChip('bloomBtn', 'settings.bloom', (on) => { bloom.enabled = on; });
+toggleChip('swayBtn', 'settings.sway', (on) => { swayOn = on && !REDUCED; });
+if (REDUCED) $('swayBtn').title += ' (máy của bạn đang đặt giảm chuyển động, nên máy quay luôn đứng yên)';
+
 /* time of day and season */
 const timeSlider = $('timeSlider');
 let clockShown = '';
@@ -2031,7 +2655,7 @@ function syncClockFace() {
   const text = `${clockText(clock.hour)} · ${clock.part.name}`;
   if (text === clockShown) return;
   clockShown = text;
-  $('qTime').textContent = text;
+  $('qTimeText').textContent = text;
   $('timeLabel').textContent = `${text} · ${clock.season.name}`;
   if (document.activeElement !== timeSlider) timeSlider.value = clock.hour.toFixed(2);
 }
@@ -2214,7 +2838,7 @@ function syncFriends() {
     labelBox.parentNode.insertBefore(label, labelBox);
     friends.set(id, { ...f, label, x: o.x, z: o.z, yaw: o.yaw, speed: 0, stride: 0, wave: 0 });
   }
-  $('qFriends').textContent = party.active ? `Bạn đường · ${party.count}` : 'Đi cùng bạn';
+  $('qFriendsText').textContent = party.active ? `Bạn đường · ${party.count}` : 'Bạn bè';
   $('partyWho').textContent = party.active
     ? (party.count ? `Đang đi cùng: ${[...party.others.values()].map((o) => o.name).join(', ')}` : 'Chưa có ai vào. Gửi mã phòng cho bạn của bạn.')
     : '';
@@ -2346,6 +2970,8 @@ const compassStrip = $('compassStrip');
 }
 const guideArrow = $('guideArrow'), guideText = $('guideText');
 let lastGuide = '';
+const guideTo = { name: '', x: 0, z: 0 };
+function setGuide(name, x, z) { guideTo.name = name; guideTo.x = x; guideTo.z = z; lastGuide = ''; }
 function updateCompass() {
   const heading = ((view.yaw % 360) + 360) % 360;
   compassStrip.style.transform = `translateX(${(-(heading + 360) * PPD).toFixed(1)}px)`;
@@ -2364,8 +2990,14 @@ function updateCompass() {
   if (trek.dist - trek.saveAt > 60) { trek.saveAt = trek.dist; saveTrek(); }
   let text = 'Bạn đã tới mọi điểm trên bản đồ';
   // by night the guide points at the sky instead: the constellation worth finding tonight
-  const cid = uDay.value < 0.15 && mode === 'view' ? starHint() : '';
-  if (cid) {
+  const cid = uDay.value < 0.15 && mode === 'view' && !guideTo.name ? starHint() : '';
+  const gd = guideTo.name ? Math.hypot(guideTo.x - camBase.x, guideTo.z - camBase.z) : 0;
+  if (guideTo.name && gd < 3.5) { toast(`Đã tới ${guideTo.name}`); guideTo.name = ''; }
+  if (guideTo.name) {
+    const bearing = Math.atan2(guideTo.x - camBase.x, -(guideTo.z - camBase.z)) / DEG;
+    guideArrow.style.transform = `rotate(${wrapYaw(bearing - heading).toFixed(0)}deg)`;
+    text = `➜ ${guideTo.name} · ${Math.round(gd)} m`;
+  } else if (cid) {
     const c = game.byId(cid);
     _cen.set(0, 0, 0);
     for (const d of c.dirs) _cen.add(d);
@@ -2378,7 +3010,7 @@ function updateCompass() {
     guideArrow.style.transform = `rotate(${wrapYaw(bearing - heading).toFixed(0)}deg)`;
     text = `${best.name} · ${Math.round(bd)} m`;
   }
-  guideArrow.style.visibility = best || cid ? 'visible' : 'hidden';
+  guideArrow.style.visibility = best || cid || guideTo.name ? 'visible' : 'hidden';
   if (text !== lastGuide) { lastGuide = text; guideText.textContent = text; }
 }
 
@@ -2406,10 +3038,12 @@ function updateCompass() {
 function setMuted(m) {
   audio.setMuted(m);
   ui.soundBtn.setAttribute('aria-pressed', String(!m));
+  const dm = document.getElementById('dockMute');
+  if (dm) { dm.setAttribute('aria-pressed', String(m)); dm.textContent = m ? 'Bật tiếng' : 'Tắt tiếng'; }
   $('icoSoundOn').classList.toggle('hidden', m);
   $('icoSoundOff').classList.toggle('hidden', !m);
 }
-ui.soundBtn.addEventListener('click', () => { audio.init(); setMuted(!audio.muted); });
+ui.soundBtn.addEventListener('click', () => { audio.init(); soundPop.toggle(); });
 function syncVolume() {
   const v = Number(ui.volume.value);
   ui.volume.style.setProperty('--fill', `${v}%`);
@@ -2428,8 +3062,36 @@ $('fsBtn').addEventListener('click', toggleFullscreen);
 
 /* journal */
 const journal = $('journal');
+/** Choco's page: who it is to you now (in words, never a number), what you have seen it do, what has happened */
+const CAT_ABOUT = [
+  'Con mèo vện mũm mĩm của trại, bạn thân của Bơ. Nó vẫn đang quan sát bạn từ xa. Chìa tay thật chậm, ngồi yên một lúc, rồi để nó tự quyết.',
+  'Choco đã quen bạn: bạn quay lại là nó đi ra chào, đuôi dựng cao, có hôm cọ má vào chân bạn. Nó vẫn có lúc muốn yên, và bạn nhận ra được.',
+  'Choco tin bạn: có lúc đi theo bạn một quãng, nằm dưới chân khi bạn đọc sách, chớp mắt thật chậm với bạn. Nó vẫn là mèo: vẫn tự chọn chỗ nằm của nó.',
+];
+function renderCatPage() {
+  $('catSum').textContent = CAT_ABOUT[bondLevel(catMind.bond)];
+  const ul = $('catList');
+  ul.innerHTML = '';
+  const add = (head, text, cls) => {
+    const li = document.createElement('li');
+    if (cls) li.className = cls;
+    const b = document.createElement('b');
+    b.textContent = head;
+    li.append(b, text);
+    ul.appendChild(li);
+  };
+  const seen = Object.keys(HABITS).filter((id) => catMind.habits.has(id));
+  if (seen.length) add('Thói quen đã thấy', seen.map((id) => HABITS[id]).join(' '));
+  else add('Thói quen đã thấy', 'Chưa ghi được gì. Cứ để ý nó một lúc: nó có nếp sống riêng của nó, sáng, trưa, chiều, đêm.');
+  for (const id of Object.keys(MARKS)) if (catMind.marks.has(id)) add('Kỷ niệm', MARKS[id], 'memory');
+}
+const catSafe = (x, z) => !wetAt(x, z);
+const catToyCtx = { indoor: false, room, blocks: CAT_BLOCKS, ground: terrainH, safe: catSafe };
+let journalReturn = null;
 function openJournal(open, focusId) {
+  if (open && journal.classList.contains('hidden')) journalReturn = document.activeElement;
   if (open) {
+    renderMine();
     const km = trek.dist >= 1000 ? `${(trek.dist / 1000).toFixed(2)} km` : `${Math.round(trek.dist)} m`;
     $('trekSum').textContent = `Đã đi bộ ${km} · đã tới ${trek.found.size}/${PLACES.length} điểm. Cột mốc gỗ có chóp vàng đánh dấu từng nơi; la bàn phía trên chỉ hướng tới điểm gần nhất bạn chưa đến.`;
     const tl = $('trekList');
@@ -2462,6 +3124,7 @@ function openJournal(open, focusId) {
       li.append(sm, body);
       cl.appendChild(li);
     }
+    renderCatPage();
     const sl = $('storyList');
     sl.innerHTML = '';
     const nextCh = story.current;
@@ -2591,11 +3254,220 @@ function openJournal(open, focusId) {
       list.appendChild(li);
     }
     $('dataStatus').textContent = store.persistent ? '' : 'Trình duyệt đang chặn lưu trữ (chế độ riêng tư?), nên tiến trình sẽ mất khi đóng trang.';
-    if (focusId) requestAnimationFrame(() => { const el = $(`lore-${focusId}`); if (el) el.scrollIntoView({ block: 'start' }); });
+    // which tab: the one asked for, else the one left open last time
+    const fishId = focusId && focusId.startsWith('fish') ? focusId.slice(5) : '';
+    const tab = ['data', 'trip', 'mine'].includes(focusId) ? focusId : focusId === 'guide' ? 'guide' : focusId && focusId.startsWith('fish') ? 'fish' : focusId && LORE[focusId] ? 'sky' : focusId === 'sky' ? 'sky' : journalNav.current || 'trip';
+    journal.classList.remove('hidden');
+    journalNav.show(tab);
+    if (fishId) fishBook.show(fishId);
+    if (focusId && LORE[focusId]) requestAnimationFrame(() => { const el = $(`lore-${focusId}`); if (el) el.scrollIntoView({ block: 'start' }); });
+  } else {
+    fishBook.hide();
+    if (journalReturn && journalReturn.isConnected && !journal.classList.contains('hidden')) {
+      const back = journalReturn; journalReturn = null;
+      requestAnimationFrame(() => { try { back.focus({ preventScroll: true }); } catch (e) { /* ignore */ } });
+    }
   }
   journal.classList.toggle('hidden', !open);
 }
 $('journalBtn').addEventListener('click', () => openJournal(true));
+/** the sky tab: the observing log, the myths, the old constellation stories (filled by skybook) */
+let skyBook = null;
+function renderSky() { if (skyBook) skyBook.render(); }
+const fishBook = createFishBook($('fishBook'), renderer);
+/* the myth chapters of the star game (myths.js, skybook.js): weaving one chapter at a time */
+function startMythChapter(lineId, ch) {
+  const line = mythLine(lineId);
+  if (!line || !line.chapters[ch]) return;
+  openJournal(false);
+  if (fishing.active) stopFishing(true);
+  game.startMyth(lineId, ch, line.chapters[ch].cons, line.chapters.map((c) => c.cons), store.get('sky.weave', 'relax') === 'relax');
+  if (mode !== 'play') setMode('play');
+  skyBook.showLead(lineId, ch);
+}
+game.onMyth = (m) => {
+  story.note(`y:${m.line}${m.ch}`);
+  skyBook.chapterDone(m.line, m.ch, { next: () => startMythChapter(m.line, m.ch + 1), home: () => setMode('view') });
+};
+const journalNav = createJournalNav(journal, {
+  onShow: (id) => {
+    if (id === 'fish') fishBook.show(); else fishBook.hide();
+    if (id === 'sky') renderSky();
+  },
+});
+orreryRef = createOrrery({ renderer, store, audio });
+function openOrrery() {
+  openJournal(false); if (menuUi) menuUi.closeMenu();
+  if (fishing.active) stopFishing(true);
+  if (scope.active) scope.exit();
+  if (mode === 'play') setMode('view');
+  orrRet = { yaw: view.yawT, pitch: view.pitchT, fov: view.fovT };
+  orreryRef.open(clock.seasonIndex, clock.hour);
+}
+let orrRet = null;
+$('orreryOpen').addEventListener('click', openOrrery);
+
+/* ------------------------------------------------ the menu (menu.js, menucontent.js) */
+// The old dock's controls are moved into the menu's settings groups (same elements, same ids).
+const dockRows = (secId) => [...$(secId).closest('.dock-sec').querySelectorAll(':scope > .dock-row')];
+const timeRow = $('timeSlider').closest('.dock-row'), seasonRow = $('seasonChips').closest('.dock-row');
+const soundRows = dockRows('dockSound');
+// "Điều khiển": the keys (they cannot be changed yet) and the hints card
+const controlsBox = document.createElement('div');
+controlsBox.className = 'm-keys';
+controlsBox.innerHTML = `<dl>
+  <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / mũi tên</dt><dd>đi bộ (giữ <kbd>Shift</kbd> để chạy); trên điện thoại: cần điều khiển góc trái</dd>
+  <dt>kéo chuột / ngón tay</dt><dd>nhìn quanh · cuộn hoặc chụm hai ngón để phóng to</dd>
+  <dt><kbd>E</kbd></dt><dd>làm việc của nút vàng trong cảnh; giữ <kbd>E</kbd> để thu dây khi câu</dd>
+  <dt><kbd>Esc</kbd></dt><dd>đóng lớp trên cùng, đứng dậy, cất cần, rời kính</dd>
+  <dt><kbd>X</kbd> · <kbd>B</kbd> · <kbd>J</kbd> · <kbd>?</kbd></dt><dd>Khám phá · Tuỳ chỉnh · Sổ tay · Hướng dẫn</dd>
+  <dt><kbd>N</kbd> · <kbd>M</kbd> · <kbd>C</kbd></dt><dd>tua tới buổi kế tiếp · dệt sao · hình chòm sao</dd>
+  <dt><kbd>V</kbd> · <kbd>T</kbd> · <kbd>K</kbd></dt><dd>dạo vườn · tự lia máy · lưu góc nhìn</dd>
+  <dt><kbd>P</kbd> · <kbd>H</kbd> · <kbd>F</kbd> · <kbd>O</kbd></dt><dd>chụp ảnh · ẩn giao diện · toàn màn hình · tắt tiếng</dd>
+  <dt><kbd>Space</kbd> · <kbd>G</kbd></dt><dd>thêm củi · vẫy tay khi đi cùng bạn</dd></dl>`;
+const storyRow = document.createElement('div');
+storyRow.className = 'dock-row';
+storyRow.innerHTML = '<span class="label">Thẻ gợi ý</span>';
+{
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'chip'; b.id = 'storyCardBtn';
+  const sync = () => { const folded = document.getElementById('story').classList.contains('folded'); b.setAttribute('aria-pressed', String(!folded)); b.textContent = folded ? 'Đang thu gọn' : 'Đang mở'; };
+  b.addEventListener('click', () => { $('storyFold').click(); sync(); });
+  storyRow.append(b);
+  new MutationObserver(sync).observe(document.getElementById('story'), { attributes: true, attributeFilter: ['class'] });
+  sync();
+}
+// "Hỗ trợ": the size of the interface text (zoom on the panels, never on the 3D picture), the
+// system's reduced-motion setting (read, not overridden)
+const uiScaleRow = document.createElement('div');
+uiScaleRow.className = 'dock-row';
+uiScaleRow.innerHTML = '<span class="label">Cỡ chữ giao diện</span><div class="chips" role="group" aria-label="Cỡ chữ giao diện"></div>';
+const applyUiScale = (v) => { document.documentElement.style.setProperty('--ui-zoom', String(v)); document.body.classList.toggle('ui-zoomed', v !== 1); };
+for (const [v, label] of [[1, 'Vừa'], [1.12, 'Lớn'], [1.25, 'Rất lớn']]) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'chip'; b.textContent = label; b.dataset.v = String(v);
+  b.addEventListener('click', () => { store.set('settings.uiScale', v); applyUiScale(v); for (const c of b.parentElement.children) c.setAttribute('aria-pressed', String(c === b)); });
+  b.setAttribute('aria-pressed', String(store.get('settings.uiScale', 1) === v));
+  uiScaleRow.lastElementChild.append(b);
+}
+applyUiScale(store.get('settings.uiScale', 1));
+const motionRow = document.createElement('div');
+motionRow.className = 'dock-row';
+motionRow.innerHTML = `<span class="label">Giảm chuyển động</span><span class="dock-note">${REDUCED ? 'Đang bật theo cài đặt của máy: máy quay đứng yên, cá trong Bách thư đứng yên, các hình hiện ngay.' : 'Đang tắt theo cài đặt của máy. Bật "giảm chuyển động" trong hệ điều hành để máy quay và hình minh hoạ đứng yên; có thể tắt riêng "Máy quay trôi nhẹ" ở mục Hình ảnh.'}</span>`;
+const dataRow = document.createElement('div');
+dataRow.className = 'dock-row';
+dataRow.innerHTML = '<span class="label">Sao lưu</span>';
+for (const [id, label] of [['dataExport', 'Lưu ra file'], ['dataImport', 'Khôi phục từ file']]) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = label;
+  b.addEventListener('click', () => $(id).click());
+  dataRow.append(b);
+}
+{
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = 'Xoá tiến trình…';
+  b.title = 'Mở thẻ Dữ liệu trong Sổ tay: phải bấm xác nhận lần nữa ở đó. Cài đặt hiển thị của máy này được giữ.';
+  b.addEventListener('click', () => { menuUi.closeMenu(); openJournal(true, 'data'); });
+  dataRow.append(b);
+}
+const resetBtn = (id) => $(id);
+const menuCfg = {
+  root: $('menu'),
+  hosts: {
+    world: [timeRow, seasonRow, ...dockRows('dockTime').filter((r) => r !== timeRow && r !== seasonRow && !r.contains($('spots')))],
+    picture: [resetBtn('resetPic'), ...dockRows('dockPic')],
+    sound: [resetBtn('resetSound'), ...soundRows],
+    controls: [controlsBox, storyRow],
+    help: [resetBtn('resetHelp'), uiScaleRow, motionRow, ...dockRows('dockHelp')],
+    data: [...dockRows('dockData'), dataRow],
+  },
+  build: {},
+  items: () => [],
+  onOpen: () => { keys.clear(); fishing.reel(false); timePop.toggle(false); soundPop.toggle(false); },
+  status: () => {
+    const c = $('cloudStatus').textContent;
+    if (!store.persistent) return 'Trình duyệt đang chặn lưu: tiến trình sẽ mất khi đóng trang';
+    return c && !/trên máy/.test(c) ? `Đã lưu trên máy này · ${c}` : 'Đã lưu trên máy này';
+  },
+  photo: () => { wantPhoto = true; },
+  friends: () => openParty(true),
+};
+const menuUi = createMenu(menuCfg);
+const mc = menuContent({
+  store,
+  close: () => menuUi.closeMenu(),
+  menu: menuUi,
+  toast,
+  pos: () => camBase,
+  hour: () => clock.hour, season: () => clock.seasonIndex, winter: () => clock.weights[3], dark: () => uDay.value < 0.15,
+  timeText: () => $('qTimeText').textContent,
+  setGuide,
+  places: () => PLACES.map((p) => ({ ...p, found: trek.found.has(p.id) })),
+  spots: () => SPOTS, goSpot: (i) => { if (mode !== 'view') setMode('view'); goSpot(i); },
+  fishSpots: fishing.spots,
+  scope: SCOPE, porch: PORCH, tea: TEA_SEAT, bench: { x: GARDEN_BENCH.x - 1.2, z: GARDEN_BENCH.z + 1.2 },
+  strolling: () => stroll.on, stroll: (on) => { if (mode !== 'view') setMode('view'); setStroll(on); },
+  touring: () => tour.on, tour: (on) => setTour(on),
+  weave: () => setMode('play'),
+  orrery: () => openOrrery(),
+  myth: (line, ch) => startMythChapter(line, ch),
+  journal: (tab) => openJournal(true, tab),
+  consOn: () => showCons, cons: () => $('conBtn').click(),
+  lampOn: () => lanternOn, lamp: () => $('lampBtn').click(),
+  lastBook: () => { const id = store.get('read.book', ''); const b = id && SHELF.find((x) => x.id === id); if (!b) return null; const at = store.get('read.at', []).find((x) => x.startsWith(id + ':')); return { title: b.title, page: at ? Number(at.split(':')[1]) + 1 : 1 }; },
+  optFishRow: () => fishRowLive(),
+  optSkyRows: () => skyRowsLive(),
+  photo: () => { wantPhoto = true; }, saveView: () => saveView(), friends: () => openParty(true),
+  fullscreen: () => toggleFullscreen(), zen: () => setZen(true),
+});
+// the activity options shown inside the Câu cá and Bầu trời groups: live copies of the same choice
+function optRow(label, key, def, opts, after) {
+  const row = document.createElement('div');
+  row.className = 'm-chips';
+  row.setAttribute('role', 'group'); row.setAttribute('aria-label', label);
+  for (const [v, text] of opts) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'm-chip'; b.textContent = text;
+    b.setAttribute('aria-pressed', String(store.get(key, def) === v));
+    b.addEventListener('click', () => { store.set(key, v); for (const c of row.children) c.setAttribute('aria-pressed', String(c === b)); if (after) after(v); syncOptFish(); syncOptScope(); syncOptWeave(); });
+    row.append(b);
+  }
+  return row;
+}
+function fishRowLive() { return optRow('Cách câu', 'fish.mode', 'relaxed', [['relaxed', 'Thư giãn'], ['manual', 'Thủ công']], (v) => fishing.setMode(v)); }
+function skyRowsLive() {
+  const d = document.createElement('div');
+  const l1 = document.createElement('p'); l1.className = 'm-note'; l1.textContent = 'Kính thiên văn:';
+  const l2 = document.createElement('p'); l2.className = 'm-note'; l2.textContent = 'Dệt chương thần thoại:';
+  d.append(l1, optRow('Cách ngắm kính', 'sky.scope', 'assist', [['assist', 'Hỗ trợ: tự quay tới, tự lấy nét'], ['manual', 'Tự ngắm']]), l2, optRow('Cách dệt chương', 'sky.weave', 'relax', [['relax', 'Thư giãn'], ['challenge', 'Thử thách']]));
+  return d;
+}
+// the menu's content and search come from menucontent.js (built each time a group is shown)
+menuCfg.build = mc.build;
+menuCfg.items = mc.items;
+$('qExplore').addEventListener('click', () => { if (menuUi.open && menuUi.section !== 'settings') menuUi.closeMenu(); else menuUi.openMenu('overview'); });
+// Giờ & mùa: its own small panel (the time row and the season chips move into it while it is open)
+const timePop = popover($('qTime'), 'timePop', 'Giờ và mùa', (pop) => {
+  pop.innerHTML = '';
+  const h = document.createElement('div'); h.className = 'm-pophead';
+  h.innerHTML = `${menuIcon('clock')}<b>Giờ &amp; mùa</b>`;
+  const jump = document.createElement('div'); jump.className = 'm-chips';
+  for (const ph of PHASES) { const b = document.createElement('button'); b.type = 'button'; b.className = 'm-chip'; b.textContent = `Tới ${ph.name.toLowerCase()}`; b.addEventListener('click', () => { setPhase(ph.id); toast(`Tua tới ${ph.name.toLowerCase()}`); }); jump.append(b); }
+  const note = document.createElement('p'); note.className = 'm-note'; note.textContent = 'Một ngày trong thung lũng dài khoảng mười sáu phút; mỗi bình minh sang mùa mới khi thời gian đang trôi.';
+  pop.append(h, timeRow, seasonRow, jump, note);
+});
+// Âm thanh: a small panel from the speaker button (the volume row moves into it)
+const soundPop = popover(ui.soundBtn, 'soundPop', 'Âm thanh', (pop) => {
+  pop.innerHTML = '';
+  const h = document.createElement('div'); h.className = 'm-pophead';
+  h.innerHTML = `${menuIcon('sound')}<b>Âm thanh</b>`;
+  pop.append(h, ...soundRows);
+});
+
+skyBook = createSkyBook({
+  root: $('obsBook'), obsSum: $('obsSum'), mythSum: $('mythSum'),
+  startChapter: startMythChapter,
+  openScopeGuide: () => { openJournal(false); setGuide('Kính thiên văn', SCOPE.x, SCOPE.z + 1.6); toast('La bàn chỉ tới kính thiên văn trên đồi sau trại'); },
+  progress: (line, ch, id) => game.mythProgress(line, ch, id),
+});
 
 /* the save file: back it up, bring it back, or start over */
 $('dataExport').addEventListener('click', () => {
@@ -2625,21 +3497,172 @@ $('dataFile').addEventListener('change', async () => {
     $('dataStatus').textContent = 'Bấm “Xoá tiến trình” lần nữa trong 4 giây để xoá hành trình, sổ hoa, các trang đã lật và kỷ lục.';
   });
 }
+/* ------------------------------------------------------- the valley as yours */
+// A name for the valley, up to six favourite views, a choice of decoration for the porch and the
+// tent, and the first times worth remembering. All in me.* in the save; "Đặt lại phần riêng"
+// clears only that table (the diary, the flower book and the rest of the progress stay).
+const VALLEY_DEFAULT = 'Aurora Vale';
+const TITLE_DEFAULT = document.title;
+const cleanValley = (t) => String(t).replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trimStart().slice(0, 32);
+function valleyName() { return store.get('me.valley', '').trim() || VALLEY_DEFAULT; }
+function syncValley() {
+  const n = valleyName();
+  document.querySelectorAll('.brand').forEach((el) => { el.textContent = n; });
+  document.title = n === VALLEY_DEFAULT ? TITLE_DEFAULT : `${n} · Aurora Vale`;
+  $('journalEyebrow').textContent = n === VALLEY_DEFAULT ? 'Sổ tay của người đi bộ' : `Sổ tay ở ${n}`;
+}
+$('valleyName').addEventListener('input', (e) => {
+  const v = cleanValley(e.target.value);
+  if (v !== e.target.value) e.target.value = v;
+  store.set('me.valley', v.trim());
+  syncValley();
+});
+function viewName(x, z) {
+  let best = null, bd = Infinity;
+  for (const p of PLACES) { const d = Math.hypot(x - p.x, z - p.z) - p.r; if (d < bd) { bd = d; best = p; } }
+  return best && bd < 12 ? best.name : 'Một góc thung lũng';
+}
+const parseView = (id) => { const v = id.split(',').map(Number); return v.length >= 4 && v.slice(0, 4).every(Number.isFinite) ? v : null; };
+function saveView() {
+  if (indoor.on || mode !== 'view' || !started) { toast('Góc ngắm chỉ lưu được khi đang ở ngoài trời'); return; }
+  const list = store.get('me.views', []);
+  if (list.length >= 6) { toast('Đã giữ đủ sáu góc. Bỏ bớt một góc trong Sổ tay rồi lưu tiếp'); return; }
+  const eye = clamp(camBase.y - terrainH(camBase.x, camBase.z), 0.3, 30);
+  const id = `${Math.round(camBase.x)},${Math.round(camBase.z)},${Math.round(wrapYaw(view.yaw))},${Math.round(view.pitch)},${eye.toFixed(1)}`;
+  if (list.includes(id)) { toast('Góc này đã có trong Sổ tay'); return; }
+  store.set('me.views', [...list, id]);
+  renderMine();
+  toast(`Đã giữ góc ngắm: ${viewName(camBase.x, camBase.z)}`);
+}
+function goView(id) {
+  const v = parseView(id);
+  if (!v) return;
+  const [x, z, yaw, pitch, eye = 1.7] = v;
+  openJournal(false);
+  endPastime(true);
+  setStroll(false); setTour(false);
+  const hop = $('hop');
+  hop.classList.add('on');
+  setTimeout(() => {
+    if (indoor.on) leaveRoom();
+    const px = clamp(x, BOUNDS.minX, BOUNDS.maxX), pz = clamp(z, BOUNDS.minZ, BOUNDS.maxZ);
+    walker.on = false;
+    camTarget.set(px, terrainH(px, pz) + clamp(eye, 0.3, 30), pz);
+    camBase.copy(camTarget);
+    view.yaw = view.yawT = wrapYaw(yaw); view.pitch = view.pitchT = clamp(pitch, -60, 60); view.fovT = baseFov;
+    [...$('spots').children].forEach((c) => c.setAttribute('aria-pressed', 'false'));
+    hop.classList.remove('on');
+  }, REDUCED ? 0 : 340);
+}
+function setDecor(slot, variant, announce) {
+  if (!DECOR[slot]) return;
+  pastimes.setDecor(slot, variant);
+  const list = store.get('me.decor', []).filter((x) => !x.startsWith(`${slot}:`));
+  if (pastimes.chosen[slot]) list.push(`${slot}:${pastimes.chosen[slot]}`);
+  store.set('me.decor', list);
+  if (Q.shadow) renderer.shadowMap.needsUpdate = true;        // they cast into the sun's map
+  shadowStale = true;
+  if (announce) {
+    const v = DECOR[slot].variants.find(([id]) => id === pastimes.chosen[slot]);
+    toast(`${DECOR[slot].name}: ${v ? v[1].toLowerCase() : 'để trống'}`);
+  }
+}
+for (const d of store.get('me.decor', [])) { const [slot, variant] = d.split(':'); pastimes.setDecor(slot, variant); }
+function renderMine() {
+  $('valleyName').value = store.get('me.valley', '');
+  const ul = $('viewList');
+  ul.innerHTML = '';
+  const views = store.get('me.views', []);
+  if (!views.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'Chưa có góc nào. Đứng ở chỗ bạn thích, nhìn về phía bạn thích, rồi bấm K.';
+    ul.appendChild(li);
+  }
+  views.forEach((id, i) => {
+    const v = parseView(id);
+    if (!v) return;
+    const li = document.createElement('li');
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'chip view-go';
+    go.textContent = `${i + 1}. ${viewName(v[0], v[1])}`;
+    go.title = 'Tới góc này';
+    go.addEventListener('click', () => goView(id));
+    const rm = document.createElement('button');
+    rm.type = 'button'; rm.className = 'chip';
+    rm.textContent = 'Bỏ';
+    rm.setAttribute('aria-label', `Bỏ góc ${i + 1}, ${viewName(v[0], v[1])}`);
+    rm.addEventListener('click', () => { store.set('me.views', store.get('me.views', []).filter((x) => x !== id)); renderMine(); });
+    li.append(go, rm);
+    ul.appendChild(li);
+  });
+  const rows = $('decorRows');
+  rows.innerHTML = '';
+  for (const [slot, d] of Object.entries(DECOR)) {
+    const row = document.createElement('div');
+    row.className = 'mine-row';
+    const lab = document.createElement('span');
+    lab.className = 'label';
+    lab.textContent = d.name;
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    chips.setAttribute('role', 'group');
+    chips.setAttribute('aria-label', d.name);
+    for (const [id, name] of d.variants) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'chip';
+      b.textContent = name;
+      b.setAttribute('aria-pressed', String(pastimes.chosen[slot] === id));
+      b.addEventListener('click', () => { setDecor(slot, id, true); renderMine(); });
+      chips.appendChild(b);
+    }
+    row.append(lab, chips);
+    rows.appendChild(row);
+  }
+}
+$('viewSave').addEventListener('click', () => { if (!journal.classList.contains('hidden')) { openJournal(false); setTimeout(saveView, 50); } else saveView(); });
+{
+  let armed = 0;
+  $('mineReset').addEventListener('click', () => {
+    if (performance.now() - armed < 4000) {
+      store.resetTable('me');
+      for (const slot of Object.keys(DECOR)) pastimes.setDecor(slot, '');
+      if (Q.shadow) renderer.shadowMap.needsUpdate = true;
+      syncValley(); renderMine();
+      $('mineStatus').textContent = 'Đã đặt lại: tên thung lũng, các góc ngắm, đồ trang trí và những lần đầu. Nhật ký và tiến trình vẫn còn.';
+      armed = 0;
+      return;
+    }
+    armed = performance.now();
+    $('mineStatus').textContent = 'Bấm “Đặt lại phần riêng” lần nữa trong 4 giây để xoá tên thung lũng, các góc ngắm và đồ trang trí. Nhật ký, sổ hoa và tiến trình giữ nguyên.';
+  });
+}
+syncValley();
+
 $('journalClose').addEventListener('click', () => openJournal(false));
 journal.addEventListener('click', (e) => { if (e.target === journal) openJournal(false); });
 
-addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
-addEventListener('blur', () => keys.clear());
+addEventListener('keyup', (e) => { const k = e.key.toLowerCase(); keys.delete(k); if (k === 'e') fishing.reel(false); if (scope.active) scope.key(e, false); });
+addEventListener('blur', () => { keys.clear(); fishing.reel(false); });
 addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (scope.active && scope.key(e, true)) return;
+  if (orreryRef && orreryRef.active) { if (!orreryRef.key(e)) { /* other keys do nothing while the model is open */ } return; }
   const k = e.key.toLowerCase();
-  const typing = e.target instanceof HTMLInputElement && e.target.type === 'text';
+  const typing = (e.target instanceof HTMLInputElement && ['text', 'search'].includes(e.target.type)) || e.target instanceof HTMLTextAreaElement;
+  if (!catMenu.classList.contains('hidden') && !typing && k >= '1' && k <= '6' && !e.repeat) {
+    e.preventDefault();
+    const b = catBtns[Number(k) - 1];
+    if (b && !b.disabled) catAct(b.dataset.act);
+    return;
+  }
   if (book.open && !typing && ['arrowleft', 'arrowright', 'a', 'd', 'backspace', 'pageup', 'pagedown'].includes(k)) {
     e.preventDefault();                            // reading: the keys turn pages, they do not walk
     if (k === 'backspace') showShelf();
     else if (book.id) turnPage(k === 'arrowleft' || k === 'a' || k === 'pageup' ? -1 : 1);
     return;
   }
+  if (menuUi && menuUi.open && !typing && k !== 'escape' && k !== 'x' && k !== 'b') return;   // the menu is a dialog: keys stay in it
   if (started && MOVE_KEYS.has(k) && !typing) {
     keys.add(k);
     if (k.startsWith('arrow')) e.preventDefault();
@@ -2652,7 +3675,16 @@ addEventListener('keydown', (e) => {
   }
   if (typing && k !== 'escape') return;
   if (k === 'escape') {
-    if (rest.on || indoor.on) leaveCabin();
+    if (menuUi && menuUi.open) menuUi.closeMenu();
+    else if (timePop.open) timePop.toggle(false);
+    else if (soundPop.open) soundPop.toggle(false);
+    else if (!catMenu.classList.contains('hidden')) openCatMenu(false);
+    else if (!journal.classList.contains('hidden')) openJournal(false);
+    else if (fishing.active) stopFishing();
+    else if (book.open && pastime.kind) openBook(false);           // closing the book first, still in the chair
+    else if (pastime.kind) endPastime();
+    else if (seat.on) setSeat(false);
+    else if (rest.on || indoor.on) leaveCabin();
     else if (book.open) openBook(false);
     else if (!partyBox.classList.contains('hidden')) openParty(false);
     else if (!journal.classList.contains('hidden')) openJournal(false);
@@ -2663,10 +3695,13 @@ addEventListener('keydown', (e) => {
   else if (k === 'f') toggleFullscreen();
   else if (k === 'p') wantPhoto = true;
   else if (k === 'g' && party.active) $('partyWave').click();
-  else if (k === 'b') $('dockToggle').click();
+  else if (k === 'b') { if (menuUi.open && menuUi.section === 'settings') menuUi.closeMenu(); else menuUi.openMenu('settings'); }
   else if (k === 'n') cyclePhase();
   else if (k === 'e') { if (rest.on) leaveCabin(); else if (book.open) openBook(false); else doAction(); }
   else if (k === 'j') openJournal(journal.classList.contains('hidden'));
+  else if (k === 'x') { if (menuUi.open && menuUi.section !== 'settings') menuUi.closeMenu(); else menuUi.openMenu('overview'); }
+  else if (e.key === '?') openJournal(true, 'guide');
+  else if (k === 'k' && mode === 'view') saveView();
   else if (k === 't' && mode === 'view') setTour(!tour.on);
   else if (k === 'v' && mode === 'view') setStroll(!stroll.on);
   else if (k === 'c' && mode === 'view') $('conBtn').click();
@@ -2676,8 +3711,23 @@ addEventListener('keydown', (e) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) audio.suspend();
-  else audio.resume();
+  else { audio.resume(); perfAcc = 0; perfFrames = 0; adapt.win.length = 0; }   // the hidden time is not a slow frame
 });
+
+// The graphics card can drop the page's WebGL context (a driver reset, the GPU process restarting,
+// too many tabs). three.js cannot rebuild a scene this size by itself (baked textures, render
+// targets, shadow maps), so the honest fallback: say so, keep the save (it is written already),
+// and reload the page when the browser hands the context back, or on a click if it does not.
+canvas.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();                       // ask the browser for the context back
+  store.flush();
+  audio.suspend();
+  const box = $('glLost');
+  box.classList.remove('hidden');
+  box.querySelector('button').focus();
+}, false);
+canvas.addEventListener('webglcontextrestored', () => { store.flush(); location.reload(); }, false);
+$('glLost').querySelector('button').addEventListener('click', () => { store.flush(); location.reload(); });
 
 function savePhoto() {
   canvas.toBlob((blob) => {
@@ -2704,25 +3754,101 @@ function savePhoto() {
 if (query.has('debug')) {
   window.__av = {
     camBase, view, walker, trek, party, friends, fire, tier, story, game, stroll, clock, store, rest, beds, garden, scene, rocks: ROCK_SPOTS,
-    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, petCat, snowman, benchSnow, greetSnowman, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
+    fishing, fishUI, startFishing, stopFishing, fishById, scope, orrery: () => orreryRef, startMythChapter, openOrrery,
+    restInCabin, leaveCabin, openBook, book, corgi, petCorgi, cat, catMind, catAct, catThings, toy, catTag, catView, seat, setSeat, openCatMenu, snowman, benchSnow, greetSnowman, indoor, room, enterRoom, leaveRoom, camera, camTarget, terrainH, renderer,
     actKind: () => actKind, wetAt, streamX, movers: () => (movers ? shared.light.uMoverOn.value : -1), openVolume, turnPage, showShelf, shelf: SHELF, pagesOf: (id) => pagesOf(bookOf(id), shelfCtx()),
     started: () => started,
+    warm: () => warmState,
     setPixelRatio: (p) => { pixelRatio = p; resize(); },
     cloud, perfTotal: () => ({ ...perfTotal }),
     gpu: () => {
       const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
       return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown renderer';
     },
-    quality: () => ({ pixelRatio, grassFrac, flowerFrac, steps: skyMat.uniforms.uSteps.value, lens: lensPass.enabled }),
+    quality: () => ({ pixelRatio, grassFrac, flowerFrac, steps: skyMat.uniforms.uSteps.value, lens: lensPass.enabled, bloom: bloom.enabled, shed: adapt.shed, ceiling: adapt.ceiling, priority }),
+    applyShed, setPriority, adapt: () => adapt,
+    mergeOutput,
+    pastime, pastimes, startTea, startChair, endPastime, TEA_SEAT, saveView, goView, setDecor,
+    // the parts of the picture, so tools/costs.mjs can switch each off and time the frame
+    parts: () => ({ composer, lensPass, bloom, grass, beds, garden, sky, starPoints, mountainsMesh, terrainMesh, finalPass, movers }),
   };
+}
+
+/* --------------------------------------------------------- shader warm-up */
+// three.js builds a material's shader program the first time it is drawn. Measured on the 780M
+// (tools/hitch.mjs): the first step into the cabin stalled the page 3.3 s (15 programs built on
+// the spot), the first step back out 0.5 s, the first winter 0.08 s. So shortly after the first
+// frame, while the intro or the valley is on screen, those programs are built in the background
+// with compileAsync (KHR_parallel_shader_compile: the browser compiles off the main thread and
+// three only asks whether they are ready). They must be built for the same state as the real
+// draw or they are built again: the same lights (the room's, seen through the room's layer), the
+// same fog, and a render target bound (the scene is drawn into the composer's buffer, so no tone
+// mapping and linear output in its shaders). Things switched off for the season are included.
+let warmState = 'no';
+function warmShaders() {
+  if (!renderer.compileAsync || warmState !== 'no') return;
+  warmState = 'building';
+  const t0 = performance.now();
+  const only = (layer) => ({
+    traverse(cb) { scene.traverse((o) => { if (o.layers.isEnabled(layer)) cb(o); }); },
+    traverseVisible() {},
+  });
+  const prevTarget = renderer.getRenderTarget();
+  const outCam = camera.clone(), roomCam = camera.clone();
+  outCam.layers.set(0);
+  roomCam.layers.set(ROOM_LAYER);
+  let jobs;
+  try {
+    renderer.setRenderTarget(composer.readBuffer);
+    jobs = [renderer.compileAsync(only(0), outCam, scene), renderer.compileAsync(only(ROOM_LAYER), roomCam, scene)];
+  } catch (err) {
+    warmState = 'failed';
+    console.warn('shader warm-up skipped', err);
+    return;
+  } finally {
+    renderer.setRenderTarget(prevTarget);
+  }
+  Promise.all(jobs).then(() => {
+    // the star game's points and lines: their programs exist now, but ANGLE/D3D11 finishes a
+    // program on its first real draw (measured: the first frame of the star game or of a myth
+    // chapter drew in 31-41 ms instead of ~9). Shown for a few frames here (nothing to draw yet, so
+    // nothing appears), that cost is paid behind the intro card instead.
+    if (game.mode === 'off') {
+      game.group.visible = true;
+      setTimeout(() => { if (game.mode === 'off') game.group.visible = false; }, 300);
+    }
+    // what compileAsync cannot reach: the depth programs of the stove light's cube shadow (three
+    // makes them inside its shadow pass). One draw of the room, off screen, with the dog and the
+    // cat casting as they do in there, builds them now, not at the door. Skipped if you are
+    // already inside (they exist then).
+    if (Q.shadow && !indoor.on) {
+      const t1 = performance.now();
+      const was = [...corgi.meshes, ...cat.meshes].map((o) => o.castShadow);
+      for (const o of corgi.meshes) o.castShadow = true;
+      for (const o of cat.meshes) o.castShadow = !o.userData.shell;
+      const prev = renderer.getRenderTarget();
+      renderer.setRenderTarget(composer.readBuffer);
+      renderer.shadowMap.needsUpdate = true;
+      renderer.render(scene, roomCam);
+      renderer.setRenderTarget(prev);
+      [...corgi.meshes, ...cat.meshes].forEach((o, i) => { o.castShadow = was[i]; });
+      renderer.shadowMap.needsUpdate = true;              // the sun's map, next frame, as it was
+      if (movers) movers.render(camBase, shared.uSunDir.value, true, true);   // and the movers' depth programs
+      shadowStale = true;
+      warmState = `done in ${Math.round(performance.now() - t0)} ms (room shadow draw ${Math.round(performance.now() - t1)} ms)`;
+    } else warmState = `done in ${Math.round(performance.now() - t0)} ms`;
+  });
 }
 
 /* -------------------------------------------------------------- render loop */
 const frameClock = new THREE.Clock();
+// ?debug=1: how long the last frame spent in its own logic (js) and in handing the draws to WebGL (draw)
+const diag = query.has('debug') ? { js: 0, draw: 0 } : null;
+if (diag) window.__av.diag = diag;
 let time = Number(query.get('t')) || 0;
 let frames = 0;
 let skyAngle = (Number(query.get('sky')) || 0) * DEG;
-let perfAcc = 0, perfFrames = 0, perfSkip = 3;
+let perfAcc = 0, perfFrames = 0;
 let grassFrac = 1;
 let firstFrame = true;
 let storyClock = 0;
@@ -2731,6 +3857,7 @@ let dogLoop = query.get('dog') === 'run' ? 1 : 0;
 const _q = new THREE.Quaternion();
 const _fwd = new THREE.Vector3();
 const _m4 = new THREE.Matrix4();
+const lensFocus = { goal: 0, hold: 0 };
 
 // Quality ladder (automatic mode only). When frames drop, shed in this order:
 // aurora slices, lens blur, grass density, flower density, and resolution last.
@@ -2751,10 +3878,50 @@ function maybeSendTelemetry() {
     season: clock.season.id,
   }).then((ok) => { if (!ok) telemetrySent = false; });     // try again at the next window
 }
+// The ladder is a single number (shed): 0 = everything the tier has, each step one more thing
+// given up, always in the same order: aurora slices, the lens blur, a share of the grass, a share
+// of the flowers, then the resolution an eighth at a time (sharpness is kept longest). The
+// visitor's priority (settings.priority) sets the frame rate it aims for and how far down it may
+// go: "Đẹp" never touches grass, flowers or resolution. Decisions use the median of the last
+// three 2-second windows, wait 6 s after every change, and step back up only with real headroom;
+// a step up that has to be taken back within 20 s is not tried again this visit. None of this is
+// saved: the next visit starts from the top again.
+const PRIORITY = {
+  smooth: { down: 52, up: 72, max: 99 },
+  balanced: { down: 42, up: 62, max: 99 },
+  beauty: { down: 26, up: 48, max: 2 },
+};
+let priority = PRIORITY[store.get('settings.priority', 'balanced')] ? store.get('settings.priority', 'balanced') : 'balanced';
+const RES_STEPS = Math.max(0, Math.ceil((Q.maxPR - Q.minPR) / 0.125 - 0.01));
+const SHED_MAX = 4 + RES_STEPS;
+const adapt = { shed: 0, win: [], wait: 3, ceiling: SHED_MAX + 1, upAt: -1e9, upFrom: 0, refresh: 0 };
+// what the visitor switched off stays off whatever the ladder says; and the pass is skipped
+// whenever its aperture is shut (looking at something near: a bloom, the cat), see the frame loop
+const lens = { user: true, shed: false };
+function lensWanted() { return Q.lens > 0 && query.get('lens') !== '0' && store.get('settings.lens', true); }
+lens.user = lensWanted();
+function applyShed(n) {
+  adapt.shed = n;
+  skyMat.uniforms.uSteps.value = n >= 1 ? Math.max(14, Q.steps - 6) : Q.steps;
+  lens.shed = n >= 2;
+  const gf = n >= 3 ? 0.6 : 1;
+  if (gf !== grassFrac) { grassFrac = gf; for (const l of grass.userData.layers) l.geo.instanceCount = Math.floor(l.total * grassFrac); }
+  const ff = n >= 4 ? 0.55 : 1;
+  if (ff !== flowerFrac) { flowerFrac = ff; for (const b of flowerBeds) b.geo.instanceCount = Math.floor(b.total * flowerFrac); }
+  const pr = Math.max(Q.minPR, Q.maxPR - Math.max(0, n - 4) * 0.125);
+  if (Math.abs(pr - pixelRatio) > 0.001) { pixelRatio = pr; resize(); }
+}
+function setPriority(id) {
+  if (!PRIORITY[id]) return;
+  priority = id;
+  store.set('settings.priority', id);
+  adapt.ceiling = SHED_MAX + 1; adapt.win.length = 0; adapt.wait = 1;
+  if (adapt.shed > PRIORITY[id].max) applyShed(PRIORITY[id].max);
+}
 function adaptQuality(dt) {
-  if (dt > 0.5) return;                 // back from a hidden tab: that gap was not a frame
+  if (dt > 0.5) { perfAcc = 0; perfFrames = 0; return; }   // back from a hidden tab: that gap was not a frame
   perfAcc += dt; perfFrames++;
-  if (perfAcc < 1.5) return;
+  if (perfAcc < 2) return;
   const fps = perfFrames / perfAcc;
   // the same windows feed the average frame rate of the visit (the telemetry line), once the
   // start-up hitches are over, and only while the scene is actually being looked at
@@ -2762,35 +3929,38 @@ function adaptQuality(dt) {
   else if (started) { perfTotal.t += perfAcc; perfTotal.n += perfFrames; }
   perfAcc = 0; perfFrames = 0;
   maybeSendTelemetry();
-  if (perfSkip-- > 0 || qualityChoice !== 'auto') return;
-  if (fps >= 48) return;
-  const u = skyMat.uniforms.uSteps;
-  if (u.value > 14) {
-    u.value = Math.max(14, u.value - 6);
-  } else if (lensPass.enabled) {
-    lensPass.enabled = false;
-  } else if (grassFrac > 0.6) {
-    grassFrac = 0.6;
-    for (const l of grass.userData.layers) l.geo.instanceCount = Math.floor(l.total * grassFrac);
-  } else if (flowerFrac > 0.55) {
-    flowerFrac = 0.55;
-    for (const b of flowerBeds) b.geo.instanceCount = Math.floor(b.total * flowerFrac);
-  } else if (pixelRatio > Q.minPR + 0.01) {
-    pixelRatio = Math.max(Q.minPR, pixelRatio - 0.125);
-    resize();
-  }
-  perfSkip = 1;
+  adapt.refresh = Math.max(adapt.refresh * 0.98, fps);       // roughly what the screen allows
+  if (qualityChoice !== 'auto') return;
+  if (adapt.wait > 0) { adapt.wait--; return; }
+  adapt.win.push(fps);
+  if (adapt.win.length > 3) adapt.win.shift();
+  if (adapt.win.length < 3) return;
+  const med = [...adapt.win].sort((a, b) => a - b)[1];
+  const P = PRIORITY[priority];
+  const limit = Math.min(P.max, SHED_MAX);
+  if (med < P.down && adapt.shed < limit) {
+    // a step up that did not hold: do not climb past here again this visit
+    if (time - adapt.upAt < 20 && adapt.shed === adapt.upFrom - 1) adapt.ceiling = adapt.upFrom;
+    applyShed(adapt.shed + 1);
+  } else if (adapt.shed > 0 && adapt.shed - 1 < adapt.ceiling && med > Math.min(P.up, adapt.refresh * 0.93) && med > P.down * 1.25) {
+    adapt.upAt = time; adapt.upFrom = adapt.shed;
+    applyShed(adapt.shed - 1);
+  } else return;
+  adapt.win.length = 0;
+  adapt.wait = 3;                                            // 6 s before the next decision
 }
 
 function frame() {
   requestAnimationFrame(frame);
   const raw = frameClock.getDelta();
   if (document.hidden) return;
+  const tFrame = diag ? performance.now() : 0;
   const dt = Math.min(raw, 0.05);
   time += dt;
   frames++;
   shared.uTime.value = time;
   finalPass.uniforms.uTime.value = time;
+  finalPass.uniforms.uExposure.value = renderer.toneMappingExposure;
   finalPass.uniforms.uDay.value = uDay.value;
   skyMat.uniforms.uFrame.value = frames % 64;
 
@@ -2807,6 +3977,7 @@ function frame() {
     tour.t += dt;
     if (tour.t > 15) { tour.t = 0; tour.i++; tourGo(tour.i); }
   }
+  if (aim.soft > 0 && mode === 'view' && !tour.on) follow = 2.4;     // turning to look at the cat: unhurried
   const kf = 1 - Math.exp(-dt * follow);
   view.yaw += (view.yawT - view.yaw) * kf;
   view.pitch += (view.pitchT - view.pitch) * kf;
@@ -2821,11 +3992,13 @@ function frame() {
   updateWalk(dt);
   camBase.lerp(camTarget, 1 - Math.exp(-dt * (walker.on ? 12 : 1.3)));
   const par = mode === 'play' ? 1 : mode === 'intro' ? 0.5 : 0;
+  // the slow drift of the camera is decoration: off with "Máy quay trôi nhẹ", and under reduced motion
+  const sway = swayOn ? 1 : 0;
   camera.position.set(
-    camBase.x + pointer.sx * 1.7 * par + Math.sin(time * 0.07) * 0.3,
-    camBase.y + pointer.sy * 0.3 * par + Math.sin(time * 0.11) * 0.05,
+    camBase.x + pointer.sx * 1.7 * par + Math.sin(time * 0.07) * 0.3 * sway,
+    camBase.y + pointer.sy * 0.3 * par + Math.sin(time * 0.11) * 0.05 * sway,
     camBase.z);
-  camera.rotation.y = -view.yaw * DEG - pointer.sx * 0.07 * par + Math.sin(time * 0.05) * 0.008;
+  camera.rotation.y = -view.yaw * DEG - pointer.sx * 0.07 * par + Math.sin(time * 0.05) * 0.008 * sway;
   camera.rotation.x = view.pitch * DEG + pointer.sy * 0.035 * par;
   camera.updateMatrixWorld();
   sky.position.copy(camera.position);
@@ -2922,11 +4095,25 @@ function frame() {
     focusHit = hit;
     const want = mode === 'play' ? 0 : clamp(hit * 0.6, 0.3, 11);
     const u = lensPass.uniforms.uFocus;
-    u.value += (want - u.value) * (frames < 6 ? 1 : 1 - Math.exp(-dt * 3.5));   // no hunting on arrival
+    // No hunting: the ray often grazes the top of the planting and flicks between a bloom at 1 m
+    // and the valley at 40 m from one frame to the next. A new distance is taken only when it
+    // has held for 0.3 s (or is close to the current one), and the focus then travels in steps
+    // of ratio, not metres, at most about a factor of five a second, so it never snaps.
+    if (want === 0 || frames < 6) { lensFocus.goal = want; lensFocus.hold = 0; u.value = want; }
+    else {
+      if (lensFocus.goal <= 0 || Math.abs(Math.log(want / lensFocus.goal)) < 0.25) { lensFocus.goal = want; lensFocus.hold = 0; }
+      else if ((lensFocus.hold += dt) > 0.3) { lensFocus.goal = want; lensFocus.hold = 0; }
+      const lu = Math.log(Math.max(u.value, 0.3)), lg = Math.log(lensFocus.goal);
+      const step = clamp((lg - lu) * (1 - Math.exp(-dt * 3.5)), -1.6 * dt, 1.6 * dt);
+      u.value = Math.exp(lu + step);
+    }
     // and it stops down as the subject comes near: studying a flower, nothing is smeared;
     // the soft foreground is kept for the long views, where it gives depth
     const t = clamp((u.value - 1.5) / 6.5, 0, 1);
     lensPass.uniforms.uAperture.value = 0.13 * t * t * (3 - 2 * t);
+    // with the aperture shut the pass would only copy the picture (1.6-2.2 ms a frame on the 780M
+    // at 1900x980): leave it out of the chain then
+    lensPass.enabled = lens.user && !lens.shed && lensPass.uniforms.uAperture.value > 0.002;
   }
   updateLabels();
   updateCompass();
@@ -2940,14 +4127,38 @@ function frame() {
   {
     const moving = Math.hypot(camBase.x - catPrev.x, camBase.z - catPrev.z) > 0.15 * Math.max(dt, 1e-3);
     catPrev.x = camBase.x; catPrev.z = camBase.z;
+    catView.still = moving ? 0 : catView.still + dt;
+    const same = cat.inside === indoor.on;
+    cat.group.visible = same;
+    // a few times a second: is it on your screen, and is anything in the way?
+    catView.at -= dt;
+    if (catView.at <= 0) {
+      catView.at = 0.25;
+      catView.hidden = catHiddenFromYou();
+      cat.headPos(_catP).project(camera);
+      catView.onScreen = same && _catP.z < 1 && Math.abs(_catP.x) < 1.05 && Math.abs(_catP.y) < 1.05;
+    }
+    cat.onScreen = catView.onScreen;
     cat.update(dt, time, {
       px: camBase.x, pz: camBase.z, camY: indoor.on ? walker.eye : camBase.y - terrainH(camBase.x, camBase.z),
       cam: camera.position, moving,
-      night: clock.day < 0.3, light: indoor.on ? (clock.day < 0.35 ? 0.15 : 0.5) : dayAmt, indoor: indoor.on, room,
+      night: clock.day < 0.3, light: cat.inside ? (clock.day < 0.35 ? 0.15 : 0.5) : dayAmt, indoor: cat.inside, room,
       rest: petRest(cat),
-      ground: terrainH, blocks: CAT_BLOCKS, buddy: corgi,
+      ground: terrainH, blocks: CAT_BLOCKS, buddy: same ? corgi : null,
+      hour: clock.hour, season: clock.seasonIndex, winter: clock.weights[3], fire: fire.level,
+      sameSpace: same && started && mode === 'view', seen: same && catView.onScreen && !catView.hidden && cat.distanceTo(camBase.x, camBase.z) < 14,
+      los: same && !catView.hidden, sitting: seat.on || !!pastime.kind, still: catView.still, reading: book.open, safe: catSafe,
     });
+    const toyCtx = catToyCtx;
+    toyCtx.indoor = cat.inside;
+    toy.update(dt, toyCtx);
+    if (toy.active && !toy.fade && ((toyStowAt && performance.now() > toyStowAt) || (toy.idle > 45 && !catMind.playing))) { toy.stow(); toyStowAt = 0; }
   }
+  followCat(dt);
+  updateCatTag(dt);
+  updatePastime(dt);
+  pastimes.animate(time, 1 - dayAmt, REDUCED);
+  if (fishing.active) { fishing.update(dt, time); if (frames % 3 === 0) fishUI.update(); }
   if (frames % 6 === 0) updateActions();
   if (frames % 12 === 0) updateStory(Math.min(0.6, (time - storyClock)));
   if (frames % 12 === 0) storyClock = time;
@@ -2958,12 +4169,19 @@ function frame() {
   }
   // shadows that move: outdoors the dog's and companions' little map; indoors the stove light's
   // cube map, redrawn every third frame as the flame shifts (nothing else is in it then)
+  const tDraw = diag ? performance.now() : 0;
   if (movers) {
     if (indoor.on) shared.light.uMoverOn.value = 0;
     else movers.render(camBase, shared.uSunDir.value, dayAmt > 0.03 && shared.light.uSunReach.value > 0.02);
   }
   if (indoor.on && Q.shadow) renderer.shadowMap.needsUpdate = true;        // every frame: the room is small, and the flame never steps
-  composer.render(dt);
+  scope.update(dt);
+  if (orreryRef && orreryRef.active) orreryRef.render(dt);
+  else if (orrRet) { view.yaw = view.yawT = orrRet.yaw; view.pitch = view.pitchT = orrRet.pitch; view.fovT = orrRet.fov; orrRet = null; }
+  // the eyepiece covers the screen; while a fish turns in the book (the journal is a modal over the
+  // valley) the last picture of the valley is kept: the model's read-back would otherwise wait on it
+  else if (!scope.active && !(fishBook.viewing && !journal.classList.contains('hidden'))) composer.render(dt);
+  if (diag) { diag.js = tDraw - tFrame; diag.draw = performance.now() - tDraw; }
   if (Q.shadow && (shadowStale || !shared.light.uShadowOn.value) && sunLight.shadow.map) {
     shadowStale = false;
     shared.light.uShadowMap.value = sunLight.shadow.map.texture;
@@ -2988,6 +4206,7 @@ function frame() {
   if (firstFrame) {
     firstFrame = false;
     $('loader').classList.add('done');
+    setTimeout(warmShaders, 600);
     const auto = query.get('auto');
     if (auto === 'play' || auto === 'view') start(auto);
     else if (auto === 'zen') start('view', true);

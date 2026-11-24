@@ -12,6 +12,7 @@ void main(){
 export const flameFragment = /* glsl */ `
 uniform float uTime;
 uniform float uFire;      // 0.3 (embers) .. 1.0 (roaring)
+uniform float uDay;       // 0 night .. 1 full day
 varying vec2 vUv;
 ${commonGLSL}
 void main(){
@@ -28,7 +29,9 @@ void main(){
   f = pow(f, 1.25);
   vec3 col = mix(vec3(1.0, 0.22, 0.03), vec3(1.0, 0.70, 0.22), f);
   col = mix(col, vec3(1.0, 0.95, 0.80), smoothstep(0.72, 1.0, f));
-  gl_FragColor = vec4(col * f * (1.5 + 1.5 * uFire), 1.0);
+  // by day a fire is a pale, see-through thing next to the sun: half as bright, so the bloom does
+  // not turn it into a pillar of light at noon (it kept its full glow in daylight before)
+  gl_FragColor = vec4(col * f * (1.5 + 1.5 * uFire) * mix(1.0, 0.5, uDay), 1.0);
 }
 `;
 

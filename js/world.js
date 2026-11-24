@@ -1203,7 +1203,7 @@ export function createCamp(shared, rng) {
     fire.add(log);
   }
 
-  const fireUniforms = { uTime: shared.uTime, uFire: shared.uFire, uPixelRatio: shared.uPixelRatio, uScale: shared.uPointScale };
+  const fireUniforms = { uTime: shared.uTime, uFire: shared.uFire, uDay: shared.uDay, uPixelRatio: shared.uPixelRatio, uScale: shared.uPointScale };
   const flameGeo = new THREE.PlaneGeometry(1.9, 2.4);
   flameGeo.translate(0, 1.2, 0);
   const flame = new THREE.Mesh(flameGeo, new THREE.ShaderMaterial({

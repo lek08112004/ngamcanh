@@ -13,7 +13,7 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
   assuming anything. Deploying is outward-facing: **ask the owner first**, then deploy **a
   clean export of the last commit, never the working folder** (the folder holds `private/`,
   see below, and `wrangler pages deploy .` would upload it whatever `.gitignore` says):
-  `rm -rf ../ngamcanh-deploy && mkdir ../ngamcanh-deploy && git archive HEAD | tar -x -C ../ngamcanh-deploy && npx wrangler pages deploy ../ngamcanh-deploy --project-name ngamcanh --branch main`
+  `rm -rf ../ngamcanh-deploy && mkdir ../ngamcanh-deploy && git archive HEAD | tar -x -C ../ngamcanh-deploy && rm -rf ../ngamcanh-deploy/tools && npx wrangler pages deploy ../ngamcanh-deploy --project-name ngamcanh --branch main`
   (needs a one-time `npx wrangler login`, which opens the owner's browser).
 - **`private/`** (git-ignored, on the owner's machine only): the owner's own full books. Now
   `private/money/` = *Tâm Lý Học Về Tiền* (Morgan Housel, bản dịch Hoàng Thị Minh Phúc), full
@@ -35,8 +35,11 @@ The owner writes in **Vietnamese**; reply in Vietnamese. All UI text is Vietname
   browsers; never put a secret/service_role key in the repo.
 - **Privacy rule the owner set:** nothing personal in the repo or the site. Commits use the
   local identity `Aurora Vale <aurora-vale@users.noreply.github.com>` — keep it. Never put
-  real names, emails or machine paths in files. This file, `README.md` and `tools/` are
-  served publicly.
+  real names, emails or machine paths in files. This file and `README.md` are
+  served publicly. `tools/` is left out of the deploy (`.gitattributes` export-ignore, and the
+  deploy command removes it too); the old live copy still has it until the next deploy. `?debug=1`
+  (`window.__av` and every test hook behind it) works only on localhost / 127.0.0.1 / [::1]
+  (`main.js` and `cloud.js` drop it elsewhere), so a test from a phone over the LAN has no hooks.
 
 ## Hard constraints
 
@@ -83,7 +86,25 @@ js/seasons.js         the calendar and clock: SEASONS, GROW, BED_PLAN, skyAt/sun
 js/library.js         the seven books on the garden bench shelf (classics, a reading-notes book, the valley's own books)
 js/cabinroom.js       the room inside the cabin (its own render layer), its lights, and what you can walk through in it
 js/corgi.js           Bơ the camp corgi: capsule model, vertex-colour coat, four-beat gait, a small mind of its own
-js/cat.js             Choco the camp cat: one skinned mesh, a tabby coat in vertex colours, fur shells up close, a cat's habits
+js/cat.js             Choco the camp cat's body: one skinned mesh, a tabby coat in vertex colours, fur shells up close, poses, steering
+js/catmind.js         Choco's mind: drives, behaviours as generators at a fixed 8 Hz, seeded, what you offer it, bond and memories
+js/catprops.js        Choco's shelter, scratching post and water bowl by the cabin; the ball of wool
+js/pastimes.js        tea by the fire (stool, tray, kettle, steam, its little state machine) and the decorations you may choose
+js/fishdata.js        the 18 fish of the valley + 8 reference pages (data only, sources), the fishing spots, drawFish()
+js/fishmodel.js       procedural fish: lofted body per family, ribbed fins, painted coat (canvas), cached per species
+js/fishing.js         rod, line, float, ripples; the fishing state machine (aim, cast, wait, hooked, landed, release)
+js/fishui.js          the fishing card, the tension meter, the catch card; writes the catch into the save (once)
+js/fishbook.js        "Bách thư cá" in the journal: list, filters, search, species pages with a turning model
+js/journalnav.js      the journal's tabs (ARIA tabs, keyboard)
+js/astro.js           the computed sky: observer, the season's nights, GMST, Sun, Moon, planets (Standish), targets
+js/skyinfo.js         what the observing log says about each telescope target, with sources; the Pleiades' nine
+js/telescope.js       the telescope on the south hill (3D) and the eyepiece view (Canvas2D), finder, eyepieces, focus
+js/orrery.js          "Đài mô phỏng": Sun, planets, Earth (tilted axis), Moon; its own scene, drawn instead of the valley
+js/myths.js           two Greek myth lines (Perseus/Andromeda, Orion/Scorpius): chapters, tale vs sky, sources
+js/skybook.js         the journal's sky tab (observing log, myth chapters) and the chapter cards in the star game
+js/menu.js            the one menu (dialog, six groups, search, settings hosts, icons) and the HUD popovers
+js/menucontent.js     what each menu group shows, built from the real state; the search index
+js/nametag.js         the "Choco" name card over its head (HTML overlay)
 js/snowman.js         Bấc the winter snowman (an original character), his snow bank and the straw bed the animals sleep on
 js/movers.js          the per-frame shadow map for things that move (the corgi, companions)
 js/store.js           the save: one versioned JSON document in localStorage, schema-cleaned, export/import
@@ -97,9 +118,13 @@ js/audio.js           synthesised wind, fire, pad, chimes, birdsong, footsteps, 
 js/shaders/*.js       GLSL as JS template strings (see below)
 tools/shot.sh         screenshot through headless Chrome (virtual time)
 tools/drive.mjs       drive headless Chrome over the DevTools protocol (real time, real keys)
-tools/check.mjs       audio | walk | story (also the clock and the save) | party | fps — see Testing
+tools/check.mjs       audio | walk | story (also the clock and the save) | cat | party | fps — see Testing
+tools/perf.mjs        nine scenes, A/B interleaved, display cap lifted: mean/median/p95/p99, JS and draw time, calls, tris, passes
+tools/hitch.mjs       long frames after things done for the first time (cabin door, winter...), and programs built
+tools/costs.mjs       what each part of the picture costs: the frame time with one part switched off at a time
 tools/audio-probe.html renders every sound layer offline and prints level and spectrum
 tools/syntax.mjs      parses every module; fails if anything but store.js touches localStorage
+tools/fish-lab.html   every fish model side by side (?only=id,id&yaw=&pitch=&w=&ch=)
 supabase/schema.sql   the tables and RLS policies, as run on the owner's project
 package.json          dev scripts only (npm run serve | syntax | check | fps); the site has no dependencies
 ```
@@ -368,18 +393,96 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   night (`ctx.light`), an additive cornea and a glint, lids that blink, slow-blink at you, close
   asleep. Nose, mouth line, whiskers (lines, lit by `ctx.light`), ears that twitch on their own and
   flatten when the dog bustles past. Poses: stand, sit (tail round the feet), loaf, sleep, stretch
-  (after a nap), groom (licks the right forepaw, wipes its face). Mind: by day near the dog or
-  about home, sitting/grooming/loafing/napping; if you stay still nearby it may come and sit by
-  you; at night it walks to **beside Bơ** by the fire and sleeps (it picks the side of the dog that
-  is free); in the cabin: asleep on the rocking chair's blanket by night (`room.chair`), loafing on
-  the rug by day (`room.catSpot`). "Vuốt ve Choco · E" when it is nearer than the dog: purr and
-  sometimes a trill (`audio.purr`, `audio.meow`, synthesised), diary line `m:<season>`. It keeps off
-  `CAT_BLOCKS` (BLOCKS plus the two sitting logs, `CAMP_SEATS` from world.js). Shell fragments
-  discard NaN (a zero normal once blacked out the post chain). Cost next to it (780M): high
-  86.7 → 83.7 fps, medium 125 → 121, low none. Test hooks: `__av.cat.walkTo/hold/free/place`,
-  `__av.petCat()`, `?debug=1&eye=0.36` sets the walker's eye height. Honest limit: it is a careful
-  procedural model, not a scanned cat; up close the legs read as smooth tubes, the fur as a short
-  velvet, and there is no foot IK on slopes.
+  (after a nap), groom (licks the right forepaw, wipes its face), and (the Choco round, below)
+  crouch (drink, sniff), stalk, pounce, scratch (up on the post), knead, curl (turning round before
+  lying down), rub (leaning into you as it walks round you), a yawn (`jaw` bone + `maw` lining), a
+  head tilt. It keeps off `CAT_BLOCKS` (BLOCKS plus the two sitting logs, `CAMP_SEATS` from
+  world.js, plus its post and bowl). Shell fragments discard NaN (a zero normal once blacked out
+  the post chain); a per-vertex `furK` gives each part its fur length (none on the ears, which
+  used to grow a spiky fringe). Test hooks: `__av.cat.walkTo/hold/free/place` (hold/walkTo stop
+  the mind deciding; it still senses), `?debug=1&eye=0.36` sets the walker's eye height. Honest
+  limit: it is a careful procedural model, not a scanned cat; up close the legs read as smooth
+  tubes, the fur as a short velvet, and there is no foot IK on slopes.
+- **Choco's life** (the owner asked for a cat that is "cực kỳ dễ thương", with its own day,
+  character, memory and a natural bond with the player; nothing to tend, nothing to lose):
+  - **The mind** is `catmind.js` (`createMind(cat, env)`; `cat.js` is only the body and calls
+    `cat.brain`). It thinks at a fixed 8 beats a second with its own seeded random numbers
+    (`?debug=1&seed=N` fixes the seed), so behaviour does not depend on the frame rate. Each
+    behaviour is a generator (walk there, curl, sleep until...); `mind.lock` marks stretches
+    nothing spontaneous may cut (a leap, lying down, a stroke it accepted). Drives (energy, play,
+    company, a little thirst, `tol` = how much touch it welcomes now) only weight choices.
+    Priority in `urgent()`: unsafe spot (the unfrozen stream) > the dog bustling up (`yield`) >
+    accepted interactions > you reading at the bench > a quiet night beside you > night / indoor
+    night > far from home > (only after the current behaviour's `min`) your return (greet),
+    following you, the wool. Otherwise `choose()` scores the behaviours of `B` (nap, loaf,
+    sunbathe, groom, watch, wander, drink, scratch, shelter, dog, come; indoors inBed, inRug,
+    inWindow, inWander, perched), damps the two last chosen, and picks by weight; `mind.reason`
+    says why (debug only, `__av.catMind.debug()`). A day: wakes with a yawn and a stretch, scratches
+    the post, suns itself in the morning and late afternoon (fixed open spots, not computed
+    sunlight), naps in its shelter at a summer noon or any winter day, roams in the afternoon,
+    looks for Bơ at dusk, sleeps beside Bơ by the fire at night (in winter on Bấc's straw, walking
+    each leg round the snow bank; fire out: mostly its own shelter, re-chosen only if the fire has
+    stayed changed for 20 s).
+  - **Steering** (`cat.js` `steer`/`move`): round any circle across the way (always the same side
+    of the same obstacle), a detour when it stops getting closer, `cat.blocked` after two failed
+    detours (the mind then cools that behaviour and picks another). `ctx.safe` keeps it out of
+    the unfrozen stream (a cat already in the water may step anywhere, to get out). Routes are
+    waypoint lists (`cat.follow`): the way to the bench is the gravel walk under the rose arch
+    (`benchRoute` in main.js). It does not jump: the rocking chair is reached only by being put
+    there under the door's fade.
+  - **Its things** (`catprops.js`): a shelter with straw, a rope scratching post and a water bowl
+    beside the cabin by the porch (cabin frame x 3.1-3.7, z 4.6-6.0: in the unplanted strip and
+    outside the cabin's blocking circle, which once pushed the cat out of its own shelter); the
+    bowl turns to ice in deep winter and it does not drink there then. A wicker basket under the
+    shelf in the cabin (`room.catBed`; `room.confine(x, z, r, pet)` lets only the cat step in) and a
+    spot under the end window (`room.catWindow`; the window is painted, so it looks out at nothing
+    real). The ball of wool (`createToy`) is one reused mesh: rolled from your feet toward the cat,
+    friction, bounces, a 3.2 m leash, put away 7 s after a game or 45 s untouched.
+  - **You and it**: beside it "Choco · E" opens `#catMenu` (1-6: vuốt ve, chìa tay làm quen, gọi,
+    chớp mắt chậm, lăn cuộn len, ngồi cùng); 2.4-14 m away, in view and nothing between, "Gọi Choco
+    · E". `mind.can(kind)` greys a button with the reason (range, cooldown, asleep, through a wall,
+    not in the same place); `mind.offer(kind)` returns the line shown. It may refuse: strokes use
+    up `tol`; low, it turns its head and flicks its tail; twice in 40 s, it walks off (`avoid`).
+    Asleep it is not woken by strokes or calls. The door: the cat comes in with you only if it was
+    within 16 m of the porch (`cat.inside` is its own place; out of your place it is hidden and
+    offers nothing); put down asleep it sleeps on (`mind.moved`). The door wins over the cat for E.
+    "Ngồi cùng" lowers your eye to about 1 m; any step stands you up.
+  - **Bond and memory** (`store`: `cat.bond` 0-100, `cat.marks`, `cat.habits`, `settings.tags`):
+    each kind of thing counts less when repeated (halves every 4 min), no more than 6 points per
+    10 min, and nothing decays. Levels at 12 and 45 change distance, greeting, following, the slow
+    blink and the night beside you; never whether you may stroke it. Seven moments (`MARKS`: hello,
+    sun, play, buddy, place, reading, night) are recorded once each with a diary line `q:<id>`;
+    habits (`HABITS`) only when you could see it. The journal's "Choco" section is words only.
+  - **Name card** (`nametag.js`, `#catTag`): an HTML overlay (sharp text, no draw call, not in a
+    photo, hidden in zen / star game / book / journal / when "Tên bạn nhỏ" is off). Anchored above
+    the head bone, eased (slower vertically), faded by distance (7-13 m), screen edge and
+    occlusion; occlusion is tested 4 times a second against the ground, the cabin walls, the tent
+    and the boulders (`catHiddenFromYou`). A second line (`mind.status()`: Đang ngủ, Lim dim, Tò mò,
+    Muốn chơi, Đang chơi, Muốn yên) only within 3.2 m or with the menu open.
+  - **Sound**: one purr at a time (`audio.purrStop`, also at the door), a greeting trill at most
+    every 30 s, a soft `audio.tap` when a pounce hits the wool; only within 9 m and in your place.
+    Measured nowhere and listened to by nobody.
+  - Tests: `node tools/check.mjs cat` (28 checks: the card shown/hidden near, far, behind you,
+    behind the cabin, in zen, switched off; strokes accepted then refused then it walks off; the
+    bond cap; the greeting written once; asleep it is not woken; you walking off mid-greeting; the
+    wool game; out of the stream; the door both ways and from the garden; the walk to the bench;
+    an old save without its fields). A ten-minute unattended run (clock from 6:00 to 19:00, seed 5,
+    script only, not watched on screen): 24 changes of mind in the day's order, never standing still
+    more than 2 s while meaning to walk, no console error.
+  - Cost (780M, 1902x984, high, `tools/perf.mjs`, A = the tree before Choco's round on :8766):
+    three full interleaved runs of three rounds each, and four rounds of garden and cabin after the
+    basket was taken out of the stove's shadow map. Medians identical in every scene. Means, all
+    runs together: Choco up close -1.0 %, Choco by Bơ -1.0 %, winter night -0.4 %, garden +0.7 %
+    (last run), cabin +2.2 % (last run). The same code measured against itself moves the mean by up
+    to 6 % run to run (frame times land on 6.94 ms steps at 144 Hz), so "within noise, under 5 %"
+    is all this shows. Medium and low were not timed (looked at once each).
+  - Not done, on purpose: jumping (no landing spots worth the risk; the chair is reached only under
+    the door's fade); the window spot looks at a painted window; "sunny" spots are fixed places, not
+    computed sunlight; the outdoor props are not in `SHADOW_BOXES` checks beyond one look; the
+    sounds were not listened to; nobody has played it on a real phone (a 500 px wide headless
+    window only). The kneading, stalking, scratching, drinking, yawning poses and the props were
+    looked at in still pictures from two or three sides, the curl and the pounce only through the
+    state log, not frame by frame.
   The dog's place by the fire (`DOG_FIRE`) was moved: it used to be inside the west sitting log.
 - **Shadows of things that move** (`movers.js`): the corgi and companions cast into their own
   small orthographic depth map (22 m, 1024 on high / 768 on medium) around the viewer, redrawn
@@ -428,6 +531,257 @@ blossom/leaf cards), `mountains`, `light` (static sun shadow map + cloud shadows
   no shadow map and keeps the painted row shade instead.
 - **Lens blur** focuses where the view ray meets the ground or the flowers (`focusHit`) and
   stops down for near subjects. It only ever blurs what is nearer than the focus.
+
+## The world as yours, quiet things to do, and the picture's plumbing (this round)
+
+- **Shader warm-up** (`warmShaders` in `main.js`): three.js builds a program the first time a
+  material is drawn. Measured (`tools/hitch.mjs`, 780M, high): the first step into the cabin
+  stalled 3.3 s (15 programs), the first step out 0.5 s. 600 ms after the first frame the page
+  now builds them in the background with `renderer.compileAsync` (KHR_parallel_shader_compile)
+  for both layers, with the same lights, fog and **a render target bound** (the scene is drawn
+  into the composer's buffer: no tone mapping, linear output; compiled without one they would be
+  built again). The cube-shadow depth programs of the stove light and the movers' depth programs
+  cannot be reached that way: one off-screen draw of the room and one forced `movers.render(...,
+  force)` build them. That draw is a single 0.2-0.9 s stall about 2 s after load, while the intro
+  card is normally on screen (with `?auto=` it shows). After: into the cabin 70 ms, out 0 ms.
+  `__av.warm()` says how long it took. Anything new with its own material should be in the scene
+  graph at load (visible or not) so the warm-up reaches it.
+- **One pass fewer**: tone mapping (ACES, three's own constants) and the sRGB encode are done by
+  `FinalShader` itself (`TONE_AND_OUTPUT`), three's `OutputPass` stays in the chain switched off.
+  Checked pixel for pixel against the two-pass chain in three scenes: at most 1/255 apart
+  (`__av.mergeOutput(false)` restores the old chain). The exposure uniform is copied from
+  `renderer.toneMappingExposure` every frame; if you change tone mapping, change `post.js` too.
+- **Lens pass skipped when shut**: when the aperture is ~0 (looking at something near) the lens
+  pass is taken out of the chain (it cost 1.6-2.2 ms on the 780M just to copy the picture).
+  Autofocus no longer hunts: a new focus distance is taken only after it has held 0.3 s (or is
+  within ~25 % of the current one), and the focus moves in log distance, at most ~e^1.6 a second.
+- **Shadow edges at low sun**: a texel of the sun map lies stretched along the sun by
+  1/sin(elevation) on the ground; the narrowest filter radius in `sunShadowSoftMap` now grows with
+  it (1.1 texels at noon, up to 3.4 near sunset), and the movers' map uses four bilinear lookups
+  (it drew the cat's and dog's shadows as visible 2 cm squares, and long evening shadows as
+  staircases). The sun shadow camera's size moves in 4 m steps with hysteresis and its centre
+  sits on the texel grid (`fitSize` in `fitSunShadow`), so the texel size stays put for long
+  stretches instead of changing whenever an edge crossed a whole metre.
+- **The fire by day** is half as bright (`uDay` in the flame shader): at noon the bloom made it a
+  pillar of light.
+- **Adaptive quality** (`adaptQuality`, `applyShed`, `PRIORITY`): one number `adapt.shed`, steps
+  aurora → lens → grass → flowers → resolution (1/8 at a time). Median of three 2 s windows, 6 s
+  after any change before the next, steps back up with headroom, and a step up that has to be
+  undone within 20 s sets a ceiling for the visit. Not saved. `settings.priority` (Mượt /
+  Cân bằng / Đẹp) sets the target (52 / 42 / 26 fps down thresholds) and how deep it may go
+  ("Đẹp": aurora and lens only). Only in automatic quality. Hidden-tab time is not counted.
+  `watchDensity()` follows a change of devicePixelRatio (moving the window to another screen).
+- **Display settings** `settings.priority|lens|bloom|sway` (dock row "Ưu tiên"): per device
+  (`DISPLAY` in `store.js`): they do not move `doc.t`, are not taken from the cloud copy or an
+  imported file, and survive a full reset. "Máy quay trôi nhẹ" switches off the camera's slow
+  decorative drift; it is always off under prefers-reduced-motion.
+- **Lost WebGL context**: the page shows `#glLost` and reloads when the context comes back (or on
+  the button). three.js cannot rebuild this scene by itself (baked maps, render targets).
+- **Indoors** the outdoor sounds (wind, stream, birds) go through one low-pass (`audio.setIndoor`).
+- **Tea by the fire** (`pastimes.js`, wired in `main.js` as `pastime`): a stool 2.8 m south of
+  the fire between the two sitting logs (the logs point at the fire; they are no seat to face it
+  from), a tray with a clay teapot and two cups, a kettle on a flat stone by the ring. "Ngồi pha
+  trà · E": you sit (camera set down, `walker.on = false`), the kettle heats only on a lit fire
+  (7 s, a rising hiss), pours (2.4 s, `audio.pour`), the cup steams ~90 s and cools. E: another pot
+  or get up; any step, Esc, the door, the star game end it. Diary `h:<season>` once a season,
+  `me.firsts` 'tea' once. Steam is a pool of 18 sprites, reused. Choco counts it as sitting.
+- **Seeing what you are doing it with** (`aimAt`, `followCat`, `CROUCH_EYE` in `main.js`): the cat
+  menu opens within 2.4 m, where a cat is far below a level gaze (its head projected at y -1.9, off
+  the bottom of the screen; the owner reported it as a bug: "tương tác với Choco mà không thấy").
+  Opening the menu, each offer, sitting with it and petting Bơ set `view.yawT/pitchT` toward the
+  animal (aimed from the eye height you are going to, a little above the middle so the menu does not
+  cover it), with a slower camera follow while `aim.soft` runs; the menu crouches you to 1.3 m; while
+  the menu is open or you sit with it the view follows it outside a dead zone. Any drag sets
+  `aim.userAt` and the view is left alone for 2.5 s. A drag may start below `LIMIT.pitchMin`
+  (it is not snapped back up). `check.mjs cat` projects the head before and after.
+- **Sitting and getting up**: `#upBtn` ("Đứng dậy · Esc") shows whenever `seat.on` or a pastime runs
+  (not over a book). Esc order: cat menu, then the chair's book, then the pastime, then `seat`, then the
+  cabin. `setSeat(on, quiet)` says a line when you stand (quiet for doors and other seats).
+- **Tea, finished**: after the pour the button is "Nhấp một ngụm · E" (`pastimes.sip(at, eye)`): your
+  cup (a group with its tea, 40-sided) lifts to 42 cm in front of the eye, tips toward you about the
+  level line, a quarter goes each sip; four sips empty it (`'empty'` → state `cool`, fill 0), then
+  "Pha một ấm nữa". While the kettle heats the button reads "Đang đun nước…" (`wait`). The cup's
+  shadow in the static sun map stays on the tray during a sip.
+- **The guide** (`#guideSec`, `.howto` in the journal; `.guide` is the compass line, a different
+  thing): six collapsible groups (walking, sitting and getting up, Choco, tea, the others, all keys),
+  static HTML. `?` opens the journal at it (`openJournal(true, 'guide')`). Keep it in step with keys
+  and button labels when they change.
+- **The rocking chair** (`room.rock(a)`, `startChair`): sit beside it with E (refused if Choco is
+  asleep on it), it rocks about the centre of its runners' arc, creaks at the ends of a swing;
+  "Đọc sách bên lò · E" opens the shelf where you sit (`openBook(true, true)`: no walk to the
+  bench, no bench diary line; the page is lit by the stove). Esc closes the book first, then
+  gets you up. Diary `x:<season>` after 20 s seated, `me.firsts` 'fireside'.
+- **The valley as yours** (`me` table; journal section "Thung lũng của bạn"): `me.valley` (32
+  chars, `<`/`>` and control characters removed; shown in the tab title and the journal),
+  `me.views` up to six 'x,z,yaw,pitch,eye' (key K or the button; outdoors only; going there is a
+  short fade, `#hop`), `me.decor` 'slot:variant' for the two fixed places in `DECOR` (porch:
+  pennants or red paper lanterns that glow from dusk; tent: a woven rug or two pots of flowers),
+  `me.firsts`. "Đặt lại phần riêng" (`store.resetTable('me')`) clears only that table.
+  Decorations cast into the sun's map (they are inside `SHADOW_BOXES`), the pots sit inside the
+  tent's blocking circle, the stool and the tray are in `BLOCKS` and `CAT_BLOCKS`. They get no
+  winter snow (`snowy()` is not applied to them).
+- **Measured this round** (780M, 1902x984, `tools/perf.mjs`, display cap lifted, A = the tree at
+  the start of this round served from a copy on :8766, B = this tree):
+
+```
+scene          copy   mean median    p95    p99  cpu50  js50  js95 draw50 run-sd  calls  Mtris
+camp-day       A    28.18  27.90  38.00  45.90  37.00      -      -      -   0.69    789   6.25
+               B    28.18  26.90  47.30  62.10  34.90   0.50   1.10  25.20   1.13    849   6.29
+camp-night     A    38.94  38.00  58.00  62.50  47.50      -      -      -   0.84    793   7.16
+               B    35.07  32.30  62.70  76.10  46.50   0.50   1.00  32.80   1.70    813   7.17
+garden-walk    A    33.51  31.30  65.60  92.00  41.00      -      -      -   1.24    182   9.40
+               B    32.91  31.00  75.30  92.60  38.70   0.60   1.40  27.70   0.47    188   9.64
+cat-near       A    28.48  29.60  49.20  66.50  40.50      -      -      -   1.02    164   3.82
+               B    23.93  22.60  45.70  55.10  33.90   0.50   1.10  20.90   0.87    163   3.82
+cat+dog        A    26.05  26.50  46.80  58.00  37.50      -      -      -   1.11    103   3.27
+               B    20.49  23.00  46.30  52.20  29.60   0.60   1.10  21.90   2.69    102   3.27
+winter-day     A    35.52  34.30  51.80  53.20  43.50      -      -      -   0.73    710  12.02
+               B    34.68  31.50  47.60  61.90  43.90   0.40   0.70  33.20   1.07    709  12.02
+winter-night   A    43.17  42.40  63.40  77.00  52.70      -      -      -   2.03    594  11.30
+               B    37.33  37.40  60.00  75.80  46.00   0.40   0.60  37.10   1.09    593  11.30
+cabin-day      A    16.92  16.30  34.40  40.80  30.60      -      -      -   1.24    137   0.19
+               B    10.00   9.70  13.90  17.00  18.30   0.60   1.00   8.20   0.48    135   0.19
+cabin-night    A    16.16  15.80  33.20  35.70  30.30      -      -      -   0.60    162   0.04
+               B     9.98   9.70  14.40  24.80  18.30   0.70   1.00   8.10   0.87    160   0.04
+
+medium (same GPU and size, 3 rounds):
+scene          copy   mean median    p95    p99  cpu50  js50  js95 draw50 run-sd  calls  Mtris
+camp-day       A    19.93  19.00  40.30  44.00  35.50      -      -      -   0.73    825   3.57
+               B    19.28  16.50  40.50  45.90  31.60   0.60   1.30  15.60   0.94    806   3.53
+camp-night     A    26.29  29.30  47.30  55.00  39.10      -      -      -   0.35    795   4.04
+               B    24.55  23.70  46.50  61.60  36.90   0.70   1.50  21.80   0.35    815   4.04
+garden-walk    A    23.19  20.20  45.50  60.70  33.80      -      -      -   0.27    179   5.48
+               B    20.01  18.00  45.30  69.60  31.20   0.70   1.50  16.10   0.82    180   5.50
+cat-near       A    18.27  15.40  40.80  45.60  27.20      -      -      -   0.89    154   2.03
+               B    16.13  14.80  38.00  43.60  28.00   0.50   1.10  13.50   0.43    153   2.03
+cabin-night    A    12.69  12.20  18.10  22.60  23.30      -      -      -   0.83    162   0.04
+               B     9.75   9.60  12.30  13.70  17.90   0.50   0.90   8.20   0.24    160   0.04
+
+(js50/js95: the page's own logic per frame, B only (the diagnostics are new); calls, Mtris: per
+frame. Hitches on first use, tools/hitch.mjs, high: into the cabin 3264 -> 69 ms, out 500 -> 0 ms,
+to winter 111 -> 63 ms. p95 got worse on high in camp-day (+24 %), garden-walk (+15 %) and
+camp-night (+8 %); not explained: B's runs include the start-up warm-up stall in the first
+seconds and the 780M's clock moves under load; medium p95 did not get worse.)
+```
+
+  The 780M is an integrated GPU sharing a power budget with the CPU: removing work often lowers
+  its clock instead of the frame time, so single-part savings measured by `tools/costs.mjs` do not
+  add up and small differences (a few %) are within noise. What the removal runs did show (high,
+  cumulative): by day grass ~8 ms and flowers ~7 ms of a ~31 ms frame; at night the aurora sky
+  ~8 ms; lens + bloom + final grade + the empty post chain ~9 ms; in the garden view the flowers
+  ~27 ms of ~31 ms. Thinning far flower plots by 10 % changed nothing measurable, so it was not
+  done. Medium is what this GPU gets by default (auto-detect); see the table for it.
+
+## Fishing, the fish book, the myths, the telescope and the model (this round)
+
+- **The menu**: the quick bar is five chips (time, Sổ tay, Khám phá, Đi cùng bạn, Tuỳ chỉnh). "Khám phá"
+  (`#explore`, key X) groups what there is to do: Quanh trại (Dạo vườn `#qStroll`, Tự lia máy, Tới bờ
+  câu cá, Tới kính thiên văn: these set the compass on the place with `setGuide`, they do not
+  teleport), Bầu trời (Hình chòm sao, Trò dệt sao, Chuyện thần thoại, Đài mô phỏng), Ghi lại (Chụp ảnh
+  `#qPhoto`, Lưu góc, Sổ tay). The old ids are kept (main.js finds them). The dock ("Tuỳ chỉnh") is
+  unchanged. The journal is tabs (`journalnav.js`): Hành trình, Bách thư cá, Bầu trời, Thung lũng của
+  bạn, Hướng dẫn, Dữ liệu; `openJournal(true, 'guide' | 'sky' | 'fish:<id>' | <constellation id>)`
+  picks the tab; closing returns focus to whatever opened it. Esc closes, in order: Khám phá, the cat
+  menu, the journal, fishing, the chair's book, a pastime, a seat, the cabin. The telescope and the
+  model take the keys while they are open. Paper-card style (cream #f3ead6, forest #2f4a3a, wood
+  brown, lamp gold) for Khám phá, the catch card, the myth page; the journal itself stays dark glass
+  with a cream active tab. Not done: the dock was not restyled.
+- **Where the fish list comes from**: the University of Oulu's Northern-nature page lists 18 fish of
+  Enontekiö (68.4°N, citing Järvinen & Lahti 2004). Those are the valley's 18 catchable species
+  (`FISH`); 8 more (`EXTRA`: two North American chars stocked in Lapland, zander, bream, tench,
+  crucian, eel, smelt) are reference pages only, each saying why it is not here. Sizes, weights,
+  environment, IUCN line: read from each FishBase summary page (Nov 2026). The texts are ours.
+  FishBase now files the alpine bullhead as *Alpinocottus poecilopus* (its URL still says Cottus).
+  Bite tables, hours, seasons and the size range drawn are **game rules**, shown as "Trong Aurora Vale".
+- **Spots** (`SPOTS`, worked out from `streamX/streamW` in fishing.js): riffle z -60, pool z -80, pond
+  z -97, standing 1.25 m from the water on the east bank. Casts land only where `isWater` (inside
+  streamW - 0.35, z < -36), 1.6 m to `reach`. The float sits at `terrainH` (the water is painted on the
+  ground). Winter: the water is frozen and there is no ice fishing (the button says so).
+- **The state machine** (`fishing.js`): off → aim → cast → wait (0-3 nibbles, then a bite with a
+  strike window: 2.6 s relaxed / 1.5 s manual) → hooked (runs and rests; tension; relaxed eases the
+  reel during runs and caps tension at 0.86; manual loses the fish past 1.0 for 1.1 s or slack 6 s) →
+  landed (held in front of the camera, closer the smaller) → release (back to the water, swims off,
+  removed) → aim. `leave()` from any state: the line comes in, then off. Walking off calls `end()` at
+  once. The fish is drawn (`drawFish`) at the bite and **written only on 'landed'** (fishui.js
+  `record`): `fish.seen`, `fish.first` ('id|spot|season|part|cm', once), `fish.best`, `fish.count`,
+  diary `a:<id>` once. Reeling is holding E or the button (`reel(true/false)`), never tapping.
+- **Fish models** (`fishmodel.js`): ten body families with their own profiles and fin layouts, eyes,
+  barbels, stickleback spines; the coat is a 512x256 canvas per species wrapped by uv (u along the
+  body, v round it). Pattern names in `look.pat`. Cached per species (geometry + textures). Not
+  animated except as a whole (no body wave). Look at them in `tools/fish-lab.html`.
+- **The fish book** (`fishbook.js`): thumbnails and the species model are drawn by the game's own
+  renderer into one offscreen render target and read back (`readRenderTargetPixels`) into canvases;
+  no second WebGL context. The species model redraws at most ~30 times a second, only while shown,
+  and stops when the tab or page changes. Unseen valley fish are a sepia sketch (CSS filter); all
+  text is open from the start.
+- **The computed sky** (`astro.js`): the valley's own sky stays scenery (random stars, arranged
+  constellations). The telescope, the observing log and the model use: observer 68.4°N 23.6°E;
+  one night per season (`SKY_NIGHTS`: 20/3/2026, 24/8/2026, 25/10/2026, 16/1/2027) at the valley
+  clock's hour as local civil time; GMST (IAU 1982), Almanac low-precision Sun and Moon, Standish
+  planets, Meeus for Jupiter's moons (x only) and Saturn's ring tilt; J2000 positions, no precession.
+  Checked: full/new Moon 3 and 18 Jan 2026, Jupiter at opposition 10 Jan 2026, Saturn edge-on
+  23 Mar 2025, Antares never rising at 68.4°N (`check.mjs acts`). The summer night is twilight.
+- **The telescope** (`telescope.js`, `SCOPE` at (-2, 104) on the south hill): a 90 mm f/10 refractor
+  on an alt-az mount, 6×30 finder (7°), eyepieces 25/10/6 mm (36/90/150×). Full-screen Canvas2D view
+  (`.scope`); while it is open main.js does **not** draw the valley (`composer.render` skipped) and the
+  clock is held. Field stars: real constellation stars and the Pleiades' nine, plus faint stars from a
+  hash per 0.5° patch (illustration). Moon: maria and named craters by selenographic position, lit by
+  the phase angle and the Sun's direction in the field, cached per phase/orientation; planets sized by
+  distance, softened by 2″ seeing; doubles at their real separations; nebulae as grey smudges, colour
+  only with "Minh hoạ tăng cường" (labelled). Image upright, not mirrored. Assist mode slews and
+  focuses; manual keeps a focus offset per eyepiece (Q/E, wheel, buttons). An observation is recorded
+  (`sky.obs`, `sky.first`, diary `o:<id>`, once) after 2 s centred, sharp, above 2°, dark enough
+  (Sun < -6°, or < -0.8° for Moon/planets). There is no way to point at the Sun.
+- **The myth chapters** (`myths.js`, game.js `startMyth/endMyth`, `MYTH_CONS`): Cepheus, Andromeda,
+  Perseus, Cetus are in `MYTH_CONS`, **not** in `CONSTELLATIONS` (labels, journal stories, keepsakes
+  and `WEAVE_ORDER` unchanged). A chapter lays its line out on one tangent plane (real relative
+  positions), scaled by the figure being woven and its neighbours within 40°. Relaxed: guides, gold
+  hint, no slips, no dawn clock; challenge: `weaveRules(stage)`. A chapter never moves `game.stage`;
+  `woven` gets the id. Done: `sky.myth` 'line:n' once, diary `y:<line><n>`, a card with the drawn
+  figure, Chuyện kể and Bầu trời thật. Leaving play mode ends the chapter. Tales and their variants
+  name their classical sources (theoi.com translations); sky facts name Wikipedia pages.
+- **The model** (`orrery.js`): own scene and camera, drawn with the game's renderer instead of the
+  valley while open; its own date (starts at the season's night, runs 1 day/s by default, ±1 year/s),
+  the WorldClock is held; the camera's view is saved on open and restored on close. "Dễ quan sát"
+  (sizes enlarged, distances compressed, both said) and "Tỷ lệ thực" (1 AU = 100 units, labels mark
+  invisible planets). The Earth's axis is fixed toward the celestial pole; the info line gives the
+  subsolar latitude and whether the Sun sets at 68.4°N. The Earth's surface is an illustration, said so.
+- **Save** (`store.js`): `fish` {seen, first, best, count, mode} and `sky` {obs, first, myth, scope,
+  weave}. Old saves load with them empty (checked).
+- **Debug**: `__av.fishing`, `fishUI`, `startFishing`, `stopFishing`, `scope`, `orrery()`,
+  `openOrrery`, `startMythChapter`; `?debug=1&acts=0` hides the telescope model and the tackle (to
+  measure their cost when idle); `tools/perf.mjs` takes `XA=` / `XB=` extra address parameters.
+
+## The menu, and the polish round (latest)
+
+- **One menu** (`menu.js` + `menucontent.js`, wired at "the menu" in main.js): a dialog on the right
+  (a near-full sheet under 720 px) with groups Tổng quan, Quanh trại, Câu cá, Bầu trời, Sổ tay,
+  Tuỳ chỉnh (sub-groups Thế giới, Hình ảnh, Âm thanh, Điều khiển, Hỗ trợ, Dữ liệu), a search over
+  `items()` (names, groups, keywords, accents optional; never the books' text), and a footer (Chụp
+  ảnh, Đi cùng bạn, where the progress is saved). The quick bar is five `.q-btn`: `#qTime` (opens the
+  "Giờ & mùa" popover; N still steps the time), `#qJournal`, `#qExplore` (X), `#qFriends`, `#qMore`
+  (B, opens Tuỳ chỉnh). `#soundBtn` opens the volume popover (O still mutes). The seg (Ngắm sao /
+  Trò dệt sao) only shows in play mode. The old `#dock` stays in the HTML as the place its rows wait:
+  `createMenu` **moves** them (same elements, ids, listeners) into the settings groups; the two
+  popovers move the time/season rows and the volume row into themselves while open. Content groups
+  are rebuilt when shown and dropped when left (no per-frame work, nothing while closed). While the
+  menu is open: `body.menu-open` hides the in-scene prompts, the keydown handler swallows keys except
+  Esc/X/B, `updateWalk` ignores input, the scrim takes pointer input. Esc closes the top layer first;
+  focus returns to the opener; Tab is kept inside. `settings.uiScale` (1 / 1.12 / 1.25, display
+  setting) zooms the panels (`--ui-zoom`), never the 3D canvas.
+- **Polish round**: fish bend as they swim (`fishmodel.js` `SWIM`, a travelling wave in the vertex
+  shader per family; held fish wriggle then calm; book preview can pause; reduced motion holds them
+  still); the reel button keeps its hold when the finger slides off (pointer capture); a new fight
+  starts at the float (lateral reset); telescope exit returns focus, no arrow into the ground; myth
+  chapters keep a half-woven figure for the visit (`mythKept`), "đã dệt" vs "đã đọc" (`sky.read`),
+  "Tiếp tục" per line, two tabs (Chuyện kể / Bầu trời thật) on the chapter card, silhouettes per
+  chapter (`drawEmblem`); the orrery declutters labels, pinch-zooms, marks the followed body; the
+  fish book has a reset view, a clear-filters empty state, keeps its scroll, says the IUCN scope.
+  The star game's first draw was 31-41 ms (ANGLE finishing programs on first use): the warm-up now
+  shows the empty game group for 300 ms. Measured with vsync off, "73 ms hitches" were mostly frame
+  queueing, not stalls; with vsync on the first play entry still drops 1-3 frames (35-63 ms), not
+  explained (not shaders, shadows, CSS or the camera move). Network tests (blocked Supabase, offline
+  mid-catch, storage refused, CDN down) pass: progress is local first, no false "synced".
 
 ## Things that will bite you
 
@@ -479,7 +833,8 @@ medium), overridable in the dock or with `?q=`. Per tier: aurora steps, three gr
 roof turf, `terrainQ` (bump and near detail off on low), `flowerLod`, tulip and garden
 counts, MSAA, lens taps, shadow map size, mountain mesh detail, `mtnMap` (bake size) and
 `mtnQ` (rock detail octaves). In auto mode `adaptQuality()` sheds, in order: aurora slices →
-lens blur → grass density (all layers) → flower density → resolution.
+lens blur → grass density (all layers) → flower density → resolution, and gives them back (see
+"The world as yours ... (this round)" for the windows, cooldown, ceiling and priority).
 
 Measured once, on one integrated laptop GPU at about 1900×980, with `tools/check.mjs fps`
 (before the rework → after):
@@ -524,6 +879,13 @@ python -m http.server 8765 --bind 127.0.0.1
 bash tools/shot.sh out.png "auto=zen&time=day&q=high&t=40" 1920,1080   # a picture
 node tools/check.mjs walk      # real key presses: walking, strafing, running, a boulder in the way
 node tools/check.mjs story     # the day's thread turns its pages when you do the thing
+node tools/check.mjs cat       # Choco: name card, what it does with what you offer, limits, the save, the door
+node tools/check.mjs world     # the save's new parts, tea, rocking chair, decorations, views, quality ladder, warm-up, lost context
+node tools/check.mjs acts      # fish data and the bite table, astro against known events, fishing states, the book, telescope, model, myths, the save
+node tools/check.mjs menu      # every old control inside the menu and working, no input to the world, focus, Tab, search, guiding, no growth
+node tools/perf.mjs 3          # frame time, A (a copy of the old tree served on :8766) vs B (:8765); PROBE=1, Q=, ONLY=
+node tools/hitch.mjs           # stalls on first use (shader programs built on the spot)
+node tools/costs.mjs           # the frame with one part off at a time (lens, bloom, grass, flowers, sky...)
 node tools/check.mjs party     # two browsers meet through the public PeerJS broker (needs internet)
 node tools/check.mjs audio     # level and spectrum of every sound layer, rendered offline
 node tools/check.mjs fps "auto=view&time=night&q=high"   # frame rate on the graphics card
@@ -548,6 +910,18 @@ Useful URL params: `auto=play|view|zen`, `time=day|dusk|night`, `season=spring|s
 `debug=1` (exposes `window.__av` for the tools).
 
 ## Known weak spots (honest list)
+
+- This round's activities: fish are procedural models with painted coats, not scans; they do not bend
+  as they swim (the whole fish turns). The water is painted on the ground, so the float and the
+  released fish sit on a flat surface with no refraction. No ice fishing in winter. The fishing
+  sounds were not listened to. The bite tables are game rules, not biology. The telescope's faint
+  field stars, cluster members, nebula shapes and small lunar craters are illustrations (said in the
+  UI); the summer night is only twilight at 68.4°N; the horizon in the eyepiece is flat at 2° (the
+  mountains are ignored). The myth figure card's emblems are simple line drawings. The model's Earth
+  has no real continents (said so). The menu was redesigned for Khám phá, the journal tabs and the
+  activity cards; the dock and the top-right controls were not. Phone layouts were checked at 400 px
+  in headless Chrome only (no real phone). Fish species texts, myth retellings and sky facts were
+  written from the sources named in them; nobody fluent has proofread the Vietnamese.
 
 - Grass: looking straight down, the gaps between blades now show a painted undercoat of short
   shoots, not bare earth; it is flat paint (it does not move with the wind and has no depth),

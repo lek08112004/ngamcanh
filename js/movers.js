@@ -25,10 +25,11 @@ export class MoverShadow {
     this._mats = [];
     light.uMoverTexel.value = 1 / size;
   }
-  /** centre: where the viewer stands; sun: unit vector toward the sun; on: whether the sun is up at all */
-  render(centre, sun, on) {
+  /** centre: where the viewer stands; sun: unit vector toward the sun; on: whether the sun is up at all;
+   *  force: draw even with nothing near (once at start, so its few programs are built then) */
+  render(centre, sun, on, force = false) {
     const u = this.u;
-    const near = on && this.roots.some((r) => r.visible && Math.hypot(r.position.x - centre.x, r.position.z - centre.z) < this.span * 0.92);
+    const near = force || (on && this.roots.some((r) => r.visible && Math.hypot(r.position.x - centre.x, r.position.z - centre.z) < this.span * 0.92));
     if (!near) { u.uMoverOn.value = 0; return; }
     const c = this.cam;
     c.position.copy(centre).addScaledVector(sun, 35);
@@ -51,7 +52,7 @@ export class MoverShadow {
     rr.setRenderTarget(this.rt);
     rr.autoClear = false;
     rr.clear(true, true, false);
-    for (const r of this.roots) if (r.visible) rr.render(r, c);
+    for (const r of this.roots) if (r.visible || force) rr.render(r, c);
     rr.setRenderTarget(prevTarget);
     rr.autoClear = prevClear;
     for (let i = 0; i < mats.length; i += 2) mats[i].material = mats[i + 1];

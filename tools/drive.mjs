@@ -19,12 +19,14 @@ const KEYS = { w: 87, a: 65, s: 83, d: 68, g: 71, n: 78, shift: 16, ' ': 32 };
 
 // gpu: ask headless Chrome for the real graphics card instead of its software renderer.
 // headful: open a normal, visible window (the surest way to get the real card).
-export async function launch({ port = 9333, size = [1280, 720], gpu = false, headful = false } = {}) {
+// vsync: false lifts the display's frame cap, so a frame time measures the work, not the screen.
+export async function launch({ port = 9333, size = [1280, 720], gpu = false, headful = false, vsync = true } = {}) {
   const chrome = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
   const profile = mkdtempSync(join(tmpdir(), 'aurora-vale-'));      // a fresh profile: no stale module cache
   const proc = spawn(chrome, [
     ...(headful ? [] : ['--headless=new']),
     ...(gpu ? ['--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist'] : []),
+    ...(vsync ? [] : ['--disable-gpu-vsync', '--disable-frame-rate-limit']),
     '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`,
     `--window-size=${size[0]},${size[1]}`, '--hide-scrollbars', '--autoplay-policy=no-user-gesture-required',
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank',

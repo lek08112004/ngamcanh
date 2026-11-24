@@ -47,6 +47,13 @@ export class Soundscape {
     const wet = ctx.createGain();
     wet.gain.value = 0.55;
     this.reverb.connect(wet).connect(this.master);
+    // everything that is out of doors (wind, stream, birds) goes through one filter, so stepping
+    // into the cabin closes the door on it: duller and quieter, not gone (setIndoor)
+    this.outside = ctx.createBiquadFilter();
+    this.outside.type = 'lowpass'; this.outside.frequency.value = 20000; this.outside.Q.value = 0.5;
+    this.outGain = ctx.createGain();
+    this.outside.connect(this.outGain).connect(this.master);
+    if (this._indoor) this.setIndoor(true);
 
     this._buildWind();
     this._buildFire();
@@ -125,7 +132,7 @@ export class Soundscape {
   }
 
   /** route a node to the mix at a place in the stereo field; `far` 0..1 trades dry level for reverb */
-  _place(node, pan = 0, far = 0) {
+  _place(node, pan = 0, far = 0, dest = this.master) {
     let out = node;
     if (this.ctx.createStereoPanner) {
       out = this.ctx.createStereoPanner();
@@ -135,8 +142,8 @@ export class Soundscape {
     const dry = this.ctx.createGain(), wet = this.ctx.createGain();
     dry.gain.value = 1 - 0.75 * far;
     wet.gain.value = 0.35 + 0.65 * far;
-    out.connect(dry).connect(this.master);
-    out.connect(wet).connect(this.reverb);
+    out.connect(dry).connect(dest);
+    out.connect(wet).connect(dest === this.master ? this.reverb : dest);
   }
 
   _lfo(freq, depth, param) {
@@ -162,7 +169,7 @@ export class Soundscape {
     bp.type = 'bandpass'; bp.frequency.value = 420; bp.Q.value = 0.55;
     const g1 = ctx.createGain();
     g1.gain.value = 0.34;
-    src.connect(bp).connect(g1).connect(this.master);
+    src.connect(bp).connect(g1).connect(this.outside);
     this._lfo(0.057, 190, bp.frequency);
     this._lfo(0.031, 90, bp.frequency);
     this._lfo(0.11, 0.13, g1.gain);
@@ -174,7 +181,7 @@ export class Soundscape {
     const g2 = ctx.createGain();
     g2.gain.value = 0.03;
     src.connect(hp).connect(g2);
-    g2.connect(this.master);
+    g2.connect(this.outside);
     g2.connect(this.reverb);
     this._lfo(0.037, 520, hp.frequency);
     this._lfo(0.071, 0.024, g2.gain);
@@ -184,7 +191,7 @@ export class Soundscape {
     lp.type = 'lowpass'; lp.frequency.value = 130;
     const g3 = ctx.createGain();
     g3.gain.value = 0.17;
-    src.connect(lp).connect(g3).connect(this.master);
+    src.connect(lp).connect(g3).connect(this.outside);
     this._lfo(0.05, 0.07, g3.gain);
 
     src.start();
@@ -374,6 +381,7 @@ export class Soundscape {
    */
   purr(pan = 0, near = 1, dur = 3) {
     if (!this.ctx || this.ctx.state !== 'running') return;
+    this.purrStop();                          // one purr at a time: a new one takes over from the last
     const ctx = this.ctx, t0 = ctx.currentTime + 0.02;
     const bus = ctx.createGain();
     bus.gain.value = 0.25 + 0.75 * near;
@@ -408,6 +416,37 @@ export class Soundscape {
     src.connect(lp).connect(body).connect(pulse).connect(env).connect(bus);
     src.start(t0, Math.random() * 4, t - t0 + 0.3);
     lfo.start(t0); lfo.stop(t + 0.3);
+    this._purr = { bus, src, lfo, end: t + 0.3 };
+  }
+  /** let a purr that is still going fade out (the cat went off, you went in or out of the cabin) */
+  purrStop() {
+    const p = this._purr;
+    this._purr = null;
+    if (!p || !this.ctx || this.ctx.currentTime > p.end) return;
+    const t = this.ctx.currentTime;
+    p.bus.gain.cancelScheduledValues(t);
+    p.bus.gain.setValueAtTime(p.bus.gain.value, t);
+    p.bus.gain.linearRampToValueAtTime(0, t + 0.25);
+    try { p.src.stop(t + 0.3); p.lfo.stop(t + 0.3); } catch (e) { /* already stopped */ }
+  }
+
+  /** a soft pat: a paw landing on a ball of wool (a short, low, muffled tap) */
+  tap(pan = 0, near = 1) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.01;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.2 + 0.6 * near;
+    this._place(bus, pan * 0.5, 0.04);
+    const n = ctx.createBufferSource();
+    n.buffer = this.noise;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 0.7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.09, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    n.connect(lp).connect(g).connect(bus);
+    n.start(t, Math.random() * 4, 0.11);
   }
 
   /**
@@ -462,7 +501,7 @@ export class Soundscape {
       bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 0.5;
       this.streamGain = ctx.createGain();
       this.streamGain.gain.value = 0;
-      src.connect(bp).connect(this.streamGain).connect(this.master);
+      src.connect(bp).connect(this.streamGain).connect(this.outside);
       this._lfo(0.31, 420, bp.frequency);
       this._lfo(1.7, 0.012, this.streamGain.gain);
       src.start(0, 5.2);
@@ -475,7 +514,7 @@ export class Soundscape {
       gb.type = 'bandpass'; gb.frequency.value = 620; gb.Q.value = 1.6;
       this.gurgleGain = ctx.createGain();
       this.gurgleGain.gain.value = 0;
-      low.connect(gb).connect(this.gurgleGain).connect(this.master);
+      low.connect(gb).connect(this.gurgleGain).connect(this.outside);
       this._lfo(2.3, 170, gb.frequency);
       this._lfo(3.7, 110, gb.frequency);
       this._lfo(0.9, 0.006, this.gurgleGain.gain);
@@ -486,6 +525,142 @@ export class Soundscape {
     this._stream = level;
     this.streamGain.gain.setTargetAtTime(0.16 * level * level, this.ctx.currentTime, 0.5);
     this.gurgleGain.gain.setTargetAtTime(0.12 * level * level * level, this.ctx.currentTime, 0.5);   // only heard close to the bank
+  }
+
+  /** inside the cabin: the valley's sounds come through the walls, low and muffled */
+  setIndoor(on) {
+    this._indoor = !!on;
+    if (!this.ctx || !this.outside) return;
+    const t = this.ctx.currentTime;
+    this.outside.frequency.setTargetAtTime(on ? 650 : 20000, t, 0.25);
+    this.outGain.gain.setTargetAtTime(on ? 0.4 : 1, t, 0.25);
+  }
+
+  /**
+   * The kettle on the stones by the fire, 0 (cold, silent) .. 1 (at the boil): a thin hiss that
+   * rises in pitch as it heats, and underneath a low, uneven bubbling near the boil. One pair of
+   * looping sources, made the first time and then only turned up and down.
+   */
+  kettle(level, pan = 0) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (!this.kettleGain) {
+      const hiss = ctx.createBufferSource();
+      hiss.buffer = this.noise; hiss.loop = true; hiss.loopEnd = hiss.buffer.duration - 0.5;
+      this.kettleBand = ctx.createBiquadFilter();
+      this.kettleBand.type = 'bandpass'; this.kettleBand.frequency.value = 2600; this.kettleBand.Q.value = 6;
+      this.kettleGain = ctx.createGain(); this.kettleGain.gain.value = 0;
+      this.kettlePan = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+      hiss.connect(this.kettleBand).connect(this.kettleGain).connect(this.kettlePan).connect(this.master);
+      hiss.start(0, 2.3);
+      const bub = ctx.createBufferSource();
+      bub.buffer = this.noise; bub.loop = true; bub.loopEnd = bub.buffer.duration - 0.5;
+      const bb = ctx.createBiquadFilter();
+      bb.type = 'bandpass'; bb.frequency.value = 380; bb.Q.value = 3;
+      this.bubbleGain = ctx.createGain(); this.bubbleGain.gain.value = 0;
+      bub.connect(bb).connect(this.bubbleGain).connect(this.kettlePan);
+      this._lfo(7.3, 140, bb.frequency);
+      this._lfo(3.1, 0.01, this.bubbleGain.gain);
+      bub.start(0, 6.1);
+      this._kettle = -1;
+    }
+    level = Math.min(1, Math.max(0, level));
+    if (Math.abs(level - this._kettle) < 0.02) return;
+    this._kettle = level;
+    if (this.kettlePan.pan) this.kettlePan.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), t, 0.2);
+    this.kettleBand.frequency.setTargetAtTime(1800 + 2600 * level, t, 0.8);
+    this.kettleGain.gain.setTargetAtTime(0.05 * level * level, t, 0.6);
+    this.bubbleGain.gain.setTargetAtTime(level > 0.7 ? 0.05 * (level - 0.7) / 0.3 : 0, t, 0.6);
+  }
+
+  /** tea poured into a cup: a stream of water that climbs in pitch as the cup fills */
+  pour(pan = 0) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.02;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.7;
+    this._place(bus, pan * 0.5, 0.05);
+    const n = ctx.createBufferSource();
+    n.buffer = this.noise;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 2.4;
+    bp.frequency.setValueAtTime(700, t);
+    bp.frequency.exponentialRampToValueAtTime(2300, t + 2.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.12);
+    g.gain.setValueAtTime(0.16, t + 1.9);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+    const wob = ctx.createOscillator();
+    wob.frequency.value = 9;
+    const wg = ctx.createGain(); wg.gain.value = 160;
+    wob.connect(wg).connect(bp.frequency);
+    n.connect(bp).connect(g).connect(bus);
+    n.start(t, Math.random() * 4, 2.5);
+    wob.start(t); wob.stop(t + 2.5);
+  }
+
+  /* ---- fishing: short one-shot sounds; every node is started with a stop time, nothing piles up ---- */
+  /** a noise burst through a band-pass that sweeps (whoosh of the cast, plop, splash) */
+  _burst(pan, gain, f0, f1, dur, q = 1.2, far = 0.1) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.01;
+    const bus = ctx.createGain(); bus.gain.value = 1;
+    this._place(bus, pan, far);
+    const n = ctx.createBufferSource(); n.buffer = this.noise;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = q;
+    bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + Math.min(0.03, dur * 0.2));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    n.connect(bp).connect(g).connect(bus);
+    n.start(t, Math.random() * 3, dur + 0.05);
+    n.onended = () => bus.disconnect();
+  }
+  /** the rod swished forward and the line running off the reel */
+  castSwish(pan = 0) { this._burst(pan, 0.12, 2400, 600, 0.45, 0.9, 0.02); }
+  /** the float landing, a fish nosing the bait (small = a nibble), a fish taking it (big) */
+  plop(pan = 0, size = 1) {
+    this._burst(pan, 0.05 + 0.13 * size, 900 / (0.6 + size * 0.4), 260, 0.12 + 0.18 * size, 2.5, 0.25);
+    if (!this.ctx || this.ctx.state !== 'running' || size < 0.5) return;
+    // the hollow "bloop" of water closing over something
+    const ctx = this.ctx, t = ctx.currentTime + 0.01, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(420, t); o.frequency.exponentialRampToValueAtTime(170, t + 0.12);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05 * size, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.connect(g); this._place(g, pan, 0.25); o.start(t); o.stop(t + 0.18); o.onended = () => g.disconnect();
+  }
+  /** a fish thrashing at the surface */
+  splash(pan = 0, size = 1) { this._burst(pan, 0.1 + 0.1 * size, 3200, 500, 0.35 + 0.2 * size, 0.7, 0.2); }
+  /** one click of the reel's pawl (called in time with the turning) */
+  reelTick(pan = 0.25, tension = 0.3) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.005, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'square'; o.frequency.value = 2200 + 900 * tension;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.018, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    o.connect(g); this._place(g, pan, 0); o.start(t); o.stop(t + 0.04); o.onended = () => g.disconnect();
+  }
+  /** line running out against the drag: a short buzz */
+  drag(pan = 0.25, k = 1) { this._burst(pan, 0.03 * k, 5200, 3800, 0.22, 4, 0); }
+
+  /** the rocking chair's runners on the boards: a soft, low creak */
+  creak(pan = 0) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.01;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.5;
+    this._place(bus, pan * 0.4, 0.05);
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(95 + Math.random() * 30, t);
+    o.frequency.linearRampToValueAtTime(70 + Math.random() * 20, t + 0.32);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 5;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.025, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+    o.connect(bp).connect(g).connect(bus);
+    o.start(t); o.stop(t + 0.4);
   }
 
   /** 0 night .. 1 morning: birdsong comes in with the light. */
@@ -517,7 +692,7 @@ export class Soundscape {
   _birdPhrase(t, kind, pan, far, gain) {
     const out = this.ctx.createGain();
     out.gain.value = gain;
-    this._place(out, pan, far);
+    this._place(out, pan, far, this.outside);
     const r = Math.random;
     if (kind === 0) {                                // twitter: a handful of quick, uneven notes
       const base = 2500 + r() * 2200, up = r() < 0.5, n = 2 + Math.floor(r() * 5);

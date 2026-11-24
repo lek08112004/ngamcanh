@@ -7,7 +7,8 @@
 //   store.get('settings.season', 'spring')     read a value (never throws)
 //   store.set('trek.dist', 1234)               write a value (saved a moment later)
 //   store.export() / store.import(text)        back the whole thing up, or restore it
-//   store.reset()                              forget everything
+//   store.reset()                              forget everything (display settings stay)
+//   store.resetTable('me')                     forget one part only
 //   store.onChange(fn) / store.edited / store.syncDoc() / store.adopt(doc)   for cloud.js (below)
 //
 // Rules it keeps:
@@ -39,7 +40,12 @@ const bool = (def) => ['bool', def];
 const list = (max = 64) => ['list', [], max];
 const SCHEMA = {
   // telemetry: the visitor agreed to send one anonymous performance line (off unless they turn it on)
-  settings: { quality: str('auto', 8), season: str('spring', 8), flow: bool(true), name: str('', 16), telemetry: bool(false) },
+  // tags: the little name card that floats over Choco in the scene ("Tên bạn nhỏ", on unless turned off)
+  // priority, lens, bloom, sway: how this device draws (see DISPLAY below): what the automatic
+  // quality aims for (smooth / balanced / beauty), the soft-focus lens, the glow round bright
+  // things, and the slow decorative drift of the camera
+  settings: { quality: str('auto', 8), season: str('spring', 8), flow: bool(true), name: str('', 16), telemetry: bool(false), tags: bool(true),
+    priority: str('balanced', 8), lens: bool(true), bloom: bool(true), sway: bool(true), uiScale: num(1, 1, 1.25) },
   trek: { dist: num(0), found: list(32) },
   // satchel: flowers picked but not yet pressed at the tent; log: the camp diary (short ids, newest last)
   story: { done: list(40), seen: list(16), flowers: list(24), satchel: list(24), log: list(64), folded: bool(false) },
@@ -47,12 +53,30 @@ const SCHEMA = {
   game: { best: num(0), wishes: num(0), woven: list(16), stage: num(0, 0, 999) },
   // the shelf on the garden bench: the book left open, and the page each book was left at ('id:n')
   read: { book: str('', 16), at: list(12) },
+  // Choco: how well it knows you (0..100, only ever grows, slowly, never decays with time away),
+  // the moments that have happened (once each) and the habits you have seen it keep
+  cat: { bond: num(0, 0, 100), marks: list(8), habits: list(16) },
+  // what makes the valley yours (reset on its own, see resetMine): the valley's name, up to six
+  // favourite views ('x,z,yaw,pitch', metres and degrees), the chosen decorations ('slot:variant')
+  // and the first times worth remembering ('tea', 'fireside')
+  me: { valley: str('', 32), views: list(6), decor: list(4), firsts: list(8) },
+  // fishing (fishdata.js): species landed at least once; the first landing of each, as
+  // 'id|spot|season|part|cm' (written once, never overwritten); the largest of each 'id:cm';
+  // how many fish were landed in all; relaxed or manual play
+  fish: { seen: list(32), first: list(32), best: list(32), count: num(0, 0, 1e6), mode: str('relaxed', 8) },
+  // the sky (astro.js, telescope.js, myths.js): telescope targets observed (id, once each) and the
+  // first observation of each 'id|season|hh'; myth chapters woven ('perseus:2'); the telescope's
+  // helper (assist / manual) and the weave of a myth chapter (relaxed / challenge)
+  // read: chapter pages opened ('line:n'), apart from the chapters woven
+  sky: { obs: list(24), first: list(24), myth: list(16), read: list(16), scope: str('assist', 8), weave: str('relax', 8) },
   // supabase-js's session (its storage adapter, see cloud.js): a JSON map of its keys. Local only.
   cloud: { auth: str('', 16000) },
 };
-// what stays on this device whatever another copy says: the session, and the quality tier
-// (a phone and a desktop want different ones)
-const LOCAL_ONLY = { cloud: null, settings: ['quality'] };
+// how this device draws: not progress (no change to doc.t), never taken from another copy, kept
+// by a reset (a phone and a desktop want different ones)
+const DISPLAY = ['quality', 'priority', 'lens', 'bloom', 'sway', 'uiScale'];
+// what stays on this device whatever another copy says: the session, and the display settings
+const LOCAL_ONLY = { cloud: null, settings: DISPLAY };
 
 function cleanValue(rule, v) {
   const [kind, def, lim] = rule;
@@ -129,7 +153,7 @@ class Store {
     const before = JSON.stringify(this.doc[table][field]);
     this.doc[table][field] = cleanValue(rule, Array.isArray(value) ? value : value instanceof Set ? [...value] : value);
     this.touch();
-    if (table === 'cloud' || (table === 'settings' && field === 'quality')) return;
+    if (table === 'cloud' || (table === 'settings' && DISPLAY.includes(field))) return;
     if (JSON.stringify(this.doc[table][field]) === before) return;     // nothing really changed
     this.doc.t = Date.now();
     for (const fn of this.listeners) { try { fn(path); } catch (e) { /* a listener must not break a save */ } }
@@ -149,10 +173,10 @@ class Store {
   /** take another copy's progress as ours, keeping what stays on this device */
   adopt(raw) {
     if (!raw || typeof raw !== 'object') return false;
-    const keep = { cloud: this.doc.cloud, quality: this.doc.settings.quality };
+    const cloud = this.doc.cloud, display = DISPLAY.map((f) => this.doc.settings[f]);
     const doc = clean(raw);
-    doc.cloud = keep.cloud;
-    doc.settings.quality = keep.quality;
+    doc.cloud = cloud;
+    DISPLAY.forEach((f, i) => { doc.settings[f] = display[i]; });
     this.doc = doc;
     this.flush();
     return true;
@@ -184,21 +208,27 @@ class Store {
   import(text) {
     const raw = parse(String(text).slice(0, 200000));
     if (!raw || typeof raw !== 'object' || raw.app !== 'aurora-vale') return false;
-    const cloud = this.doc.cloud;
+    const cloud = this.doc.cloud, display = DISPLAY.map((f) => this.doc.settings[f]);
     this.doc = clean(raw);
     this.doc.cloud = cloud;
+    DISPLAY.forEach((f, i) => { this.doc.settings[f] = display[i]; });   // this device's, not the file's
     this.doc.t = Date.now();                       // a restored backup is the newest progress
     for (const fn of this.listeners) { try { fn('*'); } catch (e) { /* ignore */ } }
     return this.flush() || true;
   }
 
   reset() {
-    const quality = this.doc.settings.quality;       // a display setting, not progress: keep it
+    const settings = Object.fromEntries(DISPLAY.map((f) => [f, this.doc.settings[f]]));   // display settings, not progress: keep them
     const cloud = this.doc.cloud;
-    this.doc = clean({ settings: { quality }, cloud, t: Date.now() });
+    this.doc = clean({ settings, cloud, t: Date.now() });
     for (const fn of this.listeners) { try { fn('*'); } catch (e) { /* ignore */ } }
     this.flush();
   }
 }
 
 export const store = new Store();
+/** the table's fields back to their defaults (one part of the save, the rest untouched) */
+Store.prototype.resetTable = function resetTable(table) {
+  if (!SCHEMA[table]) return;
+  for (const [field, rule] of Object.entries(SCHEMA[table])) this.set(`${table}.${field}`, Array.isArray(rule[1]) ? [] : rule[1]);
+};

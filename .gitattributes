@@ -1,0 +1,2 @@
+# Left out of `git archive` (the deploy export): the test tools stay in the repo, not on the site.
+tools/ export-ignore

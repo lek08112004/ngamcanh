@@ -87,6 +87,24 @@ const at = (off, t, fn) => {                    // call fn as if the clock read 
   await probe('bed + wading', (s, off) => { s.setStream(1); every(s, off, 3.2, 0.5, (t) => at(off, t, () => s.step(true))); });
   await probe('bed + chimes (busy)', (s, off) => { s.setIntensity(1); every(s, off, 3.2, 0.7, (t) => s._bell(440 * Math.pow(2, ((t * 5) % 12) / 12), t, 0.08, 3.5)); });
   await probe('game: complete + storm', (s, off) => { at(off, 4, () => s.complete()); at(off, 6, () => s.storm()); at(off, 8, () => s.wish()); });
+  // fishing (this round): one whole catch, and the worst pile-up (reel clicks + drag + splashes over the bed)
+  await probe('fishing: cast, nibbles, bite, fight, landing', (s, off) => {
+    s.setStream(1);
+    at(off, 2.0, () => s.castSwish(0.2)); at(off, 2.8, () => s.plop(0.2, 0.35));
+    at(off, 4.0, () => s.plop(0.2, 0.12)); at(off, 4.6, () => s.plop(0.2, 0.12));
+    at(off, 5.5, () => s.plop(0.2, 1));
+    every(s, off, 6.0, 0.08, (t) => { if (t < 10) at(off, t, () => s.reelTick(0.3, 0.6)); });
+    for (const t of [6.5, 7.8, 9.0]) { at(off, t, () => s.splash(0.2, 1)); at(off, t, () => s.drag(0.25, 1)); }
+    at(off, 10.5, () => s.splash(0.2, 1));
+  });
+  await probe('fishing: worst pile-up (all at once, repeated)', (s, off) => {
+    s.setStream(1); s.setFire(1);
+    every(s, off, 2.0, 0.05, (t) => at(off, t, () => { s.reelTick(0.3, 1); s.drag(0.25, 1); s.splash(0.2, 1); s.plop(0.2, 1); }));
+  });
+  await probe('telescope: eyepiece taps and a recorded observation', (s, off) => {
+    every(s, off, 2.0, 0.6, (t) => at(off, t, () => s.tap(0, 0.6)));
+    at(off, 6, () => s.node(3));
+  });
   await probe('everything at once', (s, off) => {
     s.setIntensity(1); s.setFire(1); s.setStream(1); s.setDay(1);
     every(s, off, 3.2, 0.33, (t) => at(off, t, () => s.step(false)));
